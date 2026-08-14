@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "plugins": ["typescript"],
+  "ignorePatterns": ["node_modules/**", "dist/**", "build/**", ".worktrees/**", "tmp/**"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "rules": {
+    "no-console": "off",
+    "no-debugger": "warn",
+    "no-underscore-dangle": "off",
+    "no-await-in-loop": "off",
+    "no-shadow": "off",
+    "no-new": "off"
+  }
+}

@@ -1,0 +1,22 @@
+# Lefthook — unified git hooks
+# https://lefthook.dev
+pre-commit:
+  parallel: false
+  jobs:
+    - name: oxfmt
+      glob: '*.{js,ts,jsx,tsx,mjs,cjs,json}'
+      run: bunx oxfmt --write {staged_files}
+      stage_fixed: true
+    - name: oxlint
+      glob: '*.{js,ts,jsx,tsx,mjs,cjs}'
+      run: bunx oxlint --fix {staged_files}
+      stage_fixed: true
+    - name: markdownlint
+      glob: '*.md'
+      run: bunx markdownlint-cli2 --fix {staged_files}
+      stage_fixed: true
+
+commit-msg:
+  jobs:
+    - name: commitlint
+      run: bunx --no -- commitlint --edit {1}
