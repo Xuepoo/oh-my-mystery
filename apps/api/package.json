@@ -1,0 +1,21 @@
+{
+  "name": "@omm/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@omm/shared": "workspace:*",
+    "hono": "^4.7.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250224.0",
+    "typescript": "^7.0.2",
+    "vitest": "^3.0.7",
+    "wrangler": "^3.114.0"
+  }
+}

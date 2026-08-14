@@ -1,0 +1,16 @@
+{
+  "name": "@omm/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "check": "oxfmt --check && oxlint --deny-warnings",
+    "format": "oxfmt --write",
+    "lint": "oxlint --deny-warnings"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

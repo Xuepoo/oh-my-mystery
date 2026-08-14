@@ -1,0 +1,13 @@
+name = "omm-api"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "omm-db"
+database_id = "omm-db-id"
+migrations_dir = "src/db"

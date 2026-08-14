@@ -13,7 +13,7 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["bun-types"]
+    "types": ["node"]
   },
   "exclude": ["node_modules", "dist", "build", "tmp", ".worktrees"]
 }
