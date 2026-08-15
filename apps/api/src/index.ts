@@ -150,15 +150,13 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
         names: { labels: { '': id } },
       };
 
-  // 2. Fetch facts (both outbound and inbound, where object_ref is a valid entity reference)
-  // We filter out misleading predicates (like translator or non-author aozora roles)
-  // so the graph primarily shows works they actually authored.
-  const factsRows = await c.env.DB.prepare(
+  // 2. Fetch all raw facts connected to this entity
+  const rawFactsRows = await c.env.DB.prepare(
     `
     SELECT * FROM facts 
     WHERE ((subject_id = ? AND object_ref IS NOT NULL AND object_ref != '')
        OR (object_ref = ? AND subject_id IS NOT NULL AND subject_id != ''))
-       AND predicate NOT IN ('translator', 'publisher', 'publisher_name')
+       AND predicate NOT IN ('translator', 'publisher', 'publisher_name', 'genre')
        AND (predicate != 'aozora_role' OR object_value = '著者')
     LIMIT ?
   `,
@@ -166,7 +164,7 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
     .bind(id, id, limit)
     .all();
 
-  const rawFacts: OmmFact[] = (factsRows.results || []).map((row: any) => ({
+  const rawFacts: OmmFact[] = (rawFactsRows.results || []).map((row: any) => ({
     subject_id: row.subject_id,
     predicate: row.predicate,
     object_ref: row.object_ref,
@@ -196,7 +194,7 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
     )
       .bind(...idsList)
       .all();
-    let fetchedNeighbors = (neighborRows.results || []).map(formatEntityRow);
+    const fetchedNeighbors = (neighborRows.results || []).map(formatEntityRow);
 
     // Sort to prefer Wikidata or canonical IDs
     fetchedNeighbors.sort((a, b) => {
@@ -208,14 +206,19 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
     const seenNames = new Set<string>();
     for (const n of fetchedNeighbors) {
       const labels = n.names.labels || {};
-      const rawName =
-        labels['zh-cn'] ||
-        labels.zh ||
-        labels['zh-hans'] ||
-        labels['zh-hant'] ||
-        labels.ja ||
-        labels.en ||
-        n.id;
+      const zh = labels['zh-cn'] || labels.zh || labels['zh-hans'] || labels['zh-hant'];
+      const ja = labels.ja;
+
+      let rawName = zh;
+      if (zh) {
+        // If zh label has no Han characters but Japanese does, prefer Japanese!
+        const hasHan = /[\u4e00-\u9fa5\u3040-\u30ff]/.test(zh);
+        if (!hasHan && ja && /[\u4e00-\u9fa5\u3040-\u30ff]/.test(ja)) {
+          rawName = ja;
+        }
+      }
+      rawName = rawName || ja || labels.en || n.id;
+
       const cleanName = normalizeSearchName(rawName);
       if (!cleanName) continue;
       const simpKey = toSimpKey(cleanName);
@@ -223,6 +226,9 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
 
       if (!seenNames.has(nameKey)) {
         seenNames.add(nameKey);
+        // Put the best label in standard zh field to ensure frontend displays it correctly
+        if (!n.names.labels) n.names.labels = {};
+        n.names.labels.zh = rawName;
         neighbors.push(n);
         validNeighborIdSet.add(n.id);
       }
@@ -238,14 +244,27 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
       validNeighborIdSet.has(f.object_ref),
   );
 
+  // 5. Dynamic Type Inferencing (Fix crawler misclassifications)
+  // If an entity is the subject of an 'author' edge, it must be a 'work'
+  // If an entity is the object of an 'author' edge, it must be an 'author'
+  const inferredTypes = new Map<string, string>();
+  for (const f of validFacts) {
+    if (f.predicate === 'author' || (f.predicate === 'aozora_role' && f.object_value === '著者')) {
+      inferredTypes.set(f.subject_id, 'work');
+      inferredTypes.set(f.object_ref, 'author');
+    }
+  }
+
   // Ensure KgEntity compatibility: `labels` directly on root
   const kgEntity = {
     ...entity,
+    type: inferredTypes.get(entity.id) || entity.type,
     labels: entity.names.labels || { '': entity.id },
   };
 
   const kgNeighbors = neighbors.map((n) => ({
     ...n,
+    type: inferredTypes.get(n.id) || n.type,
     labels: n.names.labels || { '': n.id },
   }));
 
