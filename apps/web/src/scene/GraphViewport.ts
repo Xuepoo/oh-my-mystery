@@ -97,18 +97,23 @@ export class GraphViewport {
   }
 
   async init(seedIds?: string[]): Promise<void> {
+    this.startLoop();
+
     const seeds =
       seedIds && seedIds.length > 0 ? seedIds : (await this.source.fetchSeeds()).map((s) => s.id);
     await this.session.bootstrap(seeds, false);
-
-    // Ingest top master author neighborhoods so the initial constellation has rich connection threads!
-    const topMasters = seeds.slice(0, 3);
-    for (const masterId of topMasters) {
-      await this.session.expand(masterId);
-    }
-
     this.fitToView();
-    this.startLoop();
+
+    // Asynchronously expand top 3 master authors in parallel without blocking initial paint
+    const topMasters = seeds.slice(0, 3);
+    setTimeout(() => {
+      Promise.all(topMasters.map((id) => this.session.expand(id)))
+        .then(() => {
+          (this.session as any).layout?.reheat?.(0.5);
+          this.fitToView();
+        })
+        .catch(() => {});
+    }, 120);
   }
 
   wakeUp(): void {
