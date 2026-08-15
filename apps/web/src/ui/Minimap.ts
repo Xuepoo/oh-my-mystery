@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { GraphViewport } from '../scene/GraphViewport';
-import { getCanvasCtx, getEventCoords, Theme } from './theme';
+import { getCanvasCtx, Theme } from './theme';
 
 export class Minimap extends Entity {
   private viewport: GraphViewport;
@@ -13,11 +13,6 @@ export class Minimap extends Entity {
     this.id = 'minimap';
     this.interactive = true;
     this.viewport = viewport;
-
-    this.on('pointerdown', (e: any) => {
-      const { x, y } = getEventCoords(e);
-      this.handleClick(x, y);
-    });
   }
 
   public handleClick(x: number, y: number): boolean {

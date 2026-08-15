@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { ChronicleStep, ChronicleTrail } from '@omm/shared';
-import { getCanvasCtx, getEventCoords, Theme } from './theme';
+import { getCanvasCtx, Theme } from './theme';
 
 export interface ChroniclePanelOptions {
   onClose: () => void;
@@ -26,12 +26,6 @@ export class ChroniclePanel extends Entity {
     this.interactive = true;
     this.onCloseCb = options.onClose;
     this.onStepChangeCb = options.onStepChange;
-
-    this.on('pointerdown', (e: any) => {
-      if (!this.isOpen) return;
-      const { x, y } = getEventCoords(e);
-      this.handleClick(x, y);
-    });
   }
 
   isPointInside(_x: number, _y: number): boolean {

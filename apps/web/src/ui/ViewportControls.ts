@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { GraphViewport } from '../scene/GraphViewport';
-import { getCanvasCtx, getEventCoords, Theme } from './theme';
+import { getCanvasCtx, Theme } from './theme';
 
 export class ViewportControls extends Entity {
   private viewport: GraphViewport;
@@ -14,11 +14,6 @@ export class ViewportControls extends Entity {
     this.id = 'viewport-controls';
     this.interactive = true;
     this.viewport = viewport;
-
-    this.on('pointerdown', (e: any) => {
-      const { x, y } = getEventCoords(e);
-      this.handleClick(x, y);
-    });
   }
 
   isPointInside(x: number, y: number): boolean {

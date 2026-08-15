@@ -12,6 +12,13 @@ async function bootstrap() {
 
   // Expose to window for testing / DevTools
   (window as any).__OMM_APP__ = app;
+
+  if (import.meta.hot) {
+    import.meta.hot.dispose(() => {
+      app.dispose();
+      delete (window as any).__OMM_APP__;
+    });
+  }
 }
 
 void bootstrap();

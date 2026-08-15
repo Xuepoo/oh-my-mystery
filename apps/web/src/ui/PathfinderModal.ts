@@ -1,7 +1,7 @@
 import { Entity } from '@vectojs/core';
 import type { PathfinderResult } from '@omm/shared';
 import type { D1DataSource } from '../api/D1DataSource';
-import { getCanvasCtx, getEventCoords, Theme } from './theme';
+import { getCanvasCtx, Theme } from './theme';
 
 export interface PathfinderModalOptions {
   source: D1DataSource;
@@ -27,6 +27,7 @@ export class PathfinderModal extends Entity {
   private targetName = '阿加莎·克里斯蒂';
   private searchLoading = false;
   private pathResult: PathfinderResult | null = null;
+  private searchEpoch = 0;
   private onCloseCb: () => void;
   private onHighlightPathCb: (
     nodeIds: string[],
@@ -75,12 +76,6 @@ export class PathfinderModal extends Entity {
     this.source = options.source;
     this.onCloseCb = options.onClose;
     this.onHighlightPathCb = options.onHighlightPath;
-
-    this.on('pointerdown', (e: any) => {
-      if (!this.isOpen) return;
-      const { x, y } = getEventCoords(e);
-      this.handleClick(x, y);
-    });
   }
 
   isPointInside(_x: number, _y: number): boolean {
@@ -119,11 +114,25 @@ export class PathfinderModal extends Entity {
   }
 
   async executeSearch(): Promise<void> {
+    if (this.searchLoading) return;
+    const epoch = ++this.searchEpoch;
     this.searchLoading = true;
+    this.pathResult = null;
     this.scene.markDirty();
-    this.pathResult = await this.source.findPath(this.sourceId, this.targetId);
-    this.searchLoading = false;
-    this.scene.markDirty();
+    try {
+      const result = await this.source.findPath(this.sourceId, this.targetId);
+      if (epoch !== this.searchEpoch) return;
+      this.pathResult = result;
+    } catch (err) {
+      if (epoch !== this.searchEpoch) return;
+      console.error('findPath failed', err);
+      this.pathResult = null;
+    } finally {
+      if (epoch === this.searchEpoch) {
+        this.searchLoading = false;
+        this.scene.markDirty();
+      }
+    }
   }
 
   render(r: any): void {
@@ -419,8 +428,8 @@ export class PathfinderModal extends Entity {
     }
 
     if (this.isInRect(clientX, clientY, this.highlightBtnRect) && this.pathResult?.found) {
-      const nodeIds = this.pathResult.nodes.map((n) => n.id);
-      this.onHighlightPathCb(nodeIds, this.pathResult.edges);
+      const nodeIds = (this.pathResult.nodes || []).map((n) => n.id);
+      this.onHighlightPathCb(nodeIds, this.pathResult.edges || []);
       this.close();
       return true;
     }
