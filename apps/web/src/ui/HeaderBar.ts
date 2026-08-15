@@ -165,6 +165,12 @@ export class HeaderBar extends Entity {
     container.appendChild(this.domInput);
   }
 
+  private hideDropdown(): void {
+    if (!this.showSearchDropdown) return;
+    this.showSearchDropdown = false;
+    this.scene.markDirty();
+  }
+
   isPointInside(_x: number, y: number): boolean {
     if (this.showSearchDropdown) return y <= 420;
     return y <= 64;
@@ -230,7 +236,9 @@ export class HeaderBar extends Entity {
 
     // 2. Position DOM Search Input
     const searchX = isMobile ? 68 : isTablet ? 245 : 290;
-    const searchW = isMobile ? Math.max(110, w - 68 - 140) : Math.min(260, w * 0.22);
+    const searchW = isMobile
+      ? Math.min(Math.max(80, w - 68 - 140), w - 76)
+      : Math.min(260, w * 0.22);
     this.searchInputRect = { x: searchX, y: 14, w: searchW, h: 36 };
 
     if (this.domInput) {
@@ -369,9 +377,9 @@ export class HeaderBar extends Entity {
 
     // 5. Search Results / Hot Queries Dropdown
     if (this.showSearchDropdown) {
-      const dropX = searchX;
       const dropY = 56;
-      const dropW = Math.max(320, searchW);
+      const dropW = Math.min(Math.max(320, searchW), this.scene.width - 16);
+      const dropX = Math.min(searchX, this.scene.width - dropW - 8);
 
       if (this.searchResults.length > 0) {
         // Render search hits
@@ -516,6 +524,7 @@ export class HeaderBar extends Entity {
     // 2. Filter Pills
     for (const f of this.filterPillRects) {
       if (this.isInRect(clientX, clientY, f)) {
+        this.hideDropdown();
         this.activeFilter = this.activeFilter === f.type ? null : f.type;
         this.onFilterChangeCb(this.activeFilter);
         return true;
@@ -524,18 +533,21 @@ export class HeaderBar extends Entity {
 
     // 3. Chronicles
     if (this.isInRect(clientX, clientY, this.chroniclesBtnRect)) {
+      this.hideDropdown();
       this.onOpenChroniclesCb();
       return true;
     }
 
     // 4. Pathfinder
     if (this.isInRect(clientX, clientY, this.pathfinderBtnRect)) {
+      this.hideDropdown();
       this.onOpenPathfinderCb();
       return true;
     }
 
     // 5. Fullscreen
     if (this.isInRect(clientX, clientY, this.fullscreenBtnRect)) {
+      this.hideDropdown();
       this.onToggleFullscreenCb();
       return true;
     }

@@ -117,10 +117,11 @@ export class ChroniclePanel extends Entity {
     const tabY = modalY + 58;
     this.trailTabRects = [];
 
+    const maxTabW = Math.min(220, (modalWidth - 48) / Math.max(1, this.trails.length) - 12);
     for (let i = 0; i < this.trails.length; i++) {
       const trail = this.trails[i]!;
       const isSelected = i === this.currentTrailIndex;
-      const tabW = 220;
+      const tabW = Math.max(90, maxTabW);
       const tabH = 32;
 
       this.trailTabRects.push({ index: i, x: tabX, y: tabY, w: tabW, h: tabH });
@@ -136,7 +137,8 @@ export class ChroniclePanel extends Entity {
       ctx.font = `600 12px ${Theme.fonts.sans}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(trail.title.zh || trail.title.en, tabX + tabW / 2, tabY + tabH / 2);
+      const tabLabel = trail.title.zh || trail.title.en || trail.slug;
+      ctx.fillText(tabLabel, tabX + tabW / 2, tabY + tabH / 2);
 
       tabX += tabW + 12;
     }
@@ -152,7 +154,7 @@ export class ChroniclePanel extends Entity {
     ctx.textBaseline = 'top';
     const introLines = this.wrapText(
       ctx,
-      trail.description.zh || trail.description.en,
+      trail.description.zh || trail.description.en || '',
       modalWidth - 48,
     );
     for (const l of introLines.slice(0, 2)) {
@@ -199,11 +201,18 @@ export class ChroniclePanel extends Entity {
     curY += 28;
 
     // Current Step Highlight Card (Illuminated Manuscript Style)
-    const step = trail.steps[this.currentStepIndex]!;
+    const step = trail.steps[Math.min(this.currentStepIndex, Math.max(0, trail.steps.length - 1))];
     const cardW = modalWidth - 48;
     const cardH = 160;
     const cardX = modalX + 24;
     const cardY = curY;
+
+    if (!step) {
+      ctx.fillStyle = Theme.colors.textMid;
+      ctx.font = `400 13px ${Theme.fonts.serif}`;
+      ctx.fillText('这条时间线暂时没有节点数据。', cardX, cardY + 20);
+      return;
+    }
 
     ctx.save();
     ctx.fillStyle = Theme.colors.bgCard;
@@ -254,12 +263,12 @@ export class ChroniclePanel extends Entity {
     ctx.font = `700 16px ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(step.title.zh || step.title.en, cardX + 120, cardY + 27);
+    ctx.fillText(step.title.zh || step.title.en || '', cardX + 120, cardY + 27);
 
     // Step Summary
     ctx.fillStyle = Theme.colors.textHigh;
     ctx.font = `400 13px ${Theme.fonts.serif}`;
-    const stepLines = this.wrapText(ctx, step.summary.zh || step.summary.en, cardW - 32);
+    const stepLines = this.wrapText(ctx, step.summary.zh || step.summary.en || '', cardW - 32);
     let stepY = cardY + 54;
     for (const l of stepLines.slice(0, 4)) {
       ctx.fillText(l, cardX + 16, stepY);

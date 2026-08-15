@@ -6,6 +6,7 @@ export class Minimap extends Entity {
   private viewport: GraphViewport;
   private widthPx = 170;
   private heightPx = 126;
+  private lastSweepTime = 0;
   private radarAngle = 0;
 
   constructor(viewport: GraphViewport) {
@@ -18,7 +19,9 @@ export class Minimap extends Entity {
   public handleClick(x: number, y: number): boolean {
     const startX = 24;
     const startY = this.scene ? this.scene.height - this.heightPx - 24 : 0;
-    if (x >= startX && x <= startX + this.widthPx && y >= startY && y <= startY + this.heightPx) {
+    // Only the map area (below the title strip) triggers fitToView
+    const mapTop = startY + 20;
+    if (x >= startX && x <= startX + this.widthPx && y >= mapTop && y <= startY + this.heightPx) {
       this.viewport.fitToView();
       return true;
     }
@@ -35,7 +38,11 @@ export class Minimap extends Entity {
     const ctx = getCanvasCtx(r);
     const startX = 24;
     const startY = this.scene.height - this.heightPx - 24;
-    this.radarAngle += 0.035;
+    const now = performance.now();
+    if (this.lastSweepTime === 0) this.lastSweepTime = now;
+    const dt = Math.min(0.1, (now - this.lastSweepTime) / 1000);
+    this.lastSweepTime = now;
+    this.radarAngle += dt * 2.2;
 
     // Minimap Container Frame
     ctx.save();
@@ -95,8 +102,9 @@ export class Minimap extends Entity {
 
       for (let i = 0; i < count; i++) {
         const node = nodes[i]!;
-        const px = node.x ?? 0;
-        const py = node.y ?? 0;
+        if (node.x === undefined || node.y === undefined) continue;
+        const px = node.x;
+        const py = node.y;
         if (px < minX) minX = px;
         if (px > maxX) maxX = px;
         if (py < minY) minY = py;
@@ -108,8 +116,9 @@ export class Minimap extends Entity {
 
       for (let i = 0; i < count; i++) {
         const node = nodes[i]!;
-        const px = node.x ?? 0;
-        const py = node.y ?? 0;
+        if (node.x === undefined || node.y === undefined) continue;
+        const px = node.x;
+        const py = node.y;
 
         const nx = innerX + ((px - minX) / spanX) * innerW;
         const ny = innerY + ((py - minY) / spanY) * innerH;

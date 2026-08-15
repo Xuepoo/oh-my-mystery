@@ -5,9 +5,10 @@ import { getCanvasCtx, Theme } from './theme';
 export class ViewportControls extends Entity {
   private viewport: GraphViewport;
 
-  private fitBtnRect = { x: 0, y: 0, w: 36, h: 36 };
-  private freezeBtnRect = { x: 0, y: 0, w: 36, h: 36 };
-  private resetBtnRect = { x: 0, y: 0, w: 36, h: 36 };
+  private fitBtnRect = { x: -100, y: -100, w: 36, h: 36 };
+  private freezeBtnRect = { x: -100, y: -100, w: 36, h: 36 };
+  private resetBtnRect = { x: -100, y: -100, w: 36, h: 36 };
+  private rendered = false;
 
   constructor(viewport: GraphViewport) {
     super();
@@ -17,9 +18,11 @@ export class ViewportControls extends Entity {
   }
 
   isPointInside(x: number, y: number): boolean {
+    if (!this.rendered) return false;
     const endX = this.scene ? this.scene.width - 24 : 0;
     const startY = this.scene ? this.scene.height - 60 : 0;
-    return x >= endX - 130 && x <= endX && y >= startY && y <= startY + 40;
+    // Button area only (no dead sliver left of the fit button)
+    return x >= endX - 128 && x <= endX && y >= startY && y <= startY + 40;
   }
 
   render(r: any): void {
@@ -32,21 +35,21 @@ export class ViewportControls extends Entity {
     this.fitBtnRect = { x: endX - 124, y: startY, w: 36, h: 36 };
 
     // 1. Fit to View Button
-    this.drawButton(ctx, this.fitBtnRect, '⌖', '视口居中');
+    this.drawButton(ctx, this.fitBtnRect, '⌖');
 
     // 2. Freeze Physics Button
     const isFrozen = this.viewport.isPhysicsFrozen();
-    this.drawButton(ctx, this.freezeBtnRect, isFrozen ? '🔥' : '🧊', isFrozen ? '解冻' : '冻结');
+    this.drawButton(ctx, this.freezeBtnRect, isFrozen ? '🔥' : '🧊');
 
-    // 3. Reset Zoom Button
-    this.drawButton(ctx, this.resetBtnRect, '🔄', '重置');
+    // 3. Reset Zoom Button (fits the graph back into view)
+    this.drawButton(ctx, this.resetBtnRect, '🔄');
+    this.rendered = true;
   }
 
   private drawButton(
     ctx: CanvasRenderingContext2D,
     rect: { x: number; y: number; w: number; h: number },
     icon: string,
-    _tooltip: string,
   ): void {
     ctx.save();
     ctx.fillStyle = 'rgba(30, 26, 23, 0.9)';

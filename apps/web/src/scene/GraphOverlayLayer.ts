@@ -517,12 +517,21 @@ export class GraphOverlayLayer extends Entity {
     ctx.textBaseline = 'middle';
     ctx.fillText(typeLabel.split(' / ')[0]!, cardX + 31, cardY + 18);
 
-    // Title
+    // Title (truncated to the card width)
     ctx.fillStyle = Theme.colors.textHigh;
     ctx.font = `700 13px ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(node.name, cardX + 58, cardY + 18);
+    const maxNameW = cardW - 68;
+    let displayName = node.name;
+    if (ctx.measureText(displayName).width > maxNameW) {
+      let cut = displayName;
+      while (cut.length > 1 && ctx.measureText(`${cut}…`).width > maxNameW) {
+        cut = cut.slice(0, -1);
+      }
+      displayName = `${cut}…`;
+    }
+    ctx.fillText(displayName, cardX + 58, cardY + 18);
 
     // Action Hint
     ctx.fillStyle = Theme.colors.textLow;
