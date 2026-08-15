@@ -44,6 +44,7 @@ export class App {
       pointBackend: 'canvas',
       particleBackend: 'auto',
       maxFPS: 60,
+      autoThrottle: false, // Disable 2 FPS idle throttle to ensure smooth continuous animations
     });
     this.scene.resize(window.innerWidth, window.innerHeight);
 

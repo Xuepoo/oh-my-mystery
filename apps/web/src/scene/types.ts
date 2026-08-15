@@ -15,6 +15,8 @@ export interface GraphNode2D {
   vy?: number;
   fx?: number | null;
   fy?: number | null;
+  sx?: number;
+  sy?: number;
 }
 
 export interface GraphLink2D {
