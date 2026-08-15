@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "vitest run"
+    "test": "bun test"
   },
   "dependencies": {
     "@omm/shared": "workspace:*",
