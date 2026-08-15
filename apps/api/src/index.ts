@@ -347,7 +347,7 @@ function toSimpKey(str: string): string {
 // 6. Search across multi-language names and aliases
 app.get('/api/search', async (c) => {
   const q = c.req.query('q')?.trim() || '';
-  const limit = Math.min(Number(c.req.query('limit') || 15), 30);
+  const limit = Math.min(Number(c.req.query('limit') || 8), 20);
 
   if (!q || q.length < 1) {
     const emptyResp: SearchResponse = { query: q, results: [] };
@@ -414,7 +414,7 @@ app.get('/api/search', async (c) => {
     // Filter out multi-author anthology conglomerate strings in author type (e.g. 2+ authors joined by 、 or /)
     if (row.type === 'author') {
       const commaCount = (cleanName.match(/[、,/]/g) || []).length;
-      if (commaCount >= 2 || (commaCount >= 1 && cleanName.length > 12)) {
+      if (commaCount >= 1) {
         continue;
       }
     }
