@@ -11,7 +11,6 @@ import type { GraphLink2D, GraphNode2D } from './types';
 
 export interface KnowledgeGraph2DOptions {
   source: D1DataSource;
-  onUpdate?: () => void;
 }
 
 export class KnowledgeGraph2D {
@@ -23,11 +22,9 @@ export class KnowledgeGraph2D {
   private expandedSet = new Set<string>();
 
   private simulation: Simulation<GraphNode2D, any> | null = null;
-  private onUpdateCb?: () => void;
 
   constructor(options: KnowledgeGraph2DOptions) {
     this.source = options.source;
-    this.onUpdateCb = options.onUpdate;
   }
 
   get nodes(): readonly GraphNode2D[] {
@@ -62,7 +59,7 @@ export class KnowledgeGraph2D {
       const node = seedNodes[i]!;
       // Arrange initial seeds in a harmonious golden spiral
       const angle = i * 2.39996; // Golden angle
-      const r = 40 + Math.sqrt(i) * 60;
+      const r = 35 + Math.sqrt(i) * 55;
       node.x = Math.cos(angle) * r;
       node.y = Math.sin(angle) * r;
       node.vx = 0;
@@ -90,13 +87,12 @@ export class KnowledgeGraph2D {
     for (let i = 0; i < nLen; i++) {
       const neighbor = neighborhood.neighbors[i]!;
       if (!this.nodesMap.has(neighbor.id)) {
-        // Spawn near the parent node with subtle outward offset
-        const angle = (i / Math.max(1, nLen)) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
-        const dist = 50 + Math.random() * 40;
+        const angle = (i / Math.max(1, nLen)) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+        const dist = 45 + Math.random() * 35;
         neighbor.x = cx + Math.cos(angle) * dist;
         neighbor.y = cy + Math.sin(angle) * dist;
-        neighbor.vx = (Math.random() - 0.5) * 2;
-        neighbor.vy = (Math.random() - 0.5) * 2;
+        neighbor.vx = (Math.random() - 0.5) * 1.5;
+        neighbor.vy = (Math.random() - 0.5) * 1.5;
 
         this.nodesMap.set(neighbor.id, neighbor);
         this.nodesList.push(neighbor);
@@ -121,7 +117,7 @@ export class KnowledgeGraph2D {
 
     if (addedCount > 0) {
       this.rebuildSimulation();
-      this.reheat(0.7);
+      this.reheat(0.6);
     }
 
     return addedCount;
@@ -139,6 +135,7 @@ export class KnowledgeGraph2D {
       predicate: link.predicate,
     }));
 
+    // Stop internal timer immediately — simulation will be ticked synchronously on each VectoJS frame
     this.simulation = forceSimulation(this.nodesList)
       .force(
         'link',
@@ -147,28 +144,32 @@ export class KnowledgeGraph2D {
           .distance((d: any) => {
             const src = d.source as GraphNode2D;
             const tgt = d.target as GraphNode2D;
-            if (src.type === 'author' && tgt.type === 'work') return 55;
-            if (src.type === 'author' && tgt.type === 'character') return 60;
-            return 75;
+            if (src.type === 'author' && tgt.type === 'work') return 50;
+            if (src.type === 'author' && tgt.type === 'character') return 55;
+            return 70;
           })
           .strength(0.35),
       )
-      .force('charge', forceManyBody().strength(-180).distanceMax(500))
-      .force('center', forceCenter(0, 0).strength(0.015))
+      .force('charge', forceManyBody().strength(-150).distanceMax(450))
+      .force('center', forceCenter(0, 0).strength(0.012))
       .force(
         'collide',
-        forceCollide().radius((d: any) => (d.type === 'author' ? 32 : 24)),
+        forceCollide().radius((d: any) => (d.type === 'author' ? 28 : 22)),
       )
-      .alphaDecay(0.022)
-      .velocityDecay(0.4)
-      .on('tick', () => {
-        this.onUpdateCb?.();
-      });
+      .alphaDecay(0.025)
+      .velocityDecay(0.38)
+      .stop();
+  }
+
+  step(): void {
+    if (this.simulation && this.simulation.alpha() >= 0.001) {
+      this.simulation.tick();
+    }
   }
 
   reheat(alpha = 0.5): void {
     if (this.simulation) {
-      this.simulation.alpha(alpha).restart();
+      this.simulation.alpha(Math.max(this.simulation.alpha(), alpha));
     }
   }
 
@@ -179,7 +180,9 @@ export class KnowledgeGraph2D {
       node.fy = y;
       node.x = x;
       node.y = y;
-      this.reheat(0.15);
+      if (this.simulation && this.simulation.alpha() < 0.25) {
+        this.simulation.alpha(0.25);
+      }
     }
   }
 

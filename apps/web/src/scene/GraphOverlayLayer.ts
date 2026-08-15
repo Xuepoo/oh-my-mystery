@@ -71,7 +71,7 @@ export class GraphOverlayLayer extends Entity {
 
     // Check world nodes directly via viewport
     const worldPos = this.viewport.screenToWorld(x, y);
-    return this.viewport.graph.findNodeAt(worldPos.x, worldPos.y, 24 / this.viewport.zoom);
+    return this.viewport.graph.findNodeAt(worldPos.x, worldPos.y, 26 / this.viewport.zoom);
   }
 
   private getCachedPill(ctx: CanvasRenderingContext2D, e: GraphNode2D): CachedPillInfo {
@@ -140,12 +140,22 @@ export class GraphOverlayLayer extends Entity {
       screenCoordMap.set(node.id, sc);
     }
 
-    // 2. Draw Relational Connection Threads (Links/Edges)
+    // 2. Batched Relational Connection Threads (Links/Edges)
     const links = this.viewport.getLinks();
     const hlEdges = this.viewport.getHighlightEdges();
     const hoveredId = this.hoveredEntity ? String(this.hoveredEntity.id) : null;
 
     ctx.save();
+    ctx.strokeStyle = 'rgba(243, 196, 118, 0.42)';
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+
+    const specialLinks: {
+      src: { x: number; y: number };
+      tgt: { x: number; y: number };
+      isHl: boolean;
+    }[] = [];
+
     for (let i = 0; i < links.length; i++) {
       const link = links[i]!;
       const srcId = typeof link.source === 'object' ? link.source.id : link.source;
@@ -168,29 +178,36 @@ export class GraphOverlayLayer extends Entity {
       const isHl = hlEdges.has(`${srcId}->${tgtId}`) || hlEdges.has(`${tgtId}->${srcId}`);
       const isHoverConn = hoveredId && (srcId === hoveredId || tgtId === hoveredId);
 
-      if (isHl) {
+      if (isHl || isHoverConn) {
+        specialLinks.push({ src, tgt, isHl: Boolean(isHl) });
+      } else {
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+      }
+    }
+    ctx.stroke();
+
+    // Draw Special / Highlighted Links
+    for (const sl of specialLinks) {
+      ctx.beginPath();
+      if (sl.isHl) {
         ctx.strokeStyle = '#FFE066';
         ctx.lineWidth = 2.8;
-      } else if (isHoverConn) {
+      } else {
         ctx.strokeStyle = '#FFAB38';
         ctx.lineWidth = 1.8;
-      } else {
-        ctx.strokeStyle = 'rgba(243, 196, 118, 0.45)';
-        ctx.lineWidth = 1.0;
       }
-
-      ctx.beginPath();
-      ctx.moveTo(src.x, src.y);
-      ctx.lineTo(tgt.x, tgt.y);
+      ctx.moveTo(sl.src.x, sl.src.y);
+      ctx.lineTo(sl.tgt.x, sl.tgt.y);
       ctx.stroke();
     }
     ctx.restore();
 
     // 3. Draw Gravitational Pulse Waves for Master Authors
-    const rippleR = 16 + this.ripplePhase * 32;
-    const rippleAlpha = (1 - this.ripplePhase) * 0.45;
+    const rippleR = 16 + this.ripplePhase * 30;
+    const rippleAlpha = (1 - this.ripplePhase) * 0.4;
     ctx.strokeStyle = `rgba(255, 217, 142, ${rippleAlpha.toFixed(3)})`;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
 
     const masterLimit = Math.min(6, nodeCount);
@@ -236,13 +253,18 @@ export class GraphOverlayLayer extends Entity {
       ctx.stroke();
     }
 
-    // 5. Draw Badges & Labels with Smart LOD
+    // 5. Draw Badges & Labels with Smart LOD (Skip corner regions under Minimap and Controls)
     let hoveredData: { entity: GraphNode2D; sx: number; sy: number } | null = null;
 
     for (let i = 0; i < nodeCount; i++) {
       const node = nodes[i]!;
       const sc = screenCoordMap.get(node.id);
       if (!sc || sc.x < -100 || sc.x > w + 100 || sc.y < 64 || sc.y > h + 50) continue;
+
+      // Skip rendering pills that fall directly behind bottom-left Minimap or bottom-right Controls
+      if ((sc.x < 215 && sc.y > h - 160) || (sc.x > w - 180 && sc.y > h - 100)) {
+        continue;
+      }
 
       const isHovered = this.hoveredEntity && this.hoveredEntity.id === node.id;
       if (isHovered) {

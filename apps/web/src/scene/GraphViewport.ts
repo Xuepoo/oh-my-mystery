@@ -182,6 +182,10 @@ export class GraphViewport {
   }
 
   update(): void {
+    if (!this.isFrozen) {
+      this.graph.step();
+    }
+
     if (this.isCameraAnimating) {
       const now = performance.now();
       const elapsed = now - this.animStartTime;

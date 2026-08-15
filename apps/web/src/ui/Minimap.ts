@@ -72,18 +72,16 @@ export class Minimap extends Entity {
     const innerW = this.widthPx - 24;
     const innerH = this.heightPx - 36;
 
+    // Clip inner radar and node content
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(innerX, innerY, innerW, innerH);
+    ctx.clip();
+
     // Radar Sweep Beam
     const mcx = innerX + innerW / 2;
     const mcy = innerY + innerH / 2;
     const mRadius = Math.min(innerW, innerH) / 2;
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(mcx, mcy, mRadius, 0, Math.PI * 2);
-    ctx.clip();
-
-    ctx.strokeStyle = 'rgba(243, 196, 118, 0.12)';
-    ctx.stroke();
 
     const sweepX = mcx + Math.cos(this.radarAngle) * mRadius;
     const sweepY = mcy + Math.sin(this.radarAngle) * mRadius;
@@ -93,7 +91,6 @@ export class Minimap extends Entity {
     ctx.moveTo(mcx, mcy);
     ctx.lineTo(sweepX, sweepY);
     ctx.stroke();
-    ctx.restore();
 
     if (count > 0) {
       let minX = Infinity;
@@ -131,20 +128,15 @@ export class Minimap extends Entity {
       // Camera Box Frame
       const topLeft = this.viewport.screenToWorld(0, 64);
       const bottomRight = this.viewport.screenToWorld(this.viewport.width, this.viewport.height);
-      const boxX = Math.max(
-        innerX,
-        Math.min(innerX + innerW, innerX + ((topLeft.x - minX) / spanX) * innerW),
-      );
-      const boxY = Math.max(
-        innerY,
-        Math.min(innerY + innerH, innerY + ((topLeft.y - minY) / spanY) * innerH),
-      );
-      const boxW = Math.max(10, Math.min(innerW, ((bottomRight.x - topLeft.x) / spanX) * innerW));
-      const boxH = Math.max(10, Math.min(innerH, ((bottomRight.y - topLeft.y) / spanY) * innerH));
+      const boxLeft = innerX + ((topLeft.x - minX) / spanX) * innerW;
+      const boxTop = innerY + ((topLeft.y - minY) / spanY) * innerH;
+      const boxW = Math.max(12, ((bottomRight.x - topLeft.x) / spanX) * innerW);
+      const boxH = Math.max(12, ((bottomRight.y - topLeft.y) / spanY) * innerH);
 
       ctx.strokeStyle = Theme.colors.borderActive;
-      ctx.lineWidth = 1.2;
-      ctx.strokeRect(boxX, boxY, boxW, boxH);
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(boxLeft, boxTop, boxW, boxH);
     }
+    ctx.restore();
   }
 }
