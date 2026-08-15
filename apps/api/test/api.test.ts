@@ -74,6 +74,18 @@ describe('OMM Backend API Endpoints', () => {
     expect(body.status).toBe('ok');
   });
 
+  it('GET /api/stats returns dataset statistics', async () => {
+    const res = await app.request('/api/stats', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.total).toBeGreaterThan(1000);
+    expect(body.byType.work).toBeGreaterThan(1000);
+    expect(body.byType.author).toBeGreaterThan(100);
+    expect(body.byType.award).toBeGreaterThan(10);
+    expect(body.facts).toBeGreaterThan(1000);
+    expect(body.awards).toBeGreaterThan(0);
+  });
+
   it('GET /api/seeds returns 20+ core master authors', async () => {
     const res = await app.request('/api/seeds', {}, mockEnv);
     expect(res.status).toBe(200);

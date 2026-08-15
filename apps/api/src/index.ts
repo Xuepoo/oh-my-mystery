@@ -123,6 +123,31 @@ app.get('/api/health', (c) => {
   });
 });
 
+// 1b. Global dataset statistics for the welcome layer
+app.get('/api/stats', async (c) => {
+  const byType = await c.env.DB.prepare(
+    'SELECT type, count(*) AS count FROM entities GROUP BY type',
+  ).all();
+  const counts: Record<string, number> = {};
+  let total = 0;
+  for (const row of byType.results || []) {
+    const t = String((row as { type: unknown }).type ?? 'unknown');
+    const n = Number((row as { count: unknown }).count ?? 0);
+    counts[t] = n;
+    total += n;
+  }
+  const facts = await c.env.DB.prepare('SELECT count(*) AS count FROM facts').first();
+  const awards = await c.env.DB.prepare(
+    "SELECT count(*) AS count FROM facts WHERE predicate = 'award_received'",
+  ).first();
+  return c.json({
+    total,
+    byType: counts,
+    facts: Number((facts as { count: unknown } | null)?.count ?? 0),
+    awards: Number((awards as { count: unknown } | null)?.count ?? 0),
+  });
+});
+
 // 2. Seed entities (20+ core detective fiction masters)
 app.get('/api/seeds', async (c) => {
   const placeholders = SEED_AUTHOR_IDS.map(() => '?').join(',');

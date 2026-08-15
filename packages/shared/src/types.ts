@@ -95,6 +95,13 @@ export interface SearchResponse {
   results: SearchResultItem[];
 }
 
+export interface StatsResponse {
+  total: number;
+  byType: Record<string, number>;
+  facts: number;
+  awards: number;
+}
+
 /** Helper to pick a primary label from EntityNames given target language. */
 export function getEntityDisplayName(names: EntityNames, lang = 'zh'): string {
   const labels = names.labels || {};

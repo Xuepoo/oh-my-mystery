@@ -13,6 +13,7 @@ import { Minimap } from './ui/Minimap';
 import { PathfinderModal } from './ui/PathfinderModal';
 import { getEventCoords } from './ui/theme';
 import { ViewportControls } from './ui/ViewportControls';
+import { WelcomeLayer } from './ui/WelcomeLayer';
 
 export class App {
   readonly scene: Scene;
@@ -27,6 +28,7 @@ export class App {
   readonly chroniclePanel: ChroniclePanel;
   readonly pathfinderModal: PathfinderModal;
   readonly helpModal: HelpModal;
+  readonly welcomeLayer: WelcomeLayer;
   readonly minimap: Minimap;
   readonly controls: ViewportControls;
 
@@ -144,6 +146,20 @@ export class App {
     this.helpModal = new HelpModal();
     this.scene.add(this.helpModal);
 
+    this.welcomeLayer = new WelcomeLayer({
+      source: this.source,
+      onSelectEntity: (id) => {
+        void this.handleSelectNode(id);
+      },
+      onOpenHelp: () => {
+        this.pathfinderModal.close();
+        this.chroniclePanel.close();
+        this.drawer.close();
+        this.helpModal.open();
+      },
+    });
+    this.scene.add(this.welcomeLayer);
+
     this.minimap = new Minimap(this.viewport);
     this.scene.add(this.minimap);
 
@@ -194,6 +210,10 @@ export class App {
       }
       if (this.headerBar.isPointInside(x, y)) {
         this.headerBar.handleClick(x, y);
+        return;
+      }
+      if (this.welcomeLayer.isPointInside(x, y)) {
+        this.welcomeLayer.handleClick(x, y);
         return;
       }
       if (this.minimap.isPointInside(x, y)) {

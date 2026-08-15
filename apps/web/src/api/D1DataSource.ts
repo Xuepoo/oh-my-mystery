@@ -3,6 +3,7 @@ import type {
   EntityDetailResponse,
   PathfinderResult,
   SearchResponse,
+  StatsResponse,
 } from '@omm/shared';
 import type { GraphLink2D, GraphNeighborhood2D, GraphNode2D, NodeId } from '../scene/types';
 import { pickNodeLabel } from '../scene/types';
@@ -231,6 +232,19 @@ export class D1DataSource {
     } catch (err) {
       console.error('Fetch chronicles failed', err);
       return [];
+    }
+  }
+
+  async fetchStats(): Promise<StatsResponse | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/stats`, {
+        headers: this.getHeaders(),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as StatsResponse;
+    } catch (err) {
+      console.error('Fetch stats failed', err);
+      return null;
     }
   }
 }
