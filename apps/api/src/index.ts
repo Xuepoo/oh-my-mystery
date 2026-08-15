@@ -151,11 +151,15 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
       };
 
   // 2. Fetch facts (both outbound and inbound, where object_ref is a valid entity reference)
+  // We filter out misleading predicates (like translator or non-author aozora roles)
+  // so the graph primarily shows works they actually authored.
   const factsRows = await c.env.DB.prepare(
     `
     SELECT * FROM facts 
-    WHERE (subject_id = ? AND object_ref IS NOT NULL AND object_ref != '')
-       OR (object_ref = ? AND subject_id IS NOT NULL AND subject_id != '')
+    WHERE ((subject_id = ? AND object_ref IS NOT NULL AND object_ref != '')
+       OR (object_ref = ? AND subject_id IS NOT NULL AND subject_id != ''))
+       AND predicate NOT IN ('translator', 'publisher', 'publisher_name')
+       AND (predicate != 'aozora_role' OR object_value = '著者')
     LIMIT ?
   `,
   )
@@ -192,9 +196,36 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
     )
       .bind(...idsList)
       .all();
-    neighbors = (neighborRows.results || []).map(formatEntityRow);
-    for (const n of neighbors) {
-      validNeighborIdSet.add(n.id);
+    let fetchedNeighbors = (neighborRows.results || []).map(formatEntityRow);
+
+    // Sort to prefer Wikidata or canonical IDs
+    fetchedNeighbors.sort((a, b) => {
+      const aWd = a.id.startsWith('wd:') ? 0 : 1;
+      const bWd = b.id.startsWith('wd:') ? 0 : 1;
+      return aWd - bWd;
+    });
+
+    const seenNames = new Set<string>();
+    for (const n of fetchedNeighbors) {
+      const labels = n.names.labels || {};
+      const rawName =
+        labels['zh-cn'] ||
+        labels.zh ||
+        labels['zh-hans'] ||
+        labels['zh-hant'] ||
+        labels.ja ||
+        labels.en ||
+        n.id;
+      const cleanName = normalizeSearchName(rawName);
+      if (!cleanName) continue;
+      const simpKey = toSimpKey(cleanName);
+      const nameKey = `${n.type}|${simpKey}`;
+
+      if (!seenNames.has(nameKey)) {
+        seenNames.add(nameKey);
+        neighbors.push(n);
+        validNeighborIdSet.add(n.id);
+      }
     }
   }
 
