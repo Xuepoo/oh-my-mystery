@@ -28,6 +28,7 @@ export class PathfinderModal extends Entity {
   private searchLoading = false;
   private pathResult: PathfinderResult | null = null;
   private searchEpoch = 0;
+  private modalRect = { x: 0, y: 0, w: 0, h: 0 };
   private onCloseCb: () => void;
   private onHighlightPathCb: (
     nodeIds: string[],
@@ -143,6 +144,7 @@ export class PathfinderModal extends Entity {
     const modalHeight = Math.min(520, this.scene.height * 0.9);
     const modalX = (this.scene.width - modalWidth) / 2;
     const modalY = (this.scene.height - modalHeight) / 2;
+    this.modalRect = { x: modalX, y: modalY, w: modalWidth, h: modalHeight };
 
     // Dim Background Overlay
     ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
@@ -299,7 +301,7 @@ export class PathfinderModal extends Entity {
 
     // Results Display Area
     const curY = modalY + 196;
-    const resAreaH = modalHeight - 256;
+    const resAreaH = Math.max(80, modalHeight - 256);
 
     if (this.pathResult) {
       if (this.pathResult.found) {
@@ -317,7 +319,11 @@ export class PathfinderModal extends Entity {
         ctx.textBaseline = 'top';
         ctx.fillText(`✓ ${this.pathResult.explanation}`, modalX + 38, curY + 14);
 
-        // Path Nodes Chain
+        // Path Nodes Chain (clipped to the results area)
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(modalX + 24, curY, modalWidth - 48, resAreaH);
+        ctx.clip();
         let nodeY = curY + 42;
         const nodes = this.pathResult.nodes || [];
         for (let i = 0; i < nodes.length; i++) {
@@ -359,6 +365,7 @@ export class PathfinderModal extends Entity {
 
           nodeY += 34;
         }
+        ctx.restore();
 
         // Highlight in Graph Button
         const hY = modalY + modalHeight - 48;
@@ -430,6 +437,11 @@ export class PathfinderModal extends Entity {
     if (this.isInRect(clientX, clientY, this.highlightBtnRect) && this.pathResult?.found) {
       const nodeIds = (this.pathResult.nodes || []).map((n) => n.id);
       this.onHighlightPathCb(nodeIds, this.pathResult.edges || []);
+      this.close();
+      return true;
+    }
+
+    if (!this.isInRect(clientX, clientY, this.modalRect)) {
       this.close();
       return true;
     }

@@ -102,26 +102,8 @@ export class CasefileDrawer extends Entity {
     let curY = 24 - this.scrollY;
 
     // Header Bar
-    // Close Button [✕]
+    // (close button is drawn last so scrolling content never overlaps it)
     this.closeBtnRect = { x: startX + drawerWidth - 44, y: 16, w: 32, h: 32 };
-    ctx.fillStyle = Theme.colors.bgCard;
-    ctx.beginPath();
-    ctx.roundRect(
-      this.closeBtnRect.x,
-      this.closeBtnRect.y,
-      this.closeBtnRect.w,
-      this.closeBtnRect.h,
-      6,
-    );
-    ctx.fill();
-    ctx.strokeStyle = Theme.colors.border;
-    ctx.stroke();
-
-    ctx.fillStyle = Theme.colors.textHigh;
-    ctx.font = `600 16px ${Theme.fonts.sans}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('✕', this.closeBtnRect.x + 16, this.closeBtnRect.y + 16);
 
     // Entity Type Badge
     const typeLabel = Theme.getNodeTypeLabel(entity.type);
@@ -340,6 +322,25 @@ export class CasefileDrawer extends Entity {
     }
 
     this.maxScrollY = Math.max(0, curY + this.scrollY - drawerHeight + 40);
+
+    // Sticky close button drawn on top of scrolled content
+    ctx.fillStyle = Theme.colors.bgCard;
+    ctx.beginPath();
+    ctx.roundRect(
+      this.closeBtnRect.x,
+      this.closeBtnRect.y,
+      this.closeBtnRect.w,
+      this.closeBtnRect.h,
+      6,
+    );
+    ctx.fill();
+    ctx.strokeStyle = Theme.colors.border;
+    ctx.stroke();
+    ctx.fillStyle = Theme.colors.textHigh;
+    ctx.font = `600 16px ${Theme.fonts.sans}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('✕', this.closeBtnRect.x + 16, this.closeBtnRect.y + 16);
   }
 
   public handleClick(clientX: number, clientY: number): boolean {
