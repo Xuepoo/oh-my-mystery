@@ -5,6 +5,7 @@ import { Theme } from '../ui/theme';
 
 export interface GraphViewportOptions {
   canvas: HTMLCanvasElement;
+  eventElement?: HTMLElement;
   source: D1DataSource;
   onSelectNode: (entity: KgEntity | null) => void;
   onHoverNode: (entity: KgEntity | null) => void;
@@ -12,13 +13,14 @@ export interface GraphViewportOptions {
 
 export class GraphViewport {
   private canvas: HTMLCanvasElement;
+  private eventElement: HTMLElement;
   private source: D1DataSource;
   private renderer: THREE.WebGLRenderer;
   private threeScene: THREE.Scene;
   private session: KnowledgeGraphSession;
   private animFrameId: number | null = null;
-  private isSettled = false;
   private isFrozen = false;
+  private isDisposed = false;
   private activeHighlightNodes = new Set<string>();
   private activeHighlightEdges = new Set<string>();
   private onSelectCb: (entity: KgEntity | null) => void;
@@ -26,6 +28,7 @@ export class GraphViewport {
 
   constructor(options: GraphViewportOptions) {
     this.canvas = options.canvas;
+    this.eventElement = options.eventElement || options.canvas;
     this.source = options.source;
     this.onSelectCb = options.onSelectNode;
     this.onHoverCb = options.onHoverNode;
@@ -45,42 +48,37 @@ export class GraphViewport {
     this.threeScene = new THREE.Scene();
 
     // Add bright ambient & directional lights for MeshLambertMaterial
-    const ambientLight = new THREE.AmbientLight(0xfff8ee, 2.0);
+    const ambientLight = new THREE.AmbientLight(0xfff8ee, 2.2);
     this.threeScene.add(ambientLight);
 
-    const dirLight = new THREE.DirectionalLight(0xfffae6, 2.2);
+    const dirLight = new THREE.DirectionalLight(0xfffae6, 2.4);
     dirLight.position.set(150, 250, 350);
     this.threeScene.add(dirLight);
 
-    const backLight = new THREE.DirectionalLight(0x88ccff, 1.2);
+    const backLight = new THREE.DirectionalLight(0x88ccff, 1.4);
     backLight.position.set(-150, -250, 200);
     this.threeScene.add(backLight);
 
-    // 2. Initialize KnowledgeGraphSession in 2D Mode
+    // 2. Initialize KnowledgeGraphSession in 2D Mode on eventElement
     this.session = new KnowledgeGraphSession({
-      domElement: this.canvas,
+      domElement: this.eventElement,
       source: this.source,
       mode: '2d',
       lang: 'zh',
-      expandOnSelect: true,
+      expandOnSelect: false,
       graphOptions: {
-        nodeRadius: 1.1,
-        linkOpacity: 0.85,
+        nodeRadius: 1.2,
+        linkOpacity: 0.9,
         linkColor: Theme.colors.edgeDefault,
         nodeColor: Theme.colors.author,
       },
       onSelect: (entity) => {
         this.onSelectCb(entity);
-        this.wakeUp();
       },
       onHover: (entity) => {
         this.onHoverCb(entity);
       },
-      onExpand: (_entity, added) => {
-        if (added > 0) {
-          this.wakeUp();
-        }
-      },
+      onExpand: () => {},
     });
 
     this.session.attach(this.threeScene);
@@ -94,27 +92,31 @@ export class GraphViewport {
     return (this.session as any).layout?.positions;
   }
 
+  setControlsEnabled(enabled: boolean): void {
+    this.session.camera.setEnabled(enabled);
+  }
+
   async init(seedIds?: string[]): Promise<void> {
     const seeds =
       seedIds && seedIds.length > 0 ? seedIds : (await this.source.fetchSeeds()).map((s) => s.id);
-
     await this.session.bootstrap(seeds, false);
+
+    // Ingest top master author neighborhoods so the initial constellation has rich connection threads!
+    const topMasters = seeds.slice(0, 3);
+    for (const masterId of topMasters) {
+      await this.session.expand(masterId);
+    }
+
     this.fitToView();
     this.startLoop();
   }
 
   wakeUp(): void {
-    this.isSettled = false;
-    if (this.animFrameId == null) {
-      this.startLoop();
-    }
+    // Continuous 60fps loop is active
   }
 
   freeze(frozen: boolean): void {
     this.isFrozen = frozen;
-    if (!frozen) {
-      this.wakeUp();
-    }
   }
 
   isPhysicsFrozen(): boolean {
@@ -126,7 +128,6 @@ export class GraphViewport {
     if (positions && positions.length > 0) {
       this.session.camera.fitToPositions(positions);
     }
-    this.wakeUp();
   }
 
   resetZoom(): void {
@@ -135,7 +136,7 @@ export class GraphViewport {
 
   async expandNode(id: string): Promise<number> {
     const added = await this.session.expand(id);
-    this.wakeUp();
+    (this.session as any).layout?.reheat?.(0.8);
     return added;
   }
 
@@ -152,7 +153,6 @@ export class GraphViewport {
         }
       }
     }
-    this.wakeUp();
   }
 
   private glideCameraTo(tx: number, ty: number): void {
@@ -163,6 +163,7 @@ export class GraphViewport {
     const maxSteps = 24;
 
     const anim = () => {
+      if (this.isDisposed) return;
       step++;
       const progress = step / maxSteps;
       // Smooth ease-out cubic
@@ -171,7 +172,6 @@ export class GraphViewport {
       cam.position.y = startY + (ty - startY) * ease;
       (cam as any).lookAt?.(cam.position.x, cam.position.y, 0);
       (this.session.camera as any).target?.set(cam.position.x, cam.position.y, 0);
-      this.wakeUp();
 
       if (step < maxSteps) {
         requestAnimationFrame(anim);
@@ -191,14 +191,11 @@ export class GraphViewport {
       this.activeHighlightEdges.add(`${e.source}->${e.target}`);
       this.activeHighlightEdges.add(`${e.target}->${e.source}`);
     }
-
-    this.wakeUp();
   }
 
   clearHighlight(): void {
     this.activeHighlightNodes.clear();
     this.activeHighlightEdges.clear();
-    this.wakeUp();
   }
 
   resize(width: number, height: number): void {
@@ -206,7 +203,6 @@ export class GraphViewport {
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(width, height, false);
     this.session.setSize(width, height);
-    this.wakeUp();
   }
 
   getEntities(): KgEntity[] {
@@ -221,15 +217,12 @@ export class GraphViewport {
     if (this.animFrameId != null) return;
 
     const frame = () => {
-      if (!this.isFrozen) {
-        this.isSettled = this.session.tick(1);
-      }
-      this.session.render(this.renderer, this.threeScene);
-
-      if (!this.isSettled && !this.isFrozen) {
+      if (!this.isDisposed) {
+        if (!this.isFrozen) {
+          this.session.tick(1);
+        }
+        this.session.render(this.renderer, this.threeScene);
         this.animFrameId = requestAnimationFrame(frame);
-      } else {
-        this.animFrameId = null;
       }
     };
 
@@ -237,6 +230,7 @@ export class GraphViewport {
   }
 
   dispose(): void {
+    this.isDisposed = true;
     if (this.animFrameId != null) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;

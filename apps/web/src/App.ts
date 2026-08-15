@@ -45,6 +45,7 @@ export class App {
     // 2. Initialize 2D Knowledge Graph Viewport on the Graph Canvas
     this.viewport = new GraphViewport({
       canvas: this.graphCanvas,
+      eventElement: this.uiCanvas,
       source: this.source,
       onSelectNode: (entity) => {
         if (entity) {
@@ -68,16 +69,20 @@ export class App {
     this.headerBar = new HeaderBar({
       source: this.source,
       onOpenChronicles: () => {
+        this.pathfinderModal.close();
+        this.drawer.close();
         void this.handleOpenChronicles();
       },
       onOpenPathfinder: () => {
+        this.chroniclePanel.close();
+        this.drawer.close();
         this.pathfinderModal.open();
       },
       onSelectSearchResult: (id) => {
         void this.handleSelectNode(id);
       },
-      onFilterChange: (_type) => {
-        this.viewport.wakeUp();
+      onFilterChange: (type) => {
+        this.overlayLayer.setActiveFilter(type);
       },
       onToggleFullscreen: () => {
         this.toggleFullscreen();
@@ -93,6 +98,7 @@ export class App {
         void this.handleSelectNode(id);
       },
       onStartPathfinder: (id, name) => {
+        this.drawer.close();
         this.pathfinderModal.open({ id, name });
       },
       onExpandNode: (id) => {
@@ -156,7 +162,10 @@ export class App {
       dragStartX = x;
       dragStartY = y;
 
-      // 1. Direct Dispatch to UI Components when clicking UI areas
+      const isOverUI = this.isUIHovered(x, y);
+      this.viewport.setControlsEnabled(!isOverUI);
+
+      // Direct Dispatch to UI Components when clicking UI areas
       if (this.pathfinderModal.isModalOpen()) {
         this.pathfinderModal.handleClick(x, y);
         return;
@@ -181,9 +190,6 @@ export class App {
         this.minimap.handleClick(x, y);
         return;
       }
-
-      // 2. Forward to 3D graph canvas for panning
-      this.graphCanvas.dispatchEvent(new PointerEvent('pointerdown', e));
     });
 
     this.uiCanvas.addEventListener('pointermove', (e: PointerEvent) => {
@@ -193,11 +199,13 @@ export class App {
         isDragging = true;
       }
 
-      if (!this.isUIHovered(x, y)) {
+      const isOverUI = this.isUIHovered(x, y);
+      this.viewport.setControlsEnabled(!isOverUI);
+
+      if (!isOverUI) {
         const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
         this.overlayLayer.setHoveredEntity(hitNode);
-        this.uiCanvas.style.cursor = hitNode ? 'pointer' : 'grab';
-        this.graphCanvas.dispatchEvent(new PointerEvent('pointermove', e));
+        this.uiCanvas.style.cursor = hitNode ? 'pointer' : isDragging ? 'grabbing' : 'grab';
       } else {
         this.overlayLayer.setHoveredEntity(null);
         this.uiCanvas.style.cursor = 'default';
@@ -218,7 +226,6 @@ export class App {
             this.drawer.close();
           }
         }
-        this.graphCanvas.dispatchEvent(new PointerEvent('pointerup', e));
       }
     });
 
@@ -227,15 +234,10 @@ export class App {
       (e: WheelEvent) => {
         const x = e.clientX;
         const y = e.clientY;
-        if (this.drawer.isDrawerOpen() && this.drawer.isPointInside(x, y)) {
-          // Handled in drawer
-          return;
-        }
-        if (!this.isUIHovered(x, y)) {
-          this.graphCanvas.dispatchEvent(new WheelEvent('wheel', e));
-        }
+        const isOverUI = this.isUIHovered(x, y);
+        this.viewport.setControlsEnabled(!isOverUI);
       },
-      { passive: false },
+      { passive: true },
     );
   }
 

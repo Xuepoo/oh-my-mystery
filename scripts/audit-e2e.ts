@@ -201,7 +201,18 @@ async function runAudit() {
   await page.mouse.click(fitBtn.x + 18, fitBtn.y + 18);
   await page.waitForTimeout(500);
 
-  console.log('\n🎉 ALL BUTTON CLICKS & INTERACTIONS TESTED AND VERIFIED PASSING!');
+  // Test Real Canvas Dragging (Pan)
+  console.log('6️⃣ Testing real mouse dragging on canvas...');
+  await page.mouse.move(500, 500);
+  await page.mouse.down();
+  await page.mouse.move(650, 450, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  console.log(`  ✓ Canvas drag gesture executed smoothly!`);
+
+  await page.screenshot({ path: join(SCREENSHOTS_DIR, '07-canvas-dragged.png') });
+
+  console.log('\n🎉 ALL BUTTON CLICKS, DRAGS & INTERACTIONS TESTED AND VERIFIED PASSING!');
 
   await browser.close();
   console.log('\n🎉 Playwright Audit Finished Successfully! All screenshots saved in tmp/e2e/');

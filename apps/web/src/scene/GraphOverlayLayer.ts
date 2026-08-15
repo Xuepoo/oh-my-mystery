@@ -35,6 +35,7 @@ export class GraphOverlayLayer extends Entity {
   private nodeBadges: NodeScreenBadge[] = [];
   private badgePool: NodeScreenBadge[] = [];
   private pillCache = new Map<string, CachedPillInfo>();
+  private activeFilter: string | null = null;
 
   constructor(viewport: GraphViewport) {
     super();
@@ -45,6 +46,10 @@ export class GraphOverlayLayer extends Entity {
 
   isPointInside(_x: number, _y: number): boolean {
     return false;
+  }
+
+  setActiveFilter(filter: string | null): void {
+    this.activeFilter = filter;
   }
 
   setHoveredEntity(e: KgEntity | null): void {
@@ -176,7 +181,8 @@ export class GraphOverlayLayer extends Entity {
       }
 
       const pillInfo = this.getCachedPill(ctx, e);
-      const showFullBadge = pillInfo.isAuthor || isHovered || nodeCount <= 40;
+      const matchesFilter = !this.activeFilter || e.type === this.activeFilter;
+      const showFullBadge = (pillInfo.isAuthor || isHovered || nodeCount <= 50) && matchesFilter;
 
       if (showFullBadge) {
         const pillW = pillInfo.pillW;
