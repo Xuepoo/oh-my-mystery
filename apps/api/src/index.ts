@@ -214,7 +214,7 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
     SELECT * FROM facts 
     WHERE ((subject_id = ? AND object_ref IS NOT NULL AND object_ref != '')
        OR (object_ref = ? AND subject_id IS NOT NULL AND subject_id != ''))
-       AND predicate NOT IN ('translator', 'publisher', 'publisher_name', 'genre')
+       AND predicate NOT IN ('translator', 'publisher_name', 'genre')
        AND (predicate != 'aozora_role' OR object_value = '著者')
     LIMIT ?
   `,

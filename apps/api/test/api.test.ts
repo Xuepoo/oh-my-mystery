@@ -105,6 +105,17 @@ describe('OMM Backend API Endpoints', () => {
     expect(body.neighbors.length).toBeGreaterThan(0);
   });
 
+  it('GET /api/entity/:id/neighbors includes publisher neighbors for works', async () => {
+    const res = await app.request('/api/entity/wd:Q710681/neighbors', {}, mockEnv); // Byakuyako
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    const publishers = (body.neighbors as any[]).filter((n) => n.type === 'publisher');
+    expect(publishers.length).toBeGreaterThan(0);
+    expect(publishers[0].names.labels.zh).toContain('南海出版公司');
+    const publisherFacts = (body.facts as any[]).filter((f) => f.predicate === 'publisher');
+    expect(publisherFacts.length).toBeGreaterThan(0);
+  });
+
   it('GET /api/entity/:id/details returns recommendations and metadata', async () => {
     const res = await app.request('/api/entity/wd:Q125970/details', {}, mockEnv); // Keigo Higashino
     expect(res.status).toBe(200);

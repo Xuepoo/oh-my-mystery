@@ -263,6 +263,7 @@ export class HeaderBar extends Entity {
         { type: 'work', label: '作品' },
         { type: 'award', label: '奖项' },
         { type: 'character', label: '名侦探' },
+        { type: 'publisher', label: '出版社' },
       ];
 
       this.filterPillRects = [];
