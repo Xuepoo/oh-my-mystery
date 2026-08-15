@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { EntityDetailResponse } from '@omm/shared';
-import { getCanvasCtx, getEventCoords, Theme } from './theme';
+import { getCanvasCtx, Theme } from './theme';
 
 export interface CasefileDrawerOptions {
   onClose: () => void;
@@ -33,19 +33,14 @@ export class CasefileDrawer extends Entity {
     this.onSelectEntityCb = options.onSelectEntity;
     this.onStartPathfinderCb = options.onStartPathfinder;
     this.onExpandNodeCb = options.onExpandNode;
+    // Pointer input is dispatched from App.ts canvas listeners (entity-level
+    // events never fire without an a11y projection on this entity).
+  }
 
-    this.on('pointerdown', (e: any) => {
-      if (!this.isOpen) return;
-      const { x, y } = getEventCoords(e);
-      this.handleClick(x, y);
-    });
-
-    this.on('wheel', (e: any) => {
-      if (!this.isOpen) return;
-      const delta = e.deltaY ?? e.rawEvent?.deltaY ?? 0;
-      this.scrollY = Math.max(0, Math.min(this.maxScrollY, this.scrollY + delta * 0.6));
-      this.scene.markDirty();
-    });
+  handleWheel(delta: number): void {
+    if (!this.isOpen) return;
+    this.scrollY = Math.max(0, Math.min(this.maxScrollY, this.scrollY + delta * 0.6));
+    this.scene.markDirty();
   }
 
   isPointInside(x: number, _y: number): boolean {

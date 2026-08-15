@@ -27,10 +27,16 @@ export class BackgroundLayer extends Entity {
     this.initParticles(24);
 
     // Track mouse for particle interaction
-    window.addEventListener('pointermove', (e) => {
-      this.mouseX = e.clientX;
-      this.mouseY = e.clientY;
-    });
+    window.addEventListener('pointermove', this.onPointerMove);
+  }
+
+  private onPointerMove = (e: PointerEvent): void => {
+    this.mouseX = e.clientX;
+    this.mouseY = e.clientY;
+  };
+
+  public dispose(): void {
+    window.removeEventListener('pointermove', this.onPointerMove);
   }
 
   private initParticles(count: number): void {

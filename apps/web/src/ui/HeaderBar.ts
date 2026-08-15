@@ -1,7 +1,7 @@
 import { Entity } from '@vectojs/core';
 import type { SearchResultItem } from '@omm/shared';
 import type { D1DataSource } from '../api/D1DataSource';
-import { getCanvasCtx, getEventCoords, Theme } from './theme';
+import { getCanvasCtx, Theme } from './theme';
 
 export interface HeaderBarOptions {
   source: D1DataSource;
@@ -26,6 +26,7 @@ export class HeaderBar extends Entity {
   private activeFilter: string | null = null;
   private domInput: HTMLInputElement | null = null;
   private debounceTimer: any = null;
+  private searchEpoch = 0;
 
   private searchInputRect = { x: 0, y: 0, w: 0, h: 0 };
   private fullscreenBtnRect = { x: 0, y: 0, w: 0, h: 0 };
@@ -73,20 +74,22 @@ export class HeaderBar extends Entity {
 
     this.initDomInput();
 
-    this.on('pointerdown', (e: any) => {
-      const { x, y } = getEventCoords(e);
-      this.handleClick(x, y);
-    });
-
     // Native text input shortcut for searching
-    window.addEventListener('keydown', (e) => {
-      if (e.key === '/' && document.activeElement !== this.domInput) {
-        e.preventDefault();
-        this.domInput?.focus();
-        this.showSearchDropdown = true;
-        this.scene.markDirty();
-      }
-    });
+    window.addEventListener('keydown', this.onWindowKeydown);
+  }
+
+  private onWindowKeydown = (e: KeyboardEvent): void => {
+    if (e.key === '/' && document.activeElement !== this.domInput) {
+      e.preventDefault();
+      this.domInput?.focus();
+      this.showSearchDropdown = true;
+      this.scene?.markDirty();
+    }
+  };
+
+  public dispose(): void {
+    window.removeEventListener('keydown', this.onWindowKeydown);
+    this.domInput?.remove();
   }
 
   private initDomInput(): void {
@@ -169,6 +172,7 @@ export class HeaderBar extends Entity {
 
   setSearchQuery(q: string): void {
     this.searchQuery = q.trim();
+    const epoch = ++this.searchEpoch;
     if (!this.searchQuery) {
       this.searchResults = [];
       this.scene.markDirty();
@@ -177,13 +181,19 @@ export class HeaderBar extends Entity {
     this.source
       .search(this.searchQuery)
       .then((res) => {
+        if (epoch !== this.searchEpoch) return;
         this.searchResults = res.results;
-        this.showSearchDropdown = true;
+        if (this.searchQuery.length > 0) {
+          this.showSearchDropdown = true;
+        }
         this.scene.markDirty();
       })
       .catch((err) => {
+        if (epoch !== this.searchEpoch) return;
         console.error('Search failed', err);
         this.searchResults = [];
+        this.showSearchDropdown = false;
+        this.scene.markDirty();
       });
   }
 

@@ -34,6 +34,7 @@ export class App {
   private draggedNode: GraphNode2D | null = null;
   private pointerDownPos = { x: 0, y: 0 };
   private lastPointerPos = { x: 0, y: 0 };
+  private selectEpoch = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -142,9 +143,7 @@ export class App {
     this.setupInteractions();
 
     // 5. Handle Window Resize
-    window.addEventListener('resize', () => {
-      this.handleResize();
-    });
+    window.addEventListener('resize', this.onResize);
   }
 
   private isEventOverUI(x: number, y: number): boolean {
@@ -203,56 +202,67 @@ export class App {
       }
     });
 
-    window.addEventListener('pointermove', (e) => {
-      const { x, y } = getEventCoords(e);
+    window.addEventListener('pointermove', this.onPointerMove);
+    window.addEventListener('pointerup', this.onPointerUp);
+    this.setupCanvasWheel();
+  }
 
-      if (this.isPointerDown) {
-        const dx = x - this.lastPointerPos.x;
-        const dy = y - this.lastPointerPos.y;
-        this.lastPointerPos = { x, y };
+  private onPointerMove = (e: PointerEvent): void => {
+    const { x, y } = getEventCoords(e);
 
-        if (this.draggedNode) {
-          const worldPos = this.viewport.screenToWorld(x, y);
-          this.viewport.graph.pinNode(this.draggedNode.id, worldPos.x, worldPos.y);
-          this.scene.markDirty();
-        } else if (this.isPanning) {
-          this.viewport.pan(dx, dy);
-        }
-      } else {
-        // Hover inspection
-        if (!this.isEventOverUI(x, y)) {
-          const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
-          this.overlayLayer.setHoveredEntity(hitNode);
-        } else {
-          this.overlayLayer.setHoveredEntity(null);
-        }
-      }
-    });
-
-    window.addEventListener('pointerup', (e) => {
-      const { x, y } = getEventCoords(e);
-      const moveDist = Math.hypot(x - this.pointerDownPos.x, y - this.pointerDownPos.y);
+    if (this.isPointerDown) {
+      const dx = x - this.lastPointerPos.x;
+      const dy = y - this.lastPointerPos.y;
+      this.lastPointerPos = { x, y };
 
       if (this.draggedNode) {
-        this.viewport.graph.unpinNode(this.draggedNode.id);
-        if (moveDist < 6) {
-          // Clicked node
-          void this.handleSelectNode(this.draggedNode.id);
-        }
-        this.draggedNode = null;
-      } else if (this.isPanning && moveDist < 6 && !this.isEventOverUI(x, y)) {
-        // Clicked empty canvas space -> close drawer
-        this.drawer.close();
+        const worldPos = this.viewport.screenToWorld(x, y);
+        this.viewport.graph.pinNode(this.draggedNode.id, worldPos.x, worldPos.y);
+        this.scene.markDirty();
+      } else if (this.isPanning) {
+        this.viewport.pan(dx, dy);
       }
+    } else {
+      // Hover inspection
+      if (!this.isEventOverUI(x, y)) {
+        const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
+        this.overlayLayer.setHoveredEntity(hitNode);
+      } else {
+        this.overlayLayer.setHoveredEntity(null);
+      }
+    }
+  };
 
-      this.isPointerDown = false;
-      this.isPanning = false;
-    });
+  private onPointerUp = (e: PointerEvent): void => {
+    const { x, y } = getEventCoords(e);
+    const moveDist = Math.hypot(x - this.pointerDownPos.x, y - this.pointerDownPos.y);
 
+    if (this.draggedNode) {
+      this.viewport.graph.unpinNode(this.draggedNode.id);
+      if (moveDist < 6) {
+        // Clicked node
+        void this.handleSelectNode(this.draggedNode.id);
+      }
+      this.draggedNode = null;
+    } else if (this.isPanning && moveDist < 6 && !this.isEventOverUI(x, y)) {
+      // Clicked empty canvas space -> close drawer
+      this.drawer.close();
+    }
+
+    this.isPointerDown = false;
+    this.isPanning = false;
+  };
+
+  private setupCanvasWheel(): void {
     this.canvas.addEventListener(
       'wheel',
       (e) => {
         const { x, y } = getEventCoords(e);
+        if (this.drawer.isPointInside(x, y)) {
+          e.preventDefault();
+          this.drawer.handleWheel(e.deltaY);
+          return;
+        }
         if (this.isEventOverUI(x, y)) {
           return;
         }
@@ -264,17 +274,32 @@ export class App {
     );
   }
 
+  private onResize = (): void => {
+    this.handleResize();
+  };
+
+  public dispose(): void {
+    window.removeEventListener('pointermove', this.onPointerMove);
+    window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('resize', this.onResize);
+    this.headerBar.dispose();
+    this.background.dispose();
+    this.scene.stop();
+  }
+
   async start(): Promise<void> {
     this.scene.start();
     await this.viewport.init();
   }
 
   public async handleSelectNode(id: string): Promise<void> {
+    const epoch = ++this.selectEpoch;
     this.scene.markDirty();
     this.viewport.focusNode(id);
     void this.viewport.expandNode(id);
 
     const details = await this.source.fetchEntityDetails(id);
+    if (epoch !== this.selectEpoch) return;
     if (details) {
       this.activeEntityDetails = details;
       this.drawer.open(details);
