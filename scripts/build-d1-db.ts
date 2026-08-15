@@ -466,9 +466,9 @@ const trails: ChronicleTrail[] = [
       ja: '本格ミステリ黄金時代',
     },
     description: {
-      zh: '从阿瑟·柯南·道尔开辟神探传统，到阿加莎、卡尔与奎因确立密室、读者挑战书与严密逻辑解谜的巅峰时代。',
-      en: 'From Arthur Conan Doyle to Agatha Christie, John Dickson Carr and Ellery Queen.',
-      ja: 'コナン・ドイルからクリスティ、カー、クイーンへと続く古典本格の黄金期。',
+      zh: '从阿瑟·柯南·道尔开辟神探传统，到阿加莎、卡尔确立密室讲义、读者挑战书与严密逻辑解谜的巅峰时代。',
+      en: 'From Arthur Conan Doyle to Agatha Christie and John Dickson Carr, the golden era of classical puzzle plots.',
+      ja: 'コナン・ドイルからクリスティ、カーへと続く古典本格の黄金期。',
     },
     steps: [
       {
@@ -494,6 +494,20 @@ const trails: ChronicleTrail[] = [
         year: 1920,
       },
       {
+        id: 'step-orient-express',
+        title: {
+          zh: '孤岛与列车：东方快车谋杀案',
+          en: 'The Orient Express: Murder on the Orient Express',
+        },
+        summary: {
+          zh: '封闭空间、全员嫌疑、雪夜审判——克里斯蒂将本格诡计与群像叙事推向极致的教科书。',
+          en: 'A locked train, twelve suspects, and one of the most iconic reveals in crime fiction.',
+        },
+        primaryEntityId: 'wd:Q845889',
+        focusEntityIds: ['wd:Q845889'],
+        year: 1934,
+      },
+      {
         id: 'step-carr',
         title: {
           zh: '密室之王：约翰·狄克森·卡尔',
@@ -506,17 +520,6 @@ const trails: ChronicleTrail[] = [
         primaryEntityId: 'wd:Q365664',
         focusEntityIds: ['wd:Q365664'],
         year: 1935,
-      },
-      {
-        id: 'step-queen',
-        title: { zh: '逻辑演绎：埃勒里·奎因', en: 'Logical Deduction: Ellery Queen' },
-        summary: {
-          zh: '“向读者挑战书”与国名系列/悲剧系列，纯粹唯美逻辑推演的最高峰。',
-          en: 'Challenge to the Reader and the Roman Hat Mystery.',
-        },
-        primaryEntityId: 'wd:Q723221',
-        focusEntityIds: ['wd:Q723221'],
-        year: 1929,
       },
     ],
   },
@@ -599,6 +602,224 @@ const trails: ChronicleTrail[] = [
         primaryEntityId: 'wd:Q125970',
         focusEntityIds: ['wd:Q125970'],
         year: 1985,
+      },
+    ],
+  },
+  {
+    id: 'trail-origin',
+    slug: 'detective-origin',
+    title: {
+      zh: '侦探小说创世纪',
+      en: 'Genesis of Detective Fiction',
+      ja: '探偵小説の起源',
+    },
+    description: {
+      zh: '从爱伦·坡的莫格街血案到柯南·道尔的贝克街221B，看侦探小说如何在半个世纪内完成文体奠基。',
+      en: 'From Poe to Doyle: how detective fiction invented itself in half a century.',
+      ja: 'ポーからドイルへ、探偵小説がいかにして生まれたか。',
+    },
+    steps: [
+      {
+        id: 'step-poe',
+        title: { zh: '开山祖师：埃德加·爱伦·坡', en: 'Founding Father: Edgar Allan Poe' },
+        summary: {
+          zh: '《莫格街凶杀案》首次确立“密室杀人+业余侦探+逻辑推理”的文体基石。',
+          en: 'The Murders in the Rue Morgue establishes the locked-room, amateur sleuth formula.',
+        },
+        primaryEntityId: 'wd:Q16867',
+        focusEntityIds: ['wd:Q16867'],
+        year: 1841,
+      },
+      {
+        id: 'step-collins',
+        title: { zh: '长篇先锋：威尔基·柯林斯', en: 'Novel Pioneer: Wilkie Collins' },
+        summary: {
+          zh: '《月亮宝石》以多重视角叙事与失窃宝石之谜，开创长篇侦探小说的先河。',
+          en: 'The Moonstone pioneers the full-length detective novel.',
+        },
+        primaryEntityId: 'wd:Q210740',
+        focusEntityIds: ['wd:Q210740'],
+        year: 1868,
+      },
+      {
+        id: 'step-holmes',
+        title: { zh: '名探诞生：阿瑟·柯南·道尔', en: 'Iconic Sleuth: Arthur Conan Doyle' },
+        summary: {
+          zh: '《血字的研究》让福尔摩斯与华生登场，“演绎法”成为侦探小说的通用语言。',
+          en: 'A Study in Scarlet introduces Holmes, Watson, and deduction.',
+        },
+        primaryEntityId: 'wd:Q35610',
+        focusEntityIds: ['wd:Q35610', 'wd:Q223131'],
+        year: 1887,
+      },
+    ],
+  },
+  {
+    id: 'trail-hardboiled',
+    slug: 'american-hardboiled',
+    title: {
+      zh: '美国硬汉派私家侦探',
+      en: 'American Hardboiled P.I.',
+      ja: 'ハードボイルドの系譜',
+    },
+    description: {
+      zh: '告别贵族庄园的优雅解谜，走进洛杉矶街头的肮脏现实——硬汉侦探的冷硬世界。',
+      en: 'From drawing-room puzzles to mean streets: the hardboiled revolution.',
+      ja: '名探偵から私立探偵へ、ストリートのリアリズム。',
+    },
+    steps: [
+      {
+        id: 'step-chandler',
+        title: { zh: '冷硬之魂：雷蒙·钱德勒', en: 'Soul of Noir: Raymond Chandler' },
+        summary: {
+          zh: '菲利普·马洛与《漫长的告别》，“冷硬诗学”将侦探小说带入文学殿堂。',
+          en: 'Philip Marlowe and The Long Goodbye elevate the genre to literature.',
+        },
+        primaryEntityId: 'wd:Q180377',
+        focusEntityIds: ['wd:Q180377'],
+        year: 1939,
+      },
+      {
+        id: 'step-macdonald',
+        title: { zh: '心理深潜：罗斯·麦克唐纳', en: 'Depth of Mind: Ross Macdonald' },
+        summary: {
+          zh: '卢·阿彻系列将家庭创伤与心理暗流注入冷硬外壳，拓宽了类型边界。',
+          en: 'Lew Archer brings family trauma into the hardboiled tradition.',
+        },
+        primaryEntityId: 'wd:Q318297',
+        focusEntityIds: ['wd:Q318297'],
+        year: 1949,
+      },
+      {
+        id: 'step-block',
+        title: { zh: '都市漫游者：劳伦斯·布洛克', en: 'Urban Wanderer: Lawrence Block' },
+        summary: {
+          zh: '马修·斯卡德在纽约街头戒酒探案，硬汉派在新世纪的城市回声。',
+          en: 'Matthew Scudder: alcoholic ex-cop, New York, and urban noir.',
+        },
+        primaryEntityId: 'douban:a劳伦斯·布洛克 (Lawrence Block)',
+        focusEntityIds: ['douban:a劳伦斯·布洛克 (Lawrence Block)'],
+        year: 1976,
+      },
+    ],
+  },
+  {
+    id: 'trail-social-school',
+    slug: 'japan-social-school',
+    title: {
+      zh: '日本社会派推理谱系',
+      en: 'Japanese Social School',
+      ja: '社会派の系譜',
+    },
+    description: {
+      zh: '松本清张将镜头对准社会病灶，社会派推理自此成为映照日本世相的文学之镜。',
+      en: 'Seicho Matsumoto turns the genre into a mirror of society.',
+      ja: '松本清張が切り開いた社会派の流れ。',
+    },
+    steps: [
+      {
+        id: 'step-points',
+        title: { zh: '社会派宣言：松本清张与《点与线》', en: 'Declaration: Seicho Matsumoto' },
+        summary: {
+          zh: '《点与线》撕碎虚妄密室，以时刻表诡计直指战后官僚腐败与人性深渊。',
+          en: 'Points and Lines: timetable tricks, bureaucracy, and human darkness.',
+        },
+        primaryEntityId: 'wd:Q201580',
+        focusEntityIds: ['wd:Q201580', 'wd:Q3738975'],
+        year: 1958,
+      },
+      {
+        id: 'step-morimura',
+        title: { zh: '证明的时代：森村诚一', en: 'Age of Proof: Seiichi Morimura' },
+        summary: {
+          zh: '《人性的证明》让“证明”成为社会派关键词，销量神话席卷昭和后期。',
+          en: 'Proof of the Man defines the social-school blockbuster.',
+        },
+        primaryEntityId: 'wd:Q2318799',
+        focusEntityIds: ['wd:Q2318799'],
+        year: 1969,
+      },
+      {
+        id: 'step-miyabe',
+        title: { zh: '温柔之眼：宫部美幸', en: 'Gentle Gaze: Miyuki Miyabe' },
+        summary: {
+          zh: '从《火车》到《模仿犯》，以社会派之眼看尽平成时代的孤独与焦虑。',
+          en: 'The Shadow Family and the anxieties of Heisei-era Japan.',
+        },
+        primaryEntityId: 'wd:Q290021',
+        focusEntityIds: ['wd:Q290021'],
+        year: 1992,
+      },
+      {
+        id: 'step-higashino',
+        title: { zh: '情感推理：东野圭吾与《白夜行》', en: 'Emotional Mystery: Keigo Higashino' },
+        summary: {
+          zh: '《白夜行》让社会派命题在本格骨架里长出爱情与救赎的暗面。',
+          en: 'Journey Under the Midnight Sun: love and sin beneath the puzzle.',
+        },
+        primaryEntityId: 'wd:Q125970',
+        focusEntityIds: ['wd:Q125970', 'wd:Q710681'],
+        year: 1998,
+      },
+    ],
+  },
+  {
+    id: 'trail-neo-honkaku',
+    slug: 'neo-honkaku-wave',
+    title: {
+      zh: '新本格浪潮',
+      en: 'The Shin-Honkaku Wave',
+      ja: '新本格ムーブメント',
+    },
+    description: {
+      zh: '岛田庄司的宏大谜团唤醒沉睡的本格，绫辻行人的“馆系列”让新本格席卷东亚。',
+      en: 'From Soji Shimada to the Mansion Series: the revival of classical puzzles.',
+      ja: '島田荘司から始まる本格ミステリの復権。',
+    },
+    steps: [
+      {
+        id: 'step-zodiac',
+        title: { zh: '革命前夜：岛田庄司与占星术', en: 'Eve of Revolution: Soji Shimada' },
+        summary: {
+          zh: '《占星术杀人事件》以不可能的宏大构想，宣告本格推理的浪漫复兴。',
+          en: 'The Tokyo Zodiac Murders reignites the romance of impossible crimes.',
+        },
+        primaryEntityId: 'wd:Q835759',
+        focusEntityIds: ['wd:Q835759', 'wd:Q10909686'],
+        year: 1981,
+      },
+      {
+        id: 'step-decagon',
+        title: { zh: '馆系列开幕：绫辻行人', en: 'Mansion Series: Yukito Ayatsuji' },
+        summary: {
+          zh: '《杀人十角馆》十重逆转推翻一切定式，新本格运动正式启程。',
+          en: 'The Decagon House Murders launches the Shin-Honkaku movement.',
+        },
+        primaryEntityId: 'wd:Q3266537',
+        focusEntityIds: ['wd:Q3266537', 'wd:Q11255509'],
+        year: 1987,
+      },
+      {
+        id: 'step-kyogoku',
+        title: { zh: '妖怪推理：京极夏彦', en: 'Yokai Mysteries: Natsuhiko Kyogoku' },
+        summary: {
+          zh: '《姑获鸟之夏》将民俗、妖怪学与密室完美融合，拓宽本格边界。',
+          en: 'The Summer of the Ubume fuses folklore with locked rooms.',
+        },
+        primaryEntityId: 'wd:Q835766',
+        focusEntityIds: ['wd:Q835766'],
+        year: 1994,
+      },
+      {
+        id: 'step-arisugawa',
+        title: { zh: '双生视角：有栖川有栖', en: 'Twin Perspectives: Arisugawa Arisu' },
+        summary: {
+          zh: '火村英生系列以作家名作笔名致敬奎因，延续严密逻辑与古典气质。',
+          en: 'The Professor series carries the Queen-style logic tradition forward.',
+        },
+        primaryEntityId: 'wd:Q5363645',
+        focusEntityIds: ['wd:Q5363645'],
+        year: 1996,
       },
     ],
   },
