@@ -13,5 +13,14 @@ export default defineConfig({
   build: {
     target: 'esnext',
     outDir: 'dist',
+    chunkSizeWarningLimit: 800,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          three: ['three'],
+          vectojs: ['@vectojs/core', '@vectojs/graph3d', '@vectojs/knowledge-graph'],
+        },
+      },
+    },
   },
 });

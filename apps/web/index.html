@@ -30,7 +30,7 @@
         width: 100%;
         height: 100%;
         overflow: hidden;
-        background-color: #1a1715;
+        background-color: #161311;
         font-family: 'Noto Serif SC', 'Cinzel', serif, sans-serif;
         color: #e8e2d9;
       }
@@ -40,15 +40,25 @@
         height: 100%;
         overflow: hidden;
       }
-      #canvas-viewport {
+      #graph-canvas {
         position: absolute;
         top: 0;
         left: 0;
         width: 100%;
         height: 100%;
         display: block;
+        z-index: 1;
       }
-      /* Turnstile invisible container */
+      #ui-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        z-index: 2;
+        pointer-events: auto;
+      }
       #cf-turnstile-container {
         display: none;
       }
@@ -56,7 +66,8 @@
   </head>
   <body>
     <div id="app-container">
-      <canvas id="canvas-viewport"></canvas>
+      <canvas id="graph-canvas"></canvas>
+      <canvas id="ui-canvas"></canvas>
       <div id="cf-turnstile-container"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>

@@ -1,12 +1,14 @@
 import { App } from './App';
 
 async function bootstrap() {
-  const canvas = document.getElementById('canvas-viewport') as HTMLCanvasElement;
-  if (!canvas) {
-    throw new Error('Canvas element #canvas-viewport not found');
+  const graphCanvas = document.getElementById('graph-canvas') as HTMLCanvasElement;
+  const uiCanvas = document.getElementById('ui-canvas') as HTMLCanvasElement;
+
+  if (!graphCanvas || !uiCanvas) {
+    throw new Error('Canvas elements #graph-canvas or #ui-canvas not found');
   }
 
-  const app = new App(canvas);
+  const app = new App(graphCanvas, uiCanvas);
   await app.start();
 
   // Expose to window for testing / DevTools

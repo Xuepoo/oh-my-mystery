@@ -25,6 +25,10 @@ test:
 # Format + lint + test — pre-commit habit.
 verify: check test
 
+# Run Playwright E2E visual and interaction audit.
+audit:
+    @bun run scripts/audit-e2e.ts
+
 # --- Development & Build --------------------------------------------------
 
 # Start web app development server.

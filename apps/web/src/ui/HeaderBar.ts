@@ -1,7 +1,7 @@
 import { Entity } from '@vectojs/core';
 import type { SearchResultItem } from '@omm/shared';
 import type { D1DataSource } from '../api/D1DataSource';
-import { Theme } from './theme';
+import { getCanvasCtx, Theme } from './theme';
 
 export interface HeaderBarOptions {
   source: D1DataSource;
@@ -38,7 +38,13 @@ export class HeaderBar extends Entity {
     w: number;
     h: number;
   }[] = [];
-  private dropdownItemRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
+  private dropdownItemRects: {
+    id: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }[] = [];
 
   constructor(options: HeaderBarOptions) {
     super();
@@ -55,9 +61,11 @@ export class HeaderBar extends Entity {
       this.handleClick(e.clientX, e.clientY);
     });
 
-    // Native text input bridge for searching
+    // Native text input shortcut for searching
     window.addEventListener('keydown', (e) => {
-      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT') {
+      if (e.key === 'Escape') {
+        this.showSearchDropdown = false;
+      } else if (e.key === '/' && document.activeElement?.tagName !== 'INPUT') {
         e.preventDefault();
         const prompt = window.prompt(
           '🔍 搜索推理作家、作品、奖项或名侦探 (中/英/日)：',
@@ -91,37 +99,43 @@ export class HeaderBar extends Entity {
     });
   }
 
-  render(ctx: CanvasRenderingContext2D): void {
+  render(r: any): void {
+    const ctx = getCanvasCtx(r);
     const w = this.scene.width;
     const h = 64;
 
     // Header Background Bar
     ctx.save();
-    ctx.fillStyle = 'rgba(24, 21, 19, 0.92)';
+    ctx.fillStyle = 'rgba(48, 38, 30, 0.96)';
     ctx.fillRect(0, 0, w, h);
 
-    ctx.strokeStyle = Theme.colors.border;
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = Theme.colors.borderHighlight;
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
     ctx.moveTo(0, h);
     ctx.lineTo(w, h);
     ctx.stroke();
     ctx.restore();
 
+    const isMobile = w < 680;
+    const isTablet = w >= 680 && w < 1050;
+
     // 1. Logo & App Title
-    ctx.fillStyle = Theme.colors.borderHighlight;
-    ctx.font = `900 17px ${Theme.fonts.serif}`;
+    ctx.fillStyle = Theme.colors.borderActive;
+    ctx.font = `900 ${isMobile ? '16px' : '18px'} ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText('OH MY MYSTERY', 24, 32);
+    ctx.fillText(isMobile ? 'OMM' : 'OH MY MYSTERY', isMobile ? 16 : 24, 32);
 
-    ctx.fillStyle = Theme.colors.textLow;
-    ctx.font = `600 11px ${Theme.fonts.sans}`;
-    ctx.fillText('推理知识图谱', 178, 32);
+    if (!isMobile) {
+      ctx.fillStyle = Theme.colors.textMid;
+      ctx.font = `600 11px ${Theme.fonts.sans}`;
+      ctx.fillText('推理知识图谱', isTablet ? 155 : 188, 32);
+    }
 
     // 2. Search Input Box
-    const searchX = 280;
-    const searchW = Math.min(260, w * 0.25);
+    const searchX = isMobile ? 68 : isTablet ? 245 : 290;
+    const searchW = isMobile ? Math.max(110, w - 68 - 140) : Math.min(260, w * 0.22);
     this.searchInputRect = { x: searchX, y: 14, w: searchW, h: 36 };
 
     ctx.fillStyle = Theme.colors.bgCard;
@@ -132,15 +146,17 @@ export class HeaderBar extends Entity {
     ctx.stroke();
 
     ctx.fillStyle = this.searchQuery ? Theme.colors.textHigh : Theme.colors.textLow;
-    ctx.font = `400 13px ${Theme.fonts.sans}`;
+    ctx.font = `400 ${isMobile ? '11px' : '13px'} ${Theme.fonts.sans}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    const displayText = this.searchQuery || '🔍 搜索作家/作品/奖项... [/]';
-    ctx.fillText(displayText, searchX + 12, 32);
+    const displayText = isMobile
+      ? this.searchQuery || '🔍 搜索...'
+      : this.searchQuery || '🔍 搜索作家/作品/奖项... [/]';
+    ctx.fillText(displayText, searchX + 10, 32);
 
     // 3. Entity Type Filter Pills (Desktop only)
-    if (w > 1050) {
-      let filterX = searchX + searchW + 24;
+    if (!isMobile && !isTablet) {
+      let filterX = searchX + searchW + 20;
       const filters = [
         { type: null, label: '全部' },
         { type: 'author', label: '作家' },
@@ -178,55 +194,97 @@ export class HeaderBar extends Entity {
 
         filterX += pillW + 8;
       }
+    } else {
+      this.filterPillRects = [];
     }
 
     // 4. Action Buttons (Right Aligned)
-    const rightMargin = w - 24;
+    const rightMargin = w - 16;
 
-    // Fullscreen Btn
-    this.fullscreenBtnRect = { x: rightMargin - 40, y: 14, w: 40, h: 36 };
-    ctx.fillStyle = Theme.colors.bgCard;
-    ctx.beginPath();
-    ctx.roundRect(this.fullscreenBtnRect.x, 14, 40, 36, 6);
-    ctx.fill();
-    ctx.strokeStyle = Theme.colors.border;
-    ctx.stroke();
+    if (!isMobile) {
+      // Fullscreen Btn
+      this.fullscreenBtnRect = { x: rightMargin - 40, y: 14, w: 40, h: 36 };
+      ctx.fillStyle = Theme.colors.bgCard;
+      ctx.beginPath();
+      ctx.roundRect(this.fullscreenBtnRect.x, 14, 40, 36, 6);
+      ctx.fill();
+      ctx.strokeStyle = Theme.colors.border;
+      ctx.stroke();
 
-    ctx.fillStyle = Theme.colors.textMid;
-    ctx.font = `600 15px ${Theme.fonts.sans}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('⛶', this.fullscreenBtnRect.x + 20, 32);
+      ctx.fillStyle = Theme.colors.textMid;
+      ctx.font = `600 15px ${Theme.fonts.sans}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⛶', this.fullscreenBtnRect.x + 20, 32);
 
-    // Pathfinder Btn
-    this.pathfinderBtnRect = { x: this.fullscreenBtnRect.x - 118, y: 14, w: 110, h: 36 };
-    ctx.fillStyle = Theme.colors.bgCard;
-    ctx.beginPath();
-    ctx.roundRect(this.pathfinderBtnRect.x, 14, 110, 36, 6);
-    ctx.fill();
-    ctx.strokeStyle = Theme.colors.borderHighlight;
-    ctx.stroke();
+      // Pathfinder Btn
+      this.pathfinderBtnRect = {
+        x: this.fullscreenBtnRect.x - 114,
+        y: 14,
+        w: 106,
+        h: 36,
+      };
+      ctx.fillStyle = Theme.colors.bgCard;
+      ctx.beginPath();
+      ctx.roundRect(this.pathfinderBtnRect.x, 14, this.pathfinderBtnRect.w, 36, 6);
+      ctx.fill();
+      ctx.strokeStyle = Theme.colors.borderHighlight;
+      ctx.stroke();
 
-    ctx.fillStyle = Theme.colors.borderHighlight;
-    ctx.font = `600 12px ${Theme.fonts.sans}`;
-    ctx.fillText('🔗 关系探路', this.pathfinderBtnRect.x + 55, 32);
+      ctx.fillStyle = Theme.colors.borderHighlight;
+      ctx.font = `600 12px ${Theme.fonts.sans}`;
+      ctx.fillText('🔗 关系探路', this.pathfinderBtnRect.x + 53, 32);
 
-    // Chronicles Btn
-    this.chroniclesBtnRect = { x: this.pathfinderBtnRect.x - 128, y: 14, w: 120, h: 36 };
-    ctx.fillStyle = Theme.colors.borderHighlight;
-    ctx.beginPath();
-    ctx.roundRect(this.chroniclesBtnRect.x, 14, 120, 36, 6);
-    ctx.fill();
+      // Chronicles Btn
+      this.chroniclesBtnRect = {
+        x: this.pathfinderBtnRect.x - 122,
+        y: 14,
+        w: 114,
+        h: 36,
+      };
+      ctx.fillStyle = Theme.colors.borderHighlight;
+      ctx.beginPath();
+      ctx.roundRect(this.chroniclesBtnRect.x, 14, this.chroniclesBtnRect.w, 36, 6);
+      ctx.fill();
 
-    ctx.fillStyle = '#1A1715';
-    ctx.font = `700 12px ${Theme.fonts.sans}`;
-    ctx.fillText('📖 编年史导览', this.chroniclesBtnRect.x + 60, 32);
+      ctx.fillStyle = '#1A1715';
+      ctx.font = `700 12px ${Theme.fonts.sans}`;
+      ctx.fillText('📖 编年史导览', this.chroniclesBtnRect.x + 57, 32);
+    } else {
+      // Mobile compact actions
+      this.fullscreenBtnRect = { x: -100, y: -100, w: 0, h: 0 };
+
+      this.pathfinderBtnRect = { x: rightMargin - 40, y: 14, w: 40, h: 36 };
+      ctx.fillStyle = Theme.colors.bgCard;
+      ctx.beginPath();
+      ctx.roundRect(this.pathfinderBtnRect.x, 14, 40, 36, 6);
+      ctx.fill();
+      ctx.strokeStyle = Theme.colors.borderHighlight;
+      ctx.stroke();
+      ctx.fillStyle = Theme.colors.borderHighlight;
+      ctx.font = `600 14px ${Theme.fonts.sans}`;
+      ctx.fillText('🔗', this.pathfinderBtnRect.x + 20, 32);
+
+      this.chroniclesBtnRect = {
+        x: this.pathfinderBtnRect.x - 48,
+        y: 14,
+        w: 42,
+        h: 36,
+      };
+      ctx.fillStyle = Theme.colors.borderHighlight;
+      ctx.beginPath();
+      ctx.roundRect(this.chroniclesBtnRect.x, 14, 42, 36, 6);
+      ctx.fill();
+      ctx.fillStyle = '#1A1715';
+      ctx.font = `700 14px ${Theme.fonts.sans}`;
+      ctx.fillText('📖', this.chroniclesBtnRect.x + 21, 32);
+    }
 
     // 5. Search Results Dropdown
     if (this.showSearchDropdown && this.searchResults.length > 0) {
       const dropX = searchX;
       const dropY = 56;
-      const dropW = Math.max(300, searchW);
+      const dropW = Math.max(260, searchW);
       const itemH = 44;
       const dropH = Math.min(320, this.searchResults.length * itemH + 16);
 
@@ -237,40 +295,49 @@ export class HeaderBar extends Entity {
       ctx.beginPath();
       ctx.roundRect(dropX, dropY, dropW, dropH, 8);
       ctx.fill();
-      ctx.restore();
 
       ctx.strokeStyle = Theme.colors.borderHighlight;
+      ctx.lineWidth = 1;
       ctx.stroke();
+      ctx.restore();
 
       this.dropdownItemRects = [];
       let itemY = dropY + 8;
+      for (let i = 0; i < Math.min(6, this.searchResults.length); i++) {
+        const item = this.searchResults[i]!;
+        this.dropdownItemRects.push({
+          id: item.id,
+          x: dropX,
+          y: itemY,
+          w: dropW,
+          h: itemH,
+        });
 
-      for (const item of this.searchResults.slice(0, 6)) {
-        this.dropdownItemRects.push({ id: item.id, x: dropX, y: itemY, w: dropW, h: itemH });
-
-        // Node type badge
-        ctx.fillStyle = Theme.getNodeColor(item.type);
+        // Type badge
+        const typeColor = Theme.getNodeColor(item.type);
+        ctx.fillStyle = typeColor;
         ctx.beginPath();
-        ctx.roundRect(dropX + 12, itemY + 10, 48, 22, 4);
+        ctx.roundRect(dropX + 10, itemY + 12, 48, 20, 3);
         ctx.fill();
 
         ctx.fillStyle = '#FFFFFF';
-        ctx.font = `700 10px ${Theme.fonts.sans}`;
+        ctx.font = `700 9px ${Theme.fonts.sans}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(Theme.getNodeTypeLabel(item.type).split(' / ')[0]!, dropX + 36, itemY + 21);
+        ctx.fillText(Theme.getNodeTypeLabel(item.type).split(' / ')[0]!, dropX + 34, itemY + 22);
 
         // Title
         ctx.fillStyle = Theme.colors.textHigh;
         ctx.font = `600 13px ${Theme.fonts.serif}`;
         ctx.textAlign = 'left';
-        ctx.fillText(item.name, dropX + 68, itemY + 16);
+        ctx.textBaseline = 'middle';
+        ctx.fillText(item.name, dropX + 66, itemY + (item.subtitle ? 15 : 22));
 
         // Subtitle
         if (item.subtitle) {
           ctx.fillStyle = Theme.colors.textLow;
           ctx.font = `400 11px ${Theme.fonts.sans}`;
-          ctx.fillText(item.subtitle, dropX + 68, itemY + 32);
+          ctx.fillText(item.subtitle, dropX + 66, itemY + 30);
         }
 
         itemY += itemH;

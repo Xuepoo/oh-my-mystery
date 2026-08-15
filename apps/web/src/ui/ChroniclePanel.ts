@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { ChronicleStep, ChronicleTrail } from '@omm/shared';
-import { Theme } from './theme';
+import { getCanvasCtx, Theme } from './theme';
 
 export interface ChroniclePanelOptions {
   onClose: () => void;
@@ -61,9 +61,10 @@ export class ChroniclePanel extends Entity {
     }
   }
 
-  render(ctx: CanvasRenderingContext2D): void {
+  render(r: any): void {
     if (!this.isOpen || this.trails.length === 0) return;
 
+    const ctx = getCanvasCtx(r);
     const modalWidth = Math.min(560, this.scene.width * 0.9);
     const modalHeight = Math.min(460, this.scene.height * 0.85);
     const modalX = (this.scene.width - modalWidth) / 2;
@@ -130,7 +131,7 @@ export class ChroniclePanel extends Entity {
       ctx.strokeStyle = isSelected ? Theme.colors.borderHighlight : Theme.colors.border;
       ctx.stroke();
 
-      ctx.fillStyle = isSelected ? Theme.colors.textHigh : Theme.colors.textLow;
+      ctx.fillStyle = isSelected ? Theme.colors.borderHighlight : Theme.colors.textMid;
       ctx.font = `600 12px ${Theme.fonts.sans}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -144,7 +145,7 @@ export class ChroniclePanel extends Entity {
     let curY = modalY + 104;
 
     // Trail Intro
-    ctx.fillStyle = Theme.colors.textLow;
+    ctx.fillStyle = Theme.colors.textMid;
     ctx.font = `400 13px ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
@@ -175,55 +176,87 @@ export class ChroniclePanel extends Entity {
       const isPast = s <= this.currentStepIndex;
       const isCurrent = s === this.currentStepIndex;
 
-      ctx.fillStyle = isCurrent
-        ? Theme.colors.borderHighlight
-        : isPast
-          ? Theme.colors.author
-          : Theme.colors.bgCard;
-      ctx.beginPath();
-      ctx.arc(dx, dy, isCurrent ? 8 : 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = isCurrent ? '#FFFFFF' : Theme.colors.border;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+      if (isCurrent) {
+        ctx.save();
+        ctx.shadowColor = Theme.colors.borderActive;
+        ctx.shadowBlur = 12;
+        ctx.fillStyle = Theme.colors.borderActive;
+        ctx.beginPath();
+        ctx.arc(dx, dy, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        ctx.fillStyle = isPast ? Theme.colors.author : Theme.colors.bgCard;
+        ctx.beginPath();
+        ctx.arc(dx, dy, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = Theme.colors.border;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
     }
     curY += 28;
 
-    // Current Step Highlight Card
+    // Current Step Highlight Card (Illuminated Manuscript Style)
     const step = trail.steps[this.currentStepIndex]!;
     const cardW = modalWidth - 48;
     const cardH = 160;
     const cardX = modalX + 24;
     const cardY = curY;
 
+    ctx.save();
     ctx.fillStyle = Theme.colors.bgCard;
     ctx.beginPath();
     ctx.roundRect(cardX, cardY, cardW, cardH, 8);
     ctx.fill();
-    ctx.strokeStyle = Theme.colors.border;
+    ctx.strokeStyle = Theme.colors.borderHighlight;
+    ctx.lineWidth = 1.4;
     ctx.stroke();
+
+    // Gold Corner Brackets on Card
+    ctx.strokeStyle = Theme.colors.borderActive;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    // Top-Left corner
+    ctx.moveTo(cardX, cardY + 12);
+    ctx.lineTo(cardX, cardY);
+    ctx.lineTo(cardX + 12, cardY);
+    // Top-Right corner
+    ctx.moveTo(cardX + cardW - 12, cardY);
+    ctx.lineTo(cardX + cardW, cardY);
+    ctx.lineTo(cardX + cardW, cardY + 12);
+    // Bottom-Left corner
+    ctx.moveTo(cardX, cardY + cardH - 12);
+    ctx.lineTo(cardX, cardY + cardH);
+    ctx.lineTo(cardX + 12, cardY + cardH);
+    // Bottom-Right corner
+    ctx.moveTo(cardX + cardW - 12, cardY + cardH);
+    ctx.lineTo(cardX + cardW, cardY + cardH);
+    ctx.lineTo(cardX + cardW, cardY + cardH - 12);
+    ctx.stroke();
+    ctx.restore();
 
     // Chapter Pill
     ctx.fillStyle = Theme.colors.borderHighlight;
     ctx.beginPath();
-    ctx.roundRect(cardX + 16, cardY + 16, 80, 22, 4);
+    ctx.roundRect(cardX + 16, cardY + 16, 92, 22, 4);
     ctx.fill();
 
     ctx.fillStyle = '#1A1715';
     ctx.font = `700 11px ${Theme.fonts.sans}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`第 ${this.currentStepIndex + 1} 幕 · ${step.year || ''}`, cardX + 56, cardY + 27);
+    ctx.fillText(`第 ${this.currentStepIndex + 1} 幕 · ${step.year || ''}`, cardX + 62, cardY + 27);
 
     // Step Title
     ctx.fillStyle = Theme.colors.textHigh;
     ctx.font = `700 16px ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(step.title.zh || step.title.en, cardX + 108, cardY + 18);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(step.title.zh || step.title.en, cardX + 120, cardY + 27);
 
     // Step Summary
-    ctx.fillStyle = Theme.colors.textMid;
+    ctx.fillStyle = Theme.colors.textHigh;
     ctx.font = `400 13px ${Theme.fonts.serif}`;
     const stepLines = this.wrapText(ctx, step.summary.zh || step.summary.en, cardW - 32);
     let stepY = cardY + 54;
@@ -233,7 +266,7 @@ export class ChroniclePanel extends Entity {
     }
 
     // Step Action Notice
-    ctx.fillStyle = Theme.colors.textLow;
+    ctx.fillStyle = Theme.colors.borderHighlight;
     ctx.font = `500 11px ${Theme.fonts.sans}`;
     ctx.fillText('💡 图谱镜头已自动聚焦至该时期核心线索', cardX + 16, cardY + cardH - 22);
 
@@ -257,7 +290,7 @@ export class ChroniclePanel extends Entity {
     ctx.strokeStyle = canPrev ? Theme.colors.border : 'transparent';
     ctx.stroke();
 
-    ctx.fillStyle = canPrev ? Theme.colors.textMid : Theme.colors.textMuted;
+    ctx.fillStyle = canPrev ? Theme.colors.textHigh : Theme.colors.textMuted;
     ctx.font = `600 13px ${Theme.fonts.sans}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

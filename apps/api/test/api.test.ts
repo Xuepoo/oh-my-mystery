@@ -70,7 +70,7 @@ describe('OMM Backend API Endpoints', () => {
   it('GET /api/health returns ok', async () => {
     const res = await app.request('/api/health', {}, mockEnv);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as any;
     expect(body.status).toBe('ok');
   });
 
@@ -127,5 +127,40 @@ describe('OMM Backend API Endpoints', () => {
     expect(body.length).toBeGreaterThanOrEqual(2);
     expect(body[0].slug).toBe('golden-age-trio');
     expect(body[0].steps.length).toBe(4);
+  });
+
+  // --- Edge Cases Testing ---
+  it('Edge Case: GET /api/path with source === target returns 0-hop identity', async () => {
+    const res = await app.request('/api/path?source=wd:Q347412&target=wd:Q347412', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.found).toBe(true);
+    expect(body.hops).toBe(0);
+    expect(body.nodes.length).toBe(1);
+    expect(body.edges.length).toBe(0);
+  });
+
+  it('Edge Case: GET /api/path with missing parameters returns 400', async () => {
+    const res = await app.request('/api/path?source=wd:Q347412', {}, mockEnv);
+    expect(res.status).toBe(400);
+  });
+
+  it('Edge Case: GET /api/search with empty string or spaces returns empty results gracefully', async () => {
+    const res = await app.request('/api/search?q=   ', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.results).toEqual([]);
+  });
+
+  it('Edge Case: GET /api/search with SQL wildcard characters is handled safely', async () => {
+    const res = await app.request('/api/search?q=%25_test%27', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(Array.isArray(body.results)).toBe(true);
+  });
+
+  it('Edge Case: GET /api/entity/:id/details with non-existent ID returns 404', async () => {
+    const res = await app.request('/api/entity/non_existent_12345/details', {}, mockEnv);
+    expect(res.status).toBe(404);
   });
 });

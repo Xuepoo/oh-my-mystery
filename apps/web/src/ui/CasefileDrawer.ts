@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { EntityDetailResponse } from '@omm/shared';
-import { Theme } from './theme';
+import { getCanvasCtx, Theme } from './theme';
 
 export interface CasefileDrawerOptions {
   onClose: () => void;
@@ -67,9 +67,10 @@ export class CasefileDrawer extends Entity {
     return this.isOpen;
   }
 
-  render(ctx: CanvasRenderingContext2D): void {
+  render(r: any): void {
     if (!this.isOpen || !this.details) return;
 
+    const ctx = getCanvasCtx(r);
     const drawerWidth = Math.min(420, this.scene.width * 0.9);
     const drawerHeight = this.scene.height;
     const startX = this.scene.width - drawerWidth;
@@ -85,7 +86,7 @@ export class CasefileDrawer extends Entity {
     ctx.restore();
 
     // Left Accent Border (Parchment Line)
-    ctx.strokeStyle = Theme.colors.borderAccent;
+    ctx.strokeStyle = Theme.colors.borderHighlight;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(startX, 0);
@@ -116,7 +117,7 @@ export class CasefileDrawer extends Entity {
     ctx.strokeStyle = Theme.colors.border;
     ctx.stroke();
 
-    ctx.fillStyle = Theme.colors.textMid;
+    ctx.fillStyle = Theme.colors.textHigh;
     ctx.font = `600 16px ${Theme.fonts.sans}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -148,7 +149,7 @@ export class CasefileDrawer extends Entity {
 
     // Subtitle & Country/Dates
     if (subtitle) {
-      ctx.fillStyle = Theme.colors.textLow;
+      ctx.fillStyle = Theme.colors.textMid;
       ctx.font = `500 13px ${Theme.fonts.sans}`;
       ctx.fillText(subtitle, startX + 24, curY);
       curY += 20;
@@ -156,10 +157,12 @@ export class CasefileDrawer extends Entity {
 
     const metaParts = [];
     if (entity.birth || entity.death) {
-      metaParts.push(`${entity.birth || '?'} ~ ${entity.death || 'Present'}`);
+      const b = this.formatYear(entity.birth);
+      const d = this.formatYear(entity.death);
+      metaParts.push(`${b || '?'} ~ ${d || '至今'}`);
     }
     if (entity.country) {
-      metaParts.push(`国籍: ${entity.country}`);
+      metaParts.push(`国籍: ${this.formatCountry(entity.country)}`);
     }
     if (metaParts.length > 0) {
       ctx.fillStyle = Theme.colors.borderHighlight;
@@ -179,7 +182,7 @@ export class CasefileDrawer extends Entity {
 
     // 3. Biography / Description
     if (entity.bio) {
-      ctx.fillStyle = Theme.colors.textMid;
+      ctx.fillStyle = Theme.colors.textHigh;
       ctx.font = `400 13px ${Theme.fonts.serif}`;
       const bioLines = this.wrapText(ctx, entity.bio, drawerWidth - 48);
       for (const line of bioLines.slice(0, 5)) {
@@ -212,7 +215,7 @@ export class CasefileDrawer extends Entity {
     ctx.font = `600 12px ${Theme.fonts.sans}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('🔗 以此为起点探路', this.pathfinderBtnRect.x + 80, this.pathfinderBtnRect.y + 17);
+    ctx.fillText('🔗 以此为起点探路', startX + 24 + 80, btnY + 17);
 
     // Expand Btn
     ctx.fillStyle = Theme.colors.bgCard;
@@ -228,30 +231,52 @@ export class CasefileDrawer extends Entity {
     ctx.strokeStyle = Theme.colors.border;
     ctx.stroke();
 
-    ctx.fillStyle = Theme.colors.textMid;
-    ctx.fillText('🔄 展开 1-Hop 关联', this.expandBtnRect.x + 80, this.expandBtnRect.y + 17);
-
-    curY += 50;
-
-    // 5. Top-N Recommendations Section
     ctx.fillStyle = Theme.colors.textHigh;
-    ctx.font = `700 15px ${Theme.fonts.serif}`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText('🌟 智能关联与推荐 (Recommendations)', startX + 24, curY);
-    curY += 26;
+    ctx.font = `600 12px ${Theme.fonts.sans}`;
+    ctx.fillText('🔄 展开 1-Hop 关联', startX + 196 + 80, btnY + 17);
 
-    this.recItemRects = [];
-    const recs = this.details.recommendations || [];
-    if (recs.length === 0) {
-      ctx.fillStyle = Theme.colors.textLow;
-      ctx.font = `400 13px ${Theme.fonts.sans}`;
-      ctx.fillText('暂无离线推荐条目', startX + 24, curY);
+    curY += 48;
+
+    // 5. Recommendations List
+    ctx.fillStyle = Theme.colors.borderHighlight;
+    ctx.font = `700 15px ${Theme.fonts.serif}`;
+    // Wax Seal Stamp (Procedural Antique Gold / Crimson Archive Seal)
+    const sealX = startX + drawerWidth - 75;
+    const sealY = 60;
+    ctx.save();
+    ctx.strokeStyle = Theme.colors.borderHighlight;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(sealX, sealY, 22, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(243, 196, 118, 0.4)';
+    ctx.beginPath();
+    ctx.arc(sealX, sealY, 18, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = Theme.colors.borderActive;
+    ctx.font = `800 8px ${Theme.fonts.sans}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('VERIFIED', sealX, sealY - 4);
+    ctx.fillText('ARCHIVE', sealX, sealY + 6);
+    ctx.restore();
+
+    // 5. Smart Recommendations Section
+    if (this.details.recommendations && this.details.recommendations.length > 0) {
+      ctx.fillStyle = Theme.colors.borderHighlight;
+      ctx.font = `700 14px ${Theme.fonts.serif}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText('🌟 智能关联与推荐 (Recommendations)', startX + 24, curY);
       curY += 24;
-    } else {
-      for (const rec of recs) {
-        const cardH = 54;
-        const cardW = drawerWidth - 48;
+
+      const cardW = drawerWidth - 48;
+      const cardH = 52;
+
+      this.recItemRects = [];
+      for (const rec of this.details.recommendations) {
         const cardX = startX + 24;
         const cardY = curY;
 
@@ -286,13 +311,29 @@ export class CasefileDrawer extends Entity {
         ctx.fillText(rec.target_name, cardX + 24, cardY + 10);
 
         // Reason & Score
-        ctx.fillStyle = Theme.colors.textLow;
+        ctx.fillStyle = Theme.colors.textMid;
         ctx.font = `400 12px ${Theme.fonts.sans}`;
         ctx.fillText(
           `${rec.reason} · 关联度 ${(rec.score * 100).toFixed(0)}%`,
           cardX + 24,
           cardY + 30,
         );
+
+        // Animated Resonance Meter Bar
+        const meterW = 56;
+        const meterH = 6;
+        const meterX = cardX + cardW - meterW - 14;
+        const meterY = cardY + 28;
+
+        ctx.fillStyle = 'rgba(243, 196, 118, 0.15)';
+        ctx.beginPath();
+        ctx.roundRect(meterX, meterY, meterW, meterH, 3);
+        ctx.fill();
+
+        ctx.fillStyle = Theme.colors.borderActive;
+        ctx.beginPath();
+        ctx.roundRect(meterX, meterY, meterW * Math.min(1, Math.max(0.2, rec.score)), meterH, 3);
+        ctx.fill();
 
         curY += cardH + 10;
       }
@@ -339,6 +380,37 @@ export class CasefileDrawer extends Entity {
     r: { x: number; y: number; w: number; h: number },
   ): boolean {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  }
+
+  private formatYear(iso?: string | null): string {
+    if (!iso) return '';
+    const match = iso.match(/([+-]?\d{1,4})/);
+    return match ? match[1]!.replace('+', '') : iso;
+  }
+
+  private formatCountry(c?: string | null): string {
+    if (!c) return '';
+    const map: Record<string, string> = {
+      Q17: '日本',
+      Q145: '英国',
+      Q30: '美国',
+      Q142: '法国',
+      Q183: '德国',
+      Q148: '中国',
+      Q38: '意大利',
+      Q29: '西班牙',
+      Q159: '俄罗斯',
+      Q33: '芬兰',
+      Q34: '瑞典',
+      Q20: '挪威',
+      Q40: '奥地利',
+      Q39: '瑞士',
+      Q55: '荷兰',
+      Q31: '比利时',
+      Q16: '加拿大',
+      Q408: '澳大利亚',
+    };
+    return map[c] || c;
   }
 
   private wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {

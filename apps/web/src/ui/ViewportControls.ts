@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { GraphViewport } from '../scene/GraphViewport';
-import { Theme } from './theme';
+import { getCanvasCtx, Theme } from './theme';
 
 export class ViewportControls extends Entity {
   private viewport: GraphViewport;
@@ -26,7 +26,8 @@ export class ViewportControls extends Entity {
     return x >= endX - 130 && x <= endX && y >= startY && y <= startY + 40;
   }
 
-  render(ctx: CanvasRenderingContext2D): void {
+  render(r: any): void {
+    const ctx = getCanvasCtx(r);
     const endX = this.scene.width - 24;
     const startY = this.scene.height - 60;
 

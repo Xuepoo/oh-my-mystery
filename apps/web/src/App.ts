@@ -2,6 +2,7 @@ import { Scene } from '@vectojs/core';
 import type { ChronicleStep, EntityDetailResponse } from '@omm/shared';
 import { D1DataSource } from './api/D1DataSource';
 import { BackgroundLayer } from './scene/BackgroundLayer';
+import { GraphOverlayLayer } from './scene/GraphOverlayLayer';
 import { GraphViewport } from './scene/GraphViewport';
 import { CasefileDrawer } from './ui/CasefileDrawer';
 import { ChroniclePanel } from './ui/ChroniclePanel';
@@ -12,11 +13,13 @@ import { ViewportControls } from './ui/ViewportControls';
 
 export class App {
   readonly scene: Scene;
-  readonly canvas: HTMLCanvasElement;
+  readonly graphCanvas: HTMLCanvasElement;
+  readonly uiCanvas: HTMLCanvasElement;
   readonly source: D1DataSource;
   readonly viewport: GraphViewport;
 
   readonly background: BackgroundLayer;
+  readonly overlayLayer: GraphOverlayLayer;
   readonly headerBar: HeaderBar;
   readonly drawer: CasefileDrawer;
   readonly chroniclePanel: ChroniclePanel;
@@ -26,21 +29,22 @@ export class App {
 
   private activeEntityDetails: EntityDetailResponse | null = null;
 
-  constructor(canvas: HTMLCanvasElement) {
-    this.canvas = canvas;
+  constructor(graphCanvas: HTMLCanvasElement, uiCanvas: HTMLCanvasElement) {
+    this.graphCanvas = graphCanvas;
+    this.uiCanvas = uiCanvas;
     this.source = new D1DataSource(import.meta.env.VITE_API_URL || '');
 
-    // 1. Initialize VectoJS Scene
-    this.scene = new Scene(this.canvas, {
-      pointBackend: 'webgl',
+    // 1. Initialize VectoJS Scene on the UI Canvas
+    this.scene = new Scene(this.uiCanvas, {
+      pointBackend: 'canvas',
       particleBackend: 'auto',
       maxFPS: 60,
     });
     this.scene.resize(window.innerWidth, window.innerHeight);
 
-    // 2. Initialize 2D Knowledge Graph Viewport
+    // 2. Initialize 2D Knowledge Graph Viewport on the Graph Canvas
     this.viewport = new GraphViewport({
-      canvas: this.canvas,
+      canvas: this.graphCanvas,
       source: this.source,
       onSelectNode: (entity) => {
         if (entity) {
@@ -49,12 +53,17 @@ export class App {
           this.drawer.close();
         }
       },
-      onHoverNode: (_entity) => {},
+      onHoverNode: (entity) => {
+        this.overlayLayer.setHoveredEntity(entity);
+      },
     });
 
     // 3. Mount Entities into Scene
     this.background = new BackgroundLayer();
     this.scene.add(this.background);
+
+    this.overlayLayer = new GraphOverlayLayer(this.viewport);
+    this.scene.add(this.overlayLayer);
 
     this.headerBar = new HeaderBar({
       source: this.source,
@@ -116,10 +125,86 @@ export class App {
     this.controls = new ViewportControls(this.viewport);
     this.scene.add(this.controls);
 
-    // 4. Handle Window Resize
+    // 4. Forward Pointer Events to Graph Canvas when not clicking UI
+    this.setupEventForwarding();
+
+    // 5. Handle Window Resize
     window.addEventListener('resize', () => {
       this.handleResize();
     });
+  }
+
+  isUIHovered(x: number, y: number): boolean {
+    if (this.drawer.isPointInside(x, y)) return true;
+    if (this.headerBar.isPointInside(x, y)) return true;
+    if (this.chroniclePanel.isPointInside(x, y)) return true;
+    if (this.pathfinderModal.isPointInside(x, y)) return true;
+    if (this.minimap.isPointInside(x, y)) return true;
+    if (this.controls.isPointInside(x, y)) return true;
+    return false;
+  }
+
+  private setupEventForwarding(): void {
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+
+    this.uiCanvas.addEventListener('pointerdown', (e: PointerEvent) => {
+      const x = e.clientX;
+      const y = e.clientY;
+      isDragging = false;
+      dragStartX = x;
+      dragStartY = y;
+
+      if (!this.isUIHovered(x, y)) {
+        this.graphCanvas.dispatchEvent(new PointerEvent('pointerdown', e));
+      }
+    });
+
+    this.uiCanvas.addEventListener('pointermove', (e: PointerEvent) => {
+      const x = e.clientX;
+      const y = e.clientY;
+      if (Math.abs(x - dragStartX) > 4 || Math.abs(y - dragStartY) > 4) {
+        isDragging = true;
+      }
+
+      if (!this.isUIHovered(x, y)) {
+        const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
+        this.overlayLayer.setHoveredEntity(hitNode);
+        this.uiCanvas.style.cursor = hitNode ? 'pointer' : 'grab';
+        this.graphCanvas.dispatchEvent(new PointerEvent('pointermove', e));
+      } else {
+        this.overlayLayer.setHoveredEntity(null);
+        this.uiCanvas.style.cursor = 'default';
+      }
+    });
+
+    this.uiCanvas.addEventListener('pointerup', (e: PointerEvent) => {
+      const x = e.clientX;
+      const y = e.clientY;
+
+      if (!this.isUIHovered(x, y)) {
+        if (!isDragging) {
+          const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
+          if (hitNode) {
+            void this.handleSelectNode(String(hitNode.id));
+          }
+        }
+        this.graphCanvas.dispatchEvent(new PointerEvent('pointerup', e));
+      }
+    });
+
+    this.uiCanvas.addEventListener(
+      'wheel',
+      (e: WheelEvent) => {
+        const x = e.clientX;
+        const y = e.clientY;
+        if (!this.isUIHovered(x, y)) {
+          this.graphCanvas.dispatchEvent(new WheelEvent('wheel', e));
+        }
+      },
+      { passive: false },
+    );
   }
 
   async start(): Promise<void> {
@@ -127,7 +212,7 @@ export class App {
     await this.viewport.init();
   }
 
-  private async handleSelectNode(id: string): Promise<void> {
+  public async handleSelectNode(id: string): Promise<void> {
     this.viewport.focusNode(id);
     void this.viewport.expandNode(id);
 
@@ -138,14 +223,14 @@ export class App {
     }
   }
 
-  private async handleOpenChronicles(): Promise<void> {
+  public async handleOpenChronicles(): Promise<void> {
     const trails = await this.source.fetchChronicles();
     if (trails.length > 0) {
       this.chroniclePanel.open(trails);
     }
   }
 
-  private toggleFullscreen(): void {
+  public toggleFullscreen(): void {
     if (!document.fullscreenElement) {
       void document.documentElement.requestFullscreen().catch(() => {});
     } else {

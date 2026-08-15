@@ -11,6 +11,7 @@ import type {
   PathfinderResult,
   SearchResponse,
 } from '@omm/shared';
+import { Theme } from '../ui/theme';
 
 export class D1DataSource implements KgDataSource {
   private baseUrl: string;
@@ -35,6 +36,18 @@ export class D1DataSource implements KgDataSource {
     return headers;
   }
 
+  private formatNode(e: any): KgEntity & { color: string; val: number } {
+    const type = e.type || 'other';
+    return {
+      ...e,
+      id: String(e.id),
+      type,
+      color: Theme.getNodeColor(type),
+      val: type === 'author' ? 1.4 : type === 'work' ? 1.0 : type === 'character' ? 0.9 : 0.8,
+      labels: e.names?.labels || (typeof e.labels === 'object' ? e.labels : { '': String(e.id) }),
+    };
+  }
+
   async getNodes(ids?: readonly NodeId[]): Promise<readonly KgEntity[]> {
     if (!ids || ids.length === 0) {
       return this.fetchSeeds();
@@ -46,11 +59,7 @@ export class D1DataSource implements KgDataSource {
       });
       if (!res.ok) return [];
       const data = (await res.json()) as any[];
-      return data.map((e) => ({
-        ...e,
-        id: String(e.id),
-        labels: e.names?.labels || { '': String(e.id) },
-      }));
+      return data.map((e) => this.formatNode(e));
     } catch (err) {
       console.error('Failed to get nodes', err);
       return [];
@@ -87,28 +96,32 @@ export class D1DataSource implements KgDataSource {
         neighbors: any[];
       };
 
-      const facts: KgFact[] = (data.facts || []).map((f) => ({
-        source: String(f.subject_id),
-        target: String(f.object_ref),
-        predicate: f.predicate,
-      }));
+      const rawNeighbors: (KgEntity & { color: string; val: number })[] = (
+        data.neighbors || []
+      ).map((n) => this.formatNode(n));
 
-      const neighbors: KgEntity[] = (data.neighbors || []).map((n) => ({
-        ...n,
-        id: String(n.id),
-        labels: n.names?.labels || (typeof n.labels === 'object' ? n.labels : { '': String(n.id) }),
-      }));
+      const knownNodeIds = new Set<string>([
+        String(data.entity.id),
+        ...rawNeighbors.map((n) => String(n.id)),
+      ]);
+
+      const facts: KgFact[] = [];
+      for (const f of data.facts || []) {
+        const src = String(f.subject_id || f.source || '');
+        const tgt = String(f.object_ref || f.target || '');
+        if (src && tgt && knownNodeIds.has(src) && knownNodeIds.has(tgt)) {
+          facts.push({
+            source: src,
+            target: tgt,
+            predicate: f.predicate || 'relation',
+          });
+        }
+      }
 
       const neighborhood: KgNeighborhood = {
-        entity: {
-          ...data.entity,
-          id: String(data.entity.id),
-          labels:
-            data.entity.names?.labels ||
-            (typeof data.entity.labels === 'object' ? data.entity.labels : { '': strId }),
-        },
+        entity: this.formatNode(data.entity),
         facts,
-        neighbors,
+        neighbors: rawNeighbors,
       };
 
       this.cache.set(strId, neighborhood);
@@ -130,11 +143,7 @@ export class D1DataSource implements KgDataSource {
       });
       if (!res.ok) return [];
       const data = (await res.json()) as { seeds: any[] };
-      return (data.seeds || []).map((e) => ({
-        ...e,
-        id: String(e.id),
-        labels: e.names?.labels || { '': String(e.id) },
-      }));
+      return (data.seeds || []).map((e) => this.formatNode(e));
     } catch (err) {
       console.error('Failed to fetch seed entities', err);
       return [];

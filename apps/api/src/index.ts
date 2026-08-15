@@ -150,19 +150,19 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
         names: { labels: { '': id } },
       };
 
-  // 2. Fetch facts (both outbound and inbound)
+  // 2. Fetch facts (both outbound and inbound, where object_ref is a valid entity reference)
   const factsRows = await c.env.DB.prepare(
     `
-    SELECT * FROM facts WHERE subject_id = ?
-    UNION ALL
-    SELECT * FROM facts WHERE object_ref = ?
+    SELECT * FROM facts 
+    WHERE (subject_id = ? AND object_ref IS NOT NULL AND object_ref != '')
+       OR (object_ref = ? AND subject_id IS NOT NULL AND subject_id != '')
     LIMIT ?
   `,
   )
     .bind(id, id, limit)
     .all();
 
-  const facts: OmmFact[] = (factsRows.results || []).map((row: any) => ({
+  const rawFacts: OmmFact[] = (factsRows.results || []).map((row: any) => ({
     subject_id: row.subject_id,
     predicate: row.predicate,
     object_ref: row.object_ref,
@@ -173,12 +173,17 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
 
   // 3. Fetch neighbor entities
   const neighborIds = new Set<string>();
-  for (const f of facts) {
-    neighborIds.add(f.subject_id === id ? f.object_ref : f.subject_id);
+  for (const f of rawFacts) {
+    const otherId = f.subject_id === id ? f.object_ref : f.subject_id;
+    if (otherId && otherId.trim()) {
+      neighborIds.add(otherId);
+    }
   }
   neighborIds.delete(id);
 
   let neighbors: OmmEntity[] = [];
+  const validNeighborIdSet = new Set<string>([id]);
+
   if (neighborIds.size > 0) {
     const idsList = [...neighborIds].slice(0, 100);
     const placeholders = idsList.map(() => '?').join(',');
@@ -188,7 +193,19 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
       .bind(...idsList)
       .all();
     neighbors = (neighborRows.results || []).map(formatEntityRow);
+    for (const n of neighbors) {
+      validNeighborIdSet.add(n.id);
+    }
   }
+
+  // 4. Strictly filter facts to only those where both endpoints exist in entity/neighbors
+  const validFacts = rawFacts.filter(
+    (f) =>
+      f.subject_id &&
+      f.object_ref &&
+      validNeighborIdSet.has(f.subject_id) &&
+      validNeighborIdSet.has(f.object_ref),
+  );
 
   // Ensure KgEntity compatibility: `labels` directly on root
   const kgEntity = {
@@ -203,7 +220,7 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
 
   return c.json({
     entity: kgEntity,
-    facts,
+    facts: validFacts,
     neighbors: kgNeighbors,
   });
 });
@@ -480,15 +497,26 @@ async function findShortestPath(
     if (current.pathEdges.length >= maxDepth) continue;
 
     const rows = await db
-      .prepare('SELECT * FROM facts WHERE subject_id = ? OR object_ref = ? LIMIT 40')
-      .bind(current.id, current.id)
+      .prepare(
+        'SELECT * FROM facts WHERE subject_id = ? OR object_ref = ? OR object_value = ? LIMIT 60',
+      )
+      .bind(current.id, current.id, current.id)
       .all();
 
     for (const r of (rows.results || []) as any[]) {
-      const neighbor = r.subject_id === current.id ? r.object_ref : r.subject_id;
+      const neighbor = r.subject_id === current.id ? r.object_ref || r.object_value : r.subject_id;
+      if (
+        !neighbor ||
+        typeof neighbor !== 'string' ||
+        !neighbor.trim() ||
+        neighbor.startsWith('+')
+      ) {
+        continue;
+      }
+
       const edge = {
         source: r.subject_id,
-        target: r.object_ref,
+        target: r.object_ref || r.object_value,
         predicate: r.predicate,
       };
 

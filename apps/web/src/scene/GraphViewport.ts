@@ -44,6 +44,18 @@ export class GraphViewport {
 
     this.threeScene = new THREE.Scene();
 
+    // Add bright ambient & directional lights for MeshLambertMaterial
+    const ambientLight = new THREE.AmbientLight(0xfff8ee, 2.0);
+    this.threeScene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xfffae6, 2.2);
+    dirLight.position.set(150, 250, 350);
+    this.threeScene.add(dirLight);
+
+    const backLight = new THREE.DirectionalLight(0x88ccff, 1.2);
+    backLight.position.set(-150, -250, 200);
+    this.threeScene.add(backLight);
+
     // 2. Initialize KnowledgeGraphSession in 2D Mode
     this.session = new KnowledgeGraphSession({
       domElement: this.canvas,
@@ -52,8 +64,8 @@ export class GraphViewport {
       lang: 'zh',
       expandOnSelect: true,
       graphOptions: {
-        nodeRadius: 5,
-        linkOpacity: 0.45,
+        nodeRadius: 1.1,
+        linkOpacity: 0.85,
         linkColor: Theme.colors.edgeDefault,
         nodeColor: Theme.colors.author,
       },
@@ -72,6 +84,14 @@ export class GraphViewport {
     });
 
     this.session.attach(this.threeScene);
+  }
+
+  getCamera(): THREE.Camera {
+    return this.session.camera.camera;
+  }
+
+  getPositions(): Float32Array | undefined {
+    return (this.session as any).layout?.positions;
   }
 
   async init(seedIds?: string[]): Promise<void> {
@@ -125,16 +145,39 @@ export class GraphViewport {
     if (index !== -1) {
       const positions = (this.session as any).layout?.positions;
       if (positions && positions.length > index * 3 + 1) {
-        const x = positions[index * 3];
-        const y = positions[index * 3 + 1];
-        if (Number.isFinite(x) && Number.isFinite(y)) {
-          this.session.camera.camera.position.set(x, y, 500);
-          (this.session.camera.camera as any).lookAt?.(x, y, 0);
-          (this.session.camera as any).target?.set(x, y, 0);
+        const targetX = positions[index * 3];
+        const targetY = positions[index * 3 + 1];
+        if (Number.isFinite(targetX) && Number.isFinite(targetY)) {
+          this.glideCameraTo(targetX, targetY);
         }
       }
     }
     this.wakeUp();
+  }
+
+  private glideCameraTo(tx: number, ty: number): void {
+    const cam = this.session.camera.camera;
+    const startX = cam.position.x;
+    const startY = cam.position.y;
+    let step = 0;
+    const maxSteps = 24;
+
+    const anim = () => {
+      step++;
+      const progress = step / maxSteps;
+      // Smooth ease-out cubic
+      const ease = 1 - Math.pow(1 - progress, 3);
+      cam.position.x = startX + (tx - startX) * ease;
+      cam.position.y = startY + (ty - startY) * ease;
+      (cam as any).lookAt?.(cam.position.x, cam.position.y, 0);
+      (this.session.camera as any).target?.set(cam.position.x, cam.position.y, 0);
+      this.wakeUp();
+
+      if (step < maxSteps) {
+        requestAnimationFrame(anim);
+      }
+    };
+    requestAnimationFrame(anim);
   }
 
   highlightPath(nodeIds: string[], edges: { source: string; target: string }[]): void {

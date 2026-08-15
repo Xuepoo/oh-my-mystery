@@ -72,7 +72,7 @@ just wt-clean ctx-0001
 
 When defects, performance bottlenecks, or missing capabilities are discovered in `@vectojs/*` during development:
 
-1. **Locate Upstream**: The VectoJS framework source is located at `../../vectojs/vectojs` (or the `vectojs/vectojs` repository).
+1. **Locate Upstream**: The VectoJS framework repository is located at `https://github.com/vectojs/vectojs`.
 2. **Reproduce & Report**: File a clear issue in upstream with reproduction steps or minimal test case.
 3. **Fix in Upstream**:
    - Inspect upstream source (`packages/core`, `packages/knowledge-graph`, `packages/graph3d`, `packages/ui`, etc.).
