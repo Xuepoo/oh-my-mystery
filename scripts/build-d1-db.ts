@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ChronicleTrail } from '../packages/shared/src/types';
+import { applyOverrides, cleanNames, isJunkNames, namesToJson } from './clean-labels';
 
 const SOURCE_DB_PATH = join(import.meta.dir, '../../mystery-clawer/data/mystery.db');
 const OUT_DIR = join(import.meta.dir, '../data');
@@ -78,11 +79,16 @@ const insertSearch = db.prepare(`
 
 db.transaction(() => {
   for (const e of entityMap.values()) {
+    const cleaned = applyOverrides(e.id, cleanNames(e.names_json));
+    if (isJunkNames(cleaned)) {
+      entityMap.delete(e.id);
+      continue;
+    }
     insertEntity.run(
       e.id,
       e.qid || null,
       e.type,
-      e.names_json,
+      namesToJson(cleaned),
       e.bio || null,
       e.birth || null,
       e.death || null,
@@ -91,16 +97,9 @@ db.transaction(() => {
       e.quality || 1,
     );
 
-    let labels: Record<string, string> = {};
-    let aliases: Record<string, string[]> = {};
-    try {
-      const parsed = JSON.parse(e.names_json);
-      labels = parsed.labels || {};
-      aliases = parsed.aliases || {};
-    } catch {}
-
+    const labels = cleaned.labels;
     const allAliases: string[] = [];
-    for (const arr of Object.values(aliases)) {
+    for (const arr of Object.values(cleaned.aliases)) {
       if (Array.isArray(arr)) allAliases.push(...arr);
     }
 
