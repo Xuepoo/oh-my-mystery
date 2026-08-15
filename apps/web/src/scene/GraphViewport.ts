@@ -4,6 +4,7 @@ import type { GraphLink2D, GraphNode2D } from './types';
 
 export interface GraphViewportOptions {
   source: D1DataSource;
+  onChange: () => void;
   onSelectNode: (node: GraphNode2D | null) => void;
   onHoverNode: (node: GraphNode2D | null) => void;
 }
@@ -12,6 +13,7 @@ export class GraphViewport {
   readonly graph: KnowledgeGraph2D;
   private onSelectCb: (node: GraphNode2D | null) => void;
   private onHoverCb: (node: GraphNode2D | null) => void;
+  private onChange: () => void;
 
   // 2D Camera / Viewport Transform
   public panX = 0;
@@ -28,7 +30,7 @@ export class GraphViewport {
   private targetPanX = 0;
   private targetPanY = 0;
   private targetZoom = 1.0;
-  private isCameraAnimating = false;
+  private cameraAnimating = false;
   private animStartTime = 0;
   private animDuration = 400;
   private startPanX = 0;
@@ -38,6 +40,7 @@ export class GraphViewport {
   constructor(options: GraphViewportOptions) {
     this.onSelectCb = options.onSelectNode;
     this.onHoverCb = options.onHoverNode;
+    this.onChange = options.onChange;
 
     this.graph = new KnowledgeGraph2D({
       source: options.source,
@@ -92,19 +95,21 @@ export class GraphViewport {
   }
 
   pan(dx: number, dy: number): void {
-    this.isCameraAnimating = false;
+    this.cameraAnimating = false;
     this.panX += dx;
     this.panY += dy;
+    this.onChange();
   }
 
   zoomAt(factor: number, clientX: number, clientY: number): void {
-    this.isCameraAnimating = false;
+    this.cameraAnimating = false;
     const newZoom = Math.min(Math.max(this.zoom * factor, 0.15), 3.5);
     if (newZoom === this.zoom) return;
 
     this.panX = clientX - (clientX - this.panX) * (newZoom / this.zoom);
     this.panY = clientY - (clientY - this.panY) * (newZoom / this.zoom);
     this.zoom = newZoom;
+    this.onChange();
   }
 
   fitToView(): void {
@@ -136,10 +141,19 @@ export class GraphViewport {
     if (!frozen) {
       this.graph.reheat(0.3);
     }
+    this.onChange();
   }
 
   isPhysicsFrozen(): boolean {
     return this.isFrozen;
+  }
+
+  isCameraAnimating(): boolean {
+    return this.cameraAnimating;
+  }
+
+  isPhysicsActive(): boolean {
+    return !this.isFrozen && this.graph.isSimulating();
   }
 
   wakeUp(): void {
@@ -178,7 +192,8 @@ export class GraphViewport {
     this.targetZoom = targetZoom;
     this.animDuration = duration;
     this.animStartTime = performance.now();
-    this.isCameraAnimating = true;
+    this.cameraAnimating = true;
+    this.onChange();
   }
 
   update(): void {
@@ -186,7 +201,7 @@ export class GraphViewport {
       this.graph.step();
     }
 
-    if (this.isCameraAnimating) {
+    if (this.cameraAnimating) {
       const now = performance.now();
       const elapsed = now - this.animStartTime;
       const t = Math.min(1, elapsed / this.animDuration);
@@ -198,7 +213,7 @@ export class GraphViewport {
       this.zoom = this.startZoom + (this.targetZoom - this.startZoom) * ease;
 
       if (t >= 1) {
-        this.isCameraAnimating = false;
+        this.cameraAnimating = false;
       }
     }
   }
@@ -218,11 +233,13 @@ export class GraphViewport {
       this.activeHighlightEdges.add(`${e.source}->${e.target}`);
       this.activeHighlightEdges.add(`${e.target}->${e.source}`);
     }
+    this.onChange();
   }
 
   clearHighlight(): void {
     this.activeHighlightNodes.clear();
     this.activeHighlightEdges.clear();
+    this.onChange();
   }
 
   getNodes(): readonly GraphNode2D[] {

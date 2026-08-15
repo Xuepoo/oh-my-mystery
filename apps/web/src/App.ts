@@ -44,13 +44,15 @@ export class App {
       pointBackend: 'canvas',
       particleBackend: 'auto',
       maxFPS: 60,
-      autoThrottle: false, // Disable 2 FPS idle throttle to ensure smooth continuous animations
     });
     this.scene.resize(window.innerWidth, window.innerHeight);
 
     // 2. Initialize 2D Knowledge Graph Viewport
     this.viewport = new GraphViewport({
       source: this.source,
+      onChange: () => {
+        this.scene.markDirty();
+      },
       onSelectNode: (node) => {
         if (node) {
           void this.handleSelectNode(node.id);
@@ -195,6 +197,7 @@ export class App {
         this.draggedNode = hitNode;
         const worldPos = this.viewport.screenToWorld(x, y);
         this.viewport.graph.pinNode(hitNode.id, worldPos.x, worldPos.y);
+        this.scene.markDirty();
       } else {
         this.isPanning = true;
       }
@@ -211,6 +214,7 @@ export class App {
         if (this.draggedNode) {
           const worldPos = this.viewport.screenToWorld(x, y);
           this.viewport.graph.pinNode(this.draggedNode.id, worldPos.x, worldPos.y);
+          this.scene.markDirty();
         } else if (this.isPanning) {
           this.viewport.pan(dx, dy);
         }
@@ -266,6 +270,7 @@ export class App {
   }
 
   public async handleSelectNode(id: string): Promise<void> {
+    this.scene.markDirty();
     this.viewport.focusNode(id);
     void this.viewport.expandNode(id);
 
@@ -279,6 +284,7 @@ export class App {
   public async handleOpenChronicles(): Promise<void> {
     const trails = await this.source.fetchChronicles();
     if (trails.length > 0) {
+      this.scene.markDirty();
       this.chroniclePanel.open(trails);
     }
   }

@@ -44,11 +44,13 @@ export class ChroniclePanel extends Entity {
     this.currentTrailIndex = 0;
     this.currentStepIndex = 0;
     this.notifyStep();
+    this.scene.markDirty();
   }
 
   close(): void {
     this.isOpen = false;
     this.onCloseCb();
+    this.scene.markDirty();
   }
 
   isPanelOpen(): boolean {

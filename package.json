@@ -22,7 +22,7 @@
     "lint": "oxlint --deny-warnings",
     "test": "bun test",
     "prepare": "lefthook install",
-    "deploy": "scripts/deploy-pages.sh apps/web/dist mystery-omm main"
+    "deploy": "scripts/deploy-pages.sh apps/web/dist omm main"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.1",

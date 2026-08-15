@@ -84,6 +84,7 @@ export class HeaderBar extends Entity {
         e.preventDefault();
         this.domInput?.focus();
         this.showSearchDropdown = true;
+        this.scene.markDirty();
       }
     });
   }
@@ -130,6 +131,7 @@ export class HeaderBar extends Entity {
       // Delay hide slightly so clicks on dropdown items trigger
       setTimeout(() => {
         this.showSearchDropdown = false;
+        this.scene.markDirty();
       }, 250);
     });
 
@@ -146,11 +148,13 @@ export class HeaderBar extends Entity {
           const first = this.searchResults[0]!;
           this.showSearchDropdown = false;
           this.domInput?.blur();
+          this.scene.markDirty();
           this.onSelectSearchResultCb(first.id);
         }
       } else if (e.key === 'Escape') {
         this.showSearchDropdown = false;
         this.domInput?.blur();
+        this.scene.markDirty();
       }
     });
 
@@ -167,6 +171,7 @@ export class HeaderBar extends Entity {
     this.searchQuery = q.trim();
     if (!this.searchQuery) {
       this.searchResults = [];
+      this.scene.markDirty();
       return;
     }
     this.source
@@ -174,6 +179,7 @@ export class HeaderBar extends Entity {
       .then((res) => {
         this.searchResults = res.results;
         this.showSearchDropdown = true;
+        this.scene.markDirty();
       })
       .catch((err) => {
         console.error('Search failed', err);
@@ -527,6 +533,7 @@ export class HeaderBar extends Entity {
     // Clicked elsewhere on header
     if (this.showSearchDropdown) {
       this.showSearchDropdown = false;
+      this.scene.markDirty();
       return true;
     }
 

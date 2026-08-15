@@ -45,12 +45,19 @@ export class GraphOverlayLayer extends Entity {
     return false;
   }
 
+  hasPendingAnimations(): boolean {
+    return this.viewport.isPhysicsActive() || this.viewport.isCameraAnimating();
+  }
+
   setActiveFilter(filter: string | null): void {
     this.activeFilter = filter;
+    this.scene.markDirty();
   }
 
   setHoveredEntity(e: GraphNode2D | null): void {
+    if (this.hoveredEntity === e) return;
     this.hoveredEntity = e;
+    this.scene.markDirty();
   }
 
   getNodeAtScreenPoint(x: number, y: number): GraphNode2D | null {
@@ -117,8 +124,14 @@ export class GraphOverlayLayer extends Entity {
     const ctx = getCanvasCtx(r);
     this.viewport.update();
 
-    this.pulsePhase += 0.06;
-    this.ripplePhase = (this.ripplePhase + 0.03) % 1;
+    // Ambient ripple only pulses while the graph is visibly alive (physics or
+    // camera motion); at rest it resets so a half-expanded ring never freezes.
+    if (this.viewport.isPhysicsActive() || this.viewport.isCameraAnimating()) {
+      this.pulsePhase += 0.06;
+      this.ripplePhase = (this.ripplePhase + 0.03) % 1;
+    } else {
+      this.ripplePhase = 0;
+    }
     const nodes = this.viewport.getNodes();
     if (nodes.length === 0) return;
 
@@ -163,7 +176,15 @@ export class GraphOverlayLayer extends Entity {
 
       const src = this.viewport.graph.getNode(srcId);
       const tgt = this.viewport.graph.getNode(tgtId);
-      if (!src || !tgt || src.sx === undefined || tgt.sx === undefined) continue;
+      if (
+        !src ||
+        !tgt ||
+        src.sx === undefined ||
+        src.sy === undefined ||
+        tgt.sx === undefined ||
+        tgt.sy === undefined
+      )
+        continue;
 
       // Skip offscreen links
       if (
@@ -180,13 +201,13 @@ export class GraphOverlayLayer extends Entity {
 
       if (isHl || isHoverConn) {
         specialLinks.push({
-          src: { x: src.sx, y: src.sy },
-          tgt: { x: tgt.sx, y: tgt.sy },
+          src: { x: src.sx!, y: src.sy! },
+          tgt: { x: tgt.sx!, y: tgt.sy! },
           isHl: Boolean(isHl),
         });
       } else {
-        ctx.moveTo(src.sx, src.sy);
-        ctx.lineTo(tgt.sx, tgt.sy);
+        ctx.moveTo(src.sx!, src.sy!);
+        ctx.lineTo(tgt.sx!, tgt.sy!);
       }
     }
     ctx.stroke();
@@ -300,7 +321,7 @@ export class GraphOverlayLayer extends Entity {
         1.35;
       ctx.fillStyle = '#FFFDF9';
       ctx.beginPath();
-      ctx.arc(node.sx, node.sy ?? 0, r, 0, Math.PI * 2);
+      ctx.arc(node.sx!, node.sy ?? 0, r, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -337,7 +358,7 @@ export class GraphOverlayLayer extends Entity {
         1.35;
       ctx.lineWidth = 1.8;
       ctx.beginPath();
-      ctx.arc(node.sx, node.sy ?? 0, r, 0, Math.PI * 2);
+      ctx.arc(node.sx!, node.sy ?? 0, r, 0, Math.PI * 2);
       ctx.stroke();
     }
 

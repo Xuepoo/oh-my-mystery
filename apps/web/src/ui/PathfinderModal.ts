@@ -94,12 +94,14 @@ export class PathfinderModal extends Entity {
     }
     this.isOpen = true;
     this.pathResult = null;
+    this.scene.markDirty();
     void this.executeSearch();
   }
 
   close(): void {
     this.isOpen = false;
     this.onCloseCb();
+    this.scene.markDirty();
   }
 
   isModalOpen(): boolean {
@@ -118,8 +120,10 @@ export class PathfinderModal extends Entity {
 
   async executeSearch(): Promise<void> {
     this.searchLoading = true;
+    this.scene.markDirty();
     this.pathResult = await this.source.findPath(this.sourceId, this.targetId);
     this.searchLoading = false;
+    this.scene.markDirty();
   }
 
   render(r: any): void {

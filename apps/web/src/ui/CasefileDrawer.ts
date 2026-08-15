@@ -44,6 +44,7 @@ export class CasefileDrawer extends Entity {
       if (!this.isOpen) return;
       const delta = e.deltaY ?? e.rawEvent?.deltaY ?? 0;
       this.scrollY = Math.max(0, Math.min(this.maxScrollY, this.scrollY + delta * 0.6));
+      this.scene.markDirty();
     });
   }
 
@@ -57,12 +58,14 @@ export class CasefileDrawer extends Entity {
     this.details = details;
     this.isOpen = true;
     this.scrollY = 0;
+    this.scene.markDirty();
   }
 
   close(): void {
     this.isOpen = false;
     this.details = null;
     this.onCloseCb();
+    this.scene.markDirty();
   }
 
   isDrawerOpen(): boolean {

@@ -203,6 +203,10 @@ export class KnowledgeGraph2D {
     }
   }
 
+  isSimulating(): boolean {
+    return this.simulation !== null && this.simulation.alpha() >= 0.001;
+  }
+
   reheat(alpha = 0.5): void {
     if (this.simulation) {
       this.simulation.alpha(Math.max(this.simulation.alpha(), alpha));

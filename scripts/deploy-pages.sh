@@ -5,7 +5,7 @@
 set -euo pipefail
 
 PUBLIC_DIR="${1:-apps/web/dist}"
-PROJECT_NAME="${2:-mystery-omm}"
+PROJECT_NAME="${2:-omm}"
 BRANCH="${3:-main}"
 
 if ! command -v wrangler &>/dev/null; then
