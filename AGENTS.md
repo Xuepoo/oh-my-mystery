@@ -91,3 +91,31 @@ Deployment is performed via Cloudflare Pages and Workers using Wrangler:
 just deploy
 # runs scripts/deploy-pages.sh to safely deploy apps/web/dist to Cloudflare Pages
 ```
+
+---
+
+## 6. Data Pipeline & Snow Sync
+
+The authoritative crawler database lives on the cloud server `snow` (~/mystery-clawer/data/mystery.db, ~4GB, NO_GIT).
+The crawler source lives in the sibling git repo `../mystery-clawer` (local).
+
+```text
+local mystery-clawer (git)
+  └─ rsync code ──▶ snow:~/mystery-clawer (NO_GIT)
+                       └─ uv run python scripts/run.py [--only <source>]   # crawl (sources in config.yaml)
+                       └─ uv run python scripts/export_full.py / export_rdf.py   # export/ (ttl, facts.jsonl, ...)
+  ◀── rsync data/mystery.db back ──┘
+omm/scripts/build-d1-db.ts   # reads ../mystery-clawer/data/mystery.db → omm/data/omm-d1.sqlite
+omm/scripts/import-d1.ts     # full remote D1 import (~2h) — use targeted wrangler d1 execute --file for deltas
+omm/scripts/cleanup-remote-d1.ts  # delete remote rows not present in the local canonical id list
+```
+
+Key rules:
+
+- Code changes: commit locally, then `rsync -avz --delete src/ scripts/ snow:~/mystery-clawer/src/` (adjust paths as needed); never edit on snow.
+- DB pull: `rsync -avz snow:~/mystery-clawer/data/mystery.db ../mystery-clawer/data/mystery.db`.
+- Build D1 from repo root: `bun scripts/build-d1-db.ts`. In a git worktree, symlink `.worktrees/mystery-clawer -> ../../mystery-clawer` first (the script resolves `scripts/../../mystery-clawer/data/mystery.db`).
+- Remote D1 access requires the proxy: `HTTPS_PROXY=$NETWORK_PROXY wrangler d1 execute omm-db --remote ...` (without proxy, wrangler fetch fails).
+- Worker deploy: `cd apps/api && HTTPS_PROXY=$NETWORK_PROXY wrangler deploy`.
+- Verify prod from snow (local network proxy blocks workers.dev):
+  `ssh snow 'curl -s https://omm-api.ven3428set.workers.dev/api/health'`.
