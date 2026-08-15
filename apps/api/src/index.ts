@@ -328,23 +328,56 @@ app.get('/api/search', async (c) => {
     .bind(pattern, pattern, pattern, pattern, q, q, q, limit)
     .all();
 
-  const results: SearchResultItem[] = (rows.results || []).map((row: any) => {
-    let name = row.name_zh || row.name_en || row.name_ja || row.id;
+  const results: SearchResultItem[] = [];
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
+
+  for (const row of rows.results || []) {
+    const id = String(row.id);
+    if (seenIds.has(id)) continue;
+
+    let rawName = row.name_zh || row.name_en || row.name_ja || id;
+    let subtitle =
+      row.name_ja && row.name_ja !== rawName
+        ? row.name_ja
+        : row.name_en && row.name_en !== rawName
+          ? row.name_en
+          : undefined;
+
     if (row.names_json) {
       try {
         const parsed = JSON.parse(row.names_json);
-        name = parsed.labels?.zh || parsed.labels?.en || parsed.labels?.ja || name;
+        const labels = parsed.labels || {};
+        rawName = labels.zh || labels['zh-cn'] || labels.ja || labels.en || rawName;
+        if (!subtitle && labels.ja && labels.ja !== rawName) {
+          subtitle = labels.ja;
+        } else if (!subtitle && labels.en && labels.en !== rawName) {
+          subtitle = labels.en;
+        }
       } catch {}
     }
 
-    return {
-      id: row.id,
-      type: row.type,
-      name,
-      subtitle: row.name_en !== name ? row.name_en : row.name_ja,
+    // Clean author name prefix and Kanji/Katakana typos
+    const cleanName = rawName
+      .replace(/^(原作|作畫|作画|著|编|絵|画|イラスト)[：:\s]+/g, '')
+      .replace(/[\u529B]イウ/g, 'カイウ')
+      .replace(/[、,，\s]+/g, '、')
+      .replace(/^、|、$/g, '')
+      .trim();
+
+    const nameKey = `${row.type || 'other'}|${cleanName.toLowerCase()}`;
+    if (seenNames.has(nameKey)) continue;
+    seenIds.add(id);
+    seenNames.add(nameKey);
+
+    results.push({
+      id,
+      type: row.type || 'other',
+      name: cleanName,
+      subtitle,
       score: 1.0,
-    };
-  });
+    });
+  }
 
   const response: SearchResponse = {
     query: q,

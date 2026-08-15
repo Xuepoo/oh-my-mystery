@@ -40,6 +40,32 @@ async function runAudit() {
   await page.screenshot({ path: join(SCREENSHOTS_DIR, '01-landing.png') });
   console.log(`  ✓ Captured 01-landing screenshot`);
 
+  // Verify search deduplication by typing "白井"
+  console.log('🔍 Testing native search typing for "白井"...');
+  await page.fill('#omm-header-search-input', '白井');
+  await page.waitForTimeout(1000);
+
+  await page.screenshot({ path: join(SCREENSHOTS_DIR, '01-search-shirai.png') });
+
+  const searchHits = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return app.headerBar.searchResults || [];
+  });
+  console.log(
+    `  ✓ Search hits for "白井": ${searchHits.length} items (Unique IDs: ${new Set(searchHits.map((h: any) => h.id)).size})`,
+  );
+  for (const h of searchHits) {
+    console.log(`    • [${h.type}] ${h.name} (${h.subtitle || h.id})`);
+  }
+
+  // Clear search input
+  await page.fill('#omm-header-search-input', '');
+  await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    app.headerBar.setSearchQuery('');
+  });
+  await page.waitForTimeout(500);
+
   // Verify canvas exists & app initialized
   const appState = await page.evaluate(() => {
     const app = (window as any).__OMM_APP__;

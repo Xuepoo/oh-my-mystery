@@ -132,7 +132,65 @@ export class GraphOverlayLayer extends Entity {
     this.nodeBadges.length = 0;
     let badgeIndex = 0;
 
-    // 1. Draw Gravitational Pulse Waves for Top Master Authors (Limited to 4 for optimal performance)
+    // 1. Build screen coordinate map for all nodes
+    const screenCoordMap = new Map<string, { x: number; y: number }>();
+    for (let i = 0; i < nodeCount; i++) {
+      const e = entities[i]!;
+      const x = positions[i * 3]!;
+      const y = positions[i * 3 + 1]!;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+      _projVec.set(x, y, 0).project(camera);
+      const sx = ((_projVec.x + 1) / 2) * w;
+      const sy = ((-_projVec.y + 1) / 2) * h;
+      screenCoordMap.set(String(e.id), { x: sx, y: sy });
+    }
+
+    // 2. Draw Relational Connection Threads (Edges)
+    const facts = this.viewport.getFacts();
+    const hlEdges = this.viewport.getHighlightEdges();
+    const hoveredId = this.hoveredEntity ? String(this.hoveredEntity.id) : null;
+
+    ctx.save();
+    for (let i = 0; i < facts.length; i++) {
+      const f = facts[i]!;
+      const src = screenCoordMap.get(String(f.source));
+      const tgt = screenCoordMap.get(String(f.target));
+      if (!src || !tgt) continue;
+
+      // Skip offscreen links
+      if (
+        (src.x < -100 && tgt.x < -100) ||
+        (src.x > w + 100 && tgt.x > w + 100) ||
+        (src.y < -100 && tgt.y < -100) ||
+        (src.y > h + 100 && tgt.y > h + 100)
+      ) {
+        continue;
+      }
+
+      const isHl =
+        hlEdges.has(`${f.source}->${f.target}`) || hlEdges.has(`${f.target}->${f.source}`);
+      const isHoverConn = hoveredId && (f.source === hoveredId || f.target === hoveredId);
+
+      if (isHl) {
+        ctx.strokeStyle = '#FFE066';
+        ctx.lineWidth = 2.5;
+      } else if (isHoverConn) {
+        ctx.strokeStyle = '#FFAB38';
+        ctx.lineWidth = 1.8;
+      } else {
+        ctx.strokeStyle = 'rgba(243, 196, 118, 0.42)';
+        ctx.lineWidth = 1.0;
+      }
+
+      ctx.beginPath();
+      ctx.moveTo(src.x, src.y);
+      ctx.lineTo(tgt.x, tgt.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // 3. Draw Gravitational Pulse Waves for Top Master Authors
     const masterLimit = Math.min(4, nodeCount);
     const rippleR = 14 + this.ripplePhase * 28;
     const rippleAlpha = (1 - this.ripplePhase) * 0.45;
@@ -144,17 +202,11 @@ export class GraphOverlayLayer extends Entity {
       const e = entities[i]!;
       if (e.type !== 'author') continue;
 
-      const x = positions[i * 3]!;
-      const y = positions[i * 3 + 1]!;
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      const sc = screenCoordMap.get(String(e.id));
+      if (!sc || sc.x < -50 || sc.x > w + 50 || sc.y < 64 || sc.y > h + 50) continue;
 
-      _projVec.set(x, y, 0).project(camera);
-      const sx = ((_projVec.x + 1) / 2) * w;
-      const sy = ((-_projVec.y + 1) / 2) * h;
-      if (sx < -50 || sx > w + 50 || sy < 64 || sy > h + 50) continue;
-
-      ctx.moveTo(sx + rippleR, sy);
-      ctx.arc(sx, sy, rippleR, 0, Math.PI * 2);
+      ctx.moveTo(sc.x + rippleR, sc.y);
+      ctx.arc(sc.x, sc.y, rippleR, 0, Math.PI * 2);
     }
     ctx.stroke();
 

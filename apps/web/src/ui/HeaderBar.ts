@@ -23,8 +23,9 @@ export class HeaderBar extends Entity {
   private searchQuery = '';
   private searchResults: SearchResultItem[] = [];
   private showSearchDropdown = false;
-  private isSearching = false;
   private activeFilter: string | null = null;
+  private domInput: HTMLInputElement | null = null;
+  private debounceTimer: any = null;
 
   private searchInputRect = { x: 0, y: 0, w: 0, h: 0 };
   private fullscreenBtnRect = { x: 0, y: 0, w: 0, h: 0 };
@@ -38,9 +39,15 @@ export class HeaderBar extends Entity {
     w: number;
     h: number;
   }[] = [];
-  private dropdownItemRects: { id: string; x: number; y: number; w: number; h: number }[] = [];
+  private dropdownItemRects: {
+    id: string;
+    name: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }[] = [];
   private hotQueryRects: { query: string; x: number; y: number; w: number; h: number }[] = [];
-  private customInputBtnRect = { x: 0, y: 0, w: 0, h: 0 };
 
   private readonly HOT_QUERIES = [
     '东野圭吾',
@@ -64,6 +71,8 @@ export class HeaderBar extends Entity {
     this.onFilterChangeCb = options.onFilterChange;
     this.onToggleFullscreenCb = options.onToggleFullscreen;
 
+    this.initDomInput();
+
     this.on('pointerdown', (e: any) => {
       const { x, y } = getEventCoords(e);
       this.handleClick(x, y);
@@ -71,17 +80,86 @@ export class HeaderBar extends Entity {
 
     // Native text input shortcut for searching
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        this.showSearchDropdown = false;
-      } else if (e.key === '/' && document.activeElement?.tagName !== 'INPUT') {
+      if (e.key === '/' && document.activeElement !== this.domInput) {
         e.preventDefault();
+        this.domInput?.focus();
         this.showSearchDropdown = true;
       }
     });
   }
 
+  private initDomInput(): void {
+    if (typeof document === 'undefined') return;
+
+    const existing = document.getElementById('omm-header-search-input');
+    if (existing) existing.remove();
+
+    this.domInput = document.createElement('input');
+    this.domInput.id = 'omm-header-search-input';
+    this.domInput.type = 'text';
+    this.domInput.placeholder = '🔍 搜索推理作家/作品/奖项... [/]';
+    this.domInput.autocomplete = 'off';
+    this.domInput.spellcheck = false;
+
+    Object.assign(this.domInput.style, {
+      position: 'absolute',
+      zIndex: '10',
+      backgroundColor: '#40332A',
+      color: '#FFFDF9',
+      border: '1px solid #6B5746',
+      borderRadius: '6px',
+      padding: '0 12px',
+      fontSize: '13px',
+      fontFamily: Theme.fonts.sans,
+      outline: 'none',
+      boxSizing: 'border-box',
+      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.4)',
+    });
+
+    this.domInput.addEventListener('focus', () => {
+      if (this.domInput) {
+        this.domInput.style.borderColor = Theme.colors.borderHighlight;
+      }
+      this.showSearchDropdown = true;
+    });
+
+    this.domInput.addEventListener('blur', () => {
+      if (this.domInput) {
+        this.domInput.style.borderColor = Theme.colors.border;
+      }
+      // Delay hide slightly so clicks on dropdown items trigger
+      setTimeout(() => {
+        this.showSearchDropdown = false;
+      }, 250);
+    });
+
+    this.domInput.addEventListener('input', () => {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = setTimeout(() => {
+        this.setSearchQuery(this.domInput?.value || '');
+      }, 150);
+    });
+
+    this.domInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (this.searchResults.length > 0) {
+          const first = this.searchResults[0]!;
+          this.showSearchDropdown = false;
+          this.domInput?.blur();
+          this.onSelectSearchResultCb(first.id);
+        }
+      } else if (e.key === 'Escape') {
+        this.showSearchDropdown = false;
+        this.domInput?.blur();
+      }
+    });
+
+    const container = document.getElementById('app-container') || document.body;
+    container.appendChild(this.domInput);
+  }
+
   isPointInside(_x: number, y: number): boolean {
-    if (this.showSearchDropdown) return y <= 400;
+    if (this.showSearchDropdown) return y <= 420;
     return y <= 64;
   }
 
@@ -91,7 +169,6 @@ export class HeaderBar extends Entity {
       this.searchResults = [];
       return;
     }
-    this.isSearching = true;
     this.source
       .search(this.searchQuery)
       .then((res) => {
@@ -101,9 +178,6 @@ export class HeaderBar extends Entity {
       .catch((err) => {
         console.error('Search failed', err);
         this.searchResults = [];
-      })
-      .finally(() => {
-        this.isSearching = false;
       });
   }
 
@@ -138,26 +212,18 @@ export class HeaderBar extends Entity {
       ctx.fillText('推理知识图谱', isTablet ? 155 : 188, 32);
     }
 
-    // 2. Search Input Box
+    // 2. Position DOM Search Input
     const searchX = isMobile ? 68 : isTablet ? 245 : 290;
     const searchW = isMobile ? Math.max(110, w - 68 - 140) : Math.min(260, w * 0.22);
     this.searchInputRect = { x: searchX, y: 14, w: searchW, h: 36 };
 
-    ctx.fillStyle = Theme.colors.bgCard;
-    ctx.beginPath();
-    ctx.roundRect(searchX, 14, searchW, 36, 6);
-    ctx.fill();
-    ctx.strokeStyle = this.showSearchDropdown ? Theme.colors.borderHighlight : Theme.colors.border;
-    ctx.stroke();
-
-    ctx.fillStyle = this.searchQuery ? Theme.colors.textHigh : Theme.colors.textLow;
-    ctx.font = `400 ${isMobile ? '11px' : '13px'} ${Theme.fonts.sans}`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    const displayText = isMobile
-      ? this.searchQuery || '🔍 搜索...'
-      : this.searchQuery || '🔍 搜索作家/作品/奖项... [/]';
-    ctx.fillText(displayText, searchX + 10, 32);
+    if (this.domInput) {
+      this.domInput.style.left = `${searchX}px`;
+      this.domInput.style.top = '14px';
+      this.domInput.style.width = `${searchW}px`;
+      this.domInput.style.height = '36px';
+      this.domInput.placeholder = isMobile ? '🔍 搜索...' : '🔍 搜索作家/作品/奖项... [/]';
+    }
 
     // 3. Entity Type Filter Pills (Desktop only)
     if (!isMobile && !isTablet) {
@@ -289,12 +355,12 @@ export class HeaderBar extends Entity {
     if (this.showSearchDropdown) {
       const dropX = searchX;
       const dropY = 56;
-      const dropW = Math.max(300, searchW);
+      const dropW = Math.max(320, searchW);
 
       if (this.searchResults.length > 0) {
         // Render search hits
-        const itemH = 44;
-        const dropH = Math.min(320, this.searchResults.length * itemH + 16);
+        const itemH = 46;
+        const dropH = Math.min(340, this.searchResults.length * itemH + 16);
 
         ctx.fillStyle = Theme.colors.bgCard;
         ctx.beginPath();
@@ -312,6 +378,7 @@ export class HeaderBar extends Entity {
           const item = this.searchResults[i]!;
           this.dropdownItemRects.push({
             id: item.id,
+            name: item.name,
             x: dropX,
             y: itemY,
             w: dropW,
@@ -322,34 +389,34 @@ export class HeaderBar extends Entity {
           const typeColor = Theme.getNodeColor(item.type);
           ctx.fillStyle = typeColor;
           ctx.beginPath();
-          ctx.roundRect(dropX + 10, itemY + 12, 48, 20, 3);
+          ctx.roundRect(dropX + 10, itemY + 13, 48, 20, 3);
           ctx.fill();
 
           ctx.fillStyle = '#FFFFFF';
           ctx.font = `700 9px ${Theme.fonts.sans}`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText(Theme.getNodeTypeLabel(item.type).split(' / ')[0]!, dropX + 34, itemY + 22);
+          ctx.fillText(Theme.getNodeTypeLabel(item.type).split(' / ')[0]!, dropX + 34, itemY + 23);
 
           // Title
           ctx.fillStyle = Theme.colors.textHigh;
           ctx.font = `600 13px ${Theme.fonts.serif}`;
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
-          ctx.fillText(item.name, dropX + 66, itemY + (item.subtitle ? 15 : 22));
+          ctx.fillText(item.name, dropX + 66, itemY + (item.subtitle ? 16 : 23));
 
           // Subtitle
           if (item.subtitle) {
             ctx.fillStyle = Theme.colors.textLow;
             ctx.font = `400 11px ${Theme.fonts.sans}`;
-            ctx.fillText(item.subtitle, dropX + 66, itemY + 30);
+            ctx.fillText(item.subtitle, dropX + 66, itemY + 31);
           }
 
           itemY += itemH;
         }
       } else {
         // Render Hot Queries Suggestion Panel
-        const dropH = 220;
+        const dropH = 180;
         ctx.fillStyle = Theme.colors.bgCard;
         ctx.beginPath();
         ctx.roundRect(dropX, dropY, dropW, dropH, 8);
@@ -363,7 +430,7 @@ export class HeaderBar extends Entity {
         ctx.font = `700 11px ${Theme.fonts.sans}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        ctx.fillText('🔥 热门推理探索 (点击速查)：', dropX + 14, dropY + 14);
+        ctx.fillText('🔥 热门推理速查探索 (点击直达)：', dropX + 14, dropY + 14);
 
         this.hotQueryRects = [];
         this.dropdownItemRects = [];
@@ -375,7 +442,7 @@ export class HeaderBar extends Entity {
           const qW = Math.round(ctx.measureText(query).width + 18);
           if (tagX + qW > dropX + dropW - 14) {
             tagX = dropX + 14;
-            tagY += 32;
+            tagY += 34;
           }
 
           const qRect = { query, x: tagX, y: tagY, w: qW, h: 26 };
@@ -397,38 +464,6 @@ export class HeaderBar extends Entity {
 
           tagX += qW + 8;
         }
-
-        // Custom Prompt Button
-        this.customInputBtnRect = {
-          x: dropX + 14,
-          y: dropY + dropH - 42,
-          w: dropW - 28,
-          h: 30,
-        };
-        ctx.fillStyle = 'rgba(255, 217, 142, 0.18)';
-        ctx.beginPath();
-        ctx.roundRect(
-          this.customInputBtnRect.x,
-          this.customInputBtnRect.y,
-          this.customInputBtnRect.w,
-          this.customInputBtnRect.h,
-          5,
-        );
-        ctx.fill();
-
-        ctx.strokeStyle = Theme.colors.borderActive;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        ctx.fillStyle = Theme.colors.borderActive;
-        ctx.font = `600 12px ${Theme.fonts.sans}`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(
-          '✏️ 键入自定义搜索词...',
-          this.customInputBtnRect.x + this.customInputBtnRect.w / 2,
-          this.customInputBtnRect.y + 15,
-        );
       }
     }
     ctx.restore();
@@ -440,6 +475,10 @@ export class HeaderBar extends Entity {
       for (const item of this.dropdownItemRects) {
         if (this.isInRect(clientX, clientY, item)) {
           this.showSearchDropdown = false;
+          if (this.domInput) {
+            this.domInput.value = item.name;
+            this.domInput.blur();
+          }
           this.onSelectSearchResultCb(item.id);
           return true;
         }
@@ -448,31 +487,17 @@ export class HeaderBar extends Entity {
       // Hot Query Tags
       for (const h of this.hotQueryRects) {
         if (this.isInRect(clientX, clientY, h)) {
+          if (this.domInput) {
+            this.domInput.value = h.query;
+            this.domInput.focus();
+          }
           this.setSearchQuery(h.query);
           return true;
         }
       }
-
-      // Custom Input Button
-      if (this.isInRect(clientX, clientY, this.customInputBtnRect)) {
-        const prompt = window.prompt(
-          '🔍 搜索推理作家、作品、奖项或名侦探 (中/英/日)：',
-          this.searchQuery,
-        );
-        if (prompt !== null) {
-          this.setSearchQuery(prompt);
-        }
-        return true;
-      }
     }
 
-    // 2. Search Input Header Click
-    if (this.isInRect(clientX, clientY, this.searchInputRect)) {
-      this.showSearchDropdown = !this.showSearchDropdown;
-      return true;
-    }
-
-    // 3. Filter Pills
+    // 2. Filter Pills
     for (const f of this.filterPillRects) {
       if (this.isInRect(clientX, clientY, f)) {
         this.activeFilter = this.activeFilter === f.type ? null : f.type;
@@ -481,19 +506,19 @@ export class HeaderBar extends Entity {
       }
     }
 
-    // 4. Chronicles
+    // 3. Chronicles
     if (this.isInRect(clientX, clientY, this.chroniclesBtnRect)) {
       this.onOpenChroniclesCb();
       return true;
     }
 
-    // 5. Pathfinder
+    // 4. Pathfinder
     if (this.isInRect(clientX, clientY, this.pathfinderBtnRect)) {
       this.onOpenPathfinderCb();
       return true;
     }
 
-    // 6. Fullscreen
+    // 5. Fullscreen
     if (this.isInRect(clientX, clientY, this.fullscreenBtnRect)) {
       this.onToggleFullscreenCb();
       return true;

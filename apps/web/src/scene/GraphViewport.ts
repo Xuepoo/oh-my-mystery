@@ -209,6 +209,18 @@ export class GraphViewport {
     return this.session.listEntities();
   }
 
+  getFacts(): readonly any[] {
+    return (this.session as any).facts || [];
+  }
+
+  getHighlightNodes(): ReadonlySet<string> {
+    return this.activeHighlightNodes;
+  }
+
+  getHighlightEdges(): ReadonlySet<string> {
+    return this.activeHighlightEdges;
+  }
+
   getNodeLabel(entity: KgEntity, lang = 'zh'): string {
     return pickLabel(entity.labels, lang);
   }

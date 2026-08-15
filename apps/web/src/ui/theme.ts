@@ -30,9 +30,9 @@ export const Theme = {
     genre: '#FB923C', // Vivid Tangerine Ochre (流派)
     other: '#94A3B8', // Polished Silver (其他)
 
-    // Radiant Relational Threads & Energy Pulses
-    edgeDefault: 'rgba(243, 196, 118, 0.55)', // Radiant golden ink thread
-    edgeHover: 'rgba(255, 171, 56, 0.95)',
+    // Radiant Relational Threads & Energy Pulses (Hex for Three.js)
+    edgeDefault: '#F3C476', // Radiant golden ink thread
+    edgeHover: '#FFAB38',
     edgeHighlighted: '#FFE066', // Blazing clue connection
     edgePulse: '#FF9E00',
 
