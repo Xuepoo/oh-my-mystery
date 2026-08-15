@@ -111,15 +111,17 @@ export function namesToJson(names: CleanedNames): string {
 
 const HEX_ONLY_RE = /^[0-9a-f]{8,}$/i;
 
-// Junk entity names: no usable label at all, or every label (and alias)
-// is a hex-hash string (crawler bug where the category name was replaced
-// by its sha1 fragment).
-export function isJunkNames(names: CleanedNames): boolean {
+// Junk entity names: no usable label at all, every label (and alias) is a
+// hex-hash string (crawler bug), or an author entity whose name is a joined
+// multi-author list (douban anthology bug).
+export function isJunkNames(names: CleanedNames, type?: string): boolean {
   const labelVals = Object.values(names.labels).filter((v) => v.length > 0);
   if (labelVals.length === 0) return true;
   const aliasVals = Object.values(names.aliases).flat();
   const allHex =
     labelVals.every((v) => HEX_ONLY_RE.test(v)) &&
     (aliasVals.length === 0 || aliasVals.every((v) => HEX_ONLY_RE.test(v)));
-  return allHex;
+  if (allHex) return true;
+  if (type === 'author' && labelVals.some((v) => v.includes('、'))) return true;
+  return false;
 }

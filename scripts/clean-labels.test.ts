@@ -93,4 +93,10 @@ describe('isJunkNames', () => {
       false,
     );
   });
+
+  test('flags author entities with joined multi-author labels', () => {
+    const names = { labels: { zh: '阿加莎·克里斯蒂、[英] 阿加莎·克里斯蒂' }, aliases: {} };
+    expect(isJunkNames(names, 'author')).toBe(true);
+    expect(isJunkNames(names, 'work')).toBe(false);
+  });
 });
