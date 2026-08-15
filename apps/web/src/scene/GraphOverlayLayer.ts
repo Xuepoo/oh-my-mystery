@@ -223,21 +223,23 @@ export class GraphOverlayLayer extends Entity {
     }
     ctx.stroke();
 
-    // 4. Draw Node Beads & Category Glows
+    // 4. Draw Node Beads & Category Glows with Dynamic Obsidian Radii
     for (let i = 0; i < nodeCount; i++) {
       const node = nodes[i]!;
       const sc = screenCoordMap.get(node.id);
       if (!sc || sc.x < -100 || sc.x > w + 100 || sc.y < 64 || sc.y > h + 50) continue;
 
       const isHovered = this.hoveredEntity && this.hoveredEntity.id === node.id;
-      const isAuthor = node.type === 'author';
-      const r = isHovered ? 8 : isAuthor ? 6 : 4.5;
+      const baseR =
+        (node.radius || (node.type === 'author' ? 12 : 7)) *
+        Math.min(1.3, Math.max(0.65, this.viewport.zoom));
+      const r = isHovered ? baseR * 1.35 : baseR;
 
       // Outer glow
       ctx.fillStyle = node.color || Theme.getNodeColor(node.type);
       ctx.beginPath();
-      ctx.arc(sc.x, sc.y, r + (isHovered ? 4 : 2), 0, Math.PI * 2);
-      ctx.globalAlpha = isHovered ? 0.6 : 0.3;
+      ctx.arc(sc.x, sc.y, r + (isHovered ? 6 : 3.5), 0, Math.PI * 2);
+      ctx.globalAlpha = isHovered ? 0.65 : 0.32;
       ctx.fill();
       ctx.globalAlpha = 1.0;
 
@@ -249,7 +251,7 @@ export class GraphOverlayLayer extends Entity {
 
       // Border
       ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 1;
+      ctx.lineWidth = isHovered ? 1.8 : 1.2;
       ctx.stroke();
     }
 
@@ -280,8 +282,11 @@ export class GraphOverlayLayer extends Entity {
       if (showFullBadge) {
         const pillW = pillInfo.pillW;
         const pillH = pillInfo.pillH;
+        const nodeR =
+          (node.radius || (node.type === 'author' ? 12 : 7)) *
+          Math.min(1.3, Math.max(0.65, this.viewport.zoom));
         const pillX = Math.round(sc.x - pillW / 2);
-        const pillY = Math.round(sc.y + (pillInfo.isAuthor ? 12 : 9));
+        const pillY = Math.round(sc.y + nodeR + 6);
 
         let badge = this.badgePool[badgeIndex];
         if (!badge) {

@@ -301,6 +301,49 @@ app.get('/api/entity/:id/details', async (c) => {
   return c.json(response);
 });
 
+function normalizeSearchName(name: string): string {
+  return (
+    name
+      // Strip nationality/country brackets: (日), （日）, [日], 【日】, (美), （英）, (日)、, （日）· etc.
+      .replace(/^[（([【][日中美英法德俄韩港台欧日\w\s]+[）)\]】][、，,\s·.]*/g, '')
+      // Strip roles: 原作：, 作画：, 著：, 译：, 编：
+      .replace(/^(原作|作畫|作画|著|编|譯|译|繪|絵|画|イラスト)[：:\s]+/g, '')
+      // Replace broken typos like 力イウ -> カイウ
+      .replace(/[\u529B]イウ/g, 'カイウ')
+      // Strip trailing or leading unclosed brackets and punctuation: (, （, ), ）, 、, ,, ·
+      .replace(/^[（([【()\]】、，,·.\s]+|[（([【()\]】、，,·.\s]+$/g, '')
+      .trim()
+  );
+}
+
+function toSimpKey(str: string): string {
+  return str
+    .replace(/戶/g, '户')
+    .replace(/亂/g, '乱')
+    .replace(/步/g, '步')
+    .replace(/東/g, '东')
+    .replace(/野/g, '野')
+    .replace(/圭/g, '圭')
+    .replace(/吾/g, '吾')
+    .replace(/島/g, '岛')
+    .replace(/莊/g, '庄')
+    .replace(/司/g, '司')
+    .replace(/綾/g, '绫')
+    .replace(/辻/g, '辻')
+    .replace(/行/g, '行')
+    .replace(/人/g, '人')
+    .replace(/賞/g, '奖')
+    .replace(/獎/g, '奖')
+    .replace(/獲/g, '获')
+    .replace(/館/g, '馆')
+    .replace(/筆/g, '笔')
+    .replace(/書/g, '书')
+    .replace(/國/g, '国')
+    .replace(/會/g, '会')
+    .toLowerCase()
+    .replace(/[\s\-_·.]+/g, '');
+}
+
 // 6. Search across multi-language names and aliases
 app.get('/api/search', async (c) => {
   const q = c.req.query('q')?.trim() || '';
@@ -312,6 +355,7 @@ app.get('/api/search', async (c) => {
   }
 
   const pattern = `%${q}%`;
+  // Fetch up to 60 candidates to ensure canonical entities (Wikidata/Clean) are preferred
   const rows = await c.env.DB.prepare(
     `
     SELECT s.id, s.type, s.name_zh, s.name_en, s.name_ja, e.names_json
@@ -322,10 +366,10 @@ app.get('/api/search', async (c) => {
       (CASE WHEN s.id LIKE 'wd:%' THEN 0 ELSE 1 END),
       (CASE WHEN s.name_zh = ? OR s.name_en = ? OR s.name_ja = ? THEN 0 ELSE 1 END),
       LENGTH(COALESCE(s.name_zh, s.name_en, s.name_ja)) ASC
-    LIMIT ?
+    LIMIT 60
   `,
   )
-    .bind(pattern, pattern, pattern, pattern, q, q, q, limit)
+    .bind(pattern, pattern, pattern, pattern, q, q, q)
     .all();
 
   const results: SearchResultItem[] = [];
@@ -348,7 +392,14 @@ app.get('/api/search', async (c) => {
       try {
         const parsed = JSON.parse(row.names_json);
         const labels = parsed.labels || {};
-        rawName = labels.zh || labels['zh-cn'] || labels.ja || labels.en || rawName;
+        rawName =
+          labels['zh-cn'] ||
+          labels.zh ||
+          labels['zh-hans'] ||
+          labels['zh-hant'] ||
+          labels.ja ||
+          labels.en ||
+          rawName;
         if (!subtitle && labels.ja && labels.ja !== rawName) {
           subtitle = labels.ja;
         } else if (!subtitle && labels.en && labels.en !== rawName) {
@@ -357,16 +408,21 @@ app.get('/api/search', async (c) => {
       } catch {}
     }
 
-    // Clean author name prefix and Kanji/Katakana typos
-    const cleanName = rawName
-      .replace(/^(原作|作畫|作画|著|编|絵|画|イラスト)[：:\s]+/g, '')
-      .replace(/[\u529B]イウ/g, 'カイウ')
-      .replace(/[、,，\s]+/g, '、')
-      .replace(/^、|、$/g, '')
-      .trim();
+    const cleanName = normalizeSearchName(rawName);
+    if (!cleanName || cleanName.length < 1) continue;
 
-    const nameKey = `${row.type || 'other'}|${cleanName.toLowerCase()}`;
+    // Filter out multi-author anthology conglomerate strings in author type (e.g. 2+ authors joined by 、 or /)
+    if (row.type === 'author') {
+      const commaCount = (cleanName.match(/[、,/]/g) || []).length;
+      if (commaCount >= 2 || (commaCount >= 1 && cleanName.length > 12)) {
+        continue;
+      }
+    }
+
+    const simpKey = toSimpKey(cleanName);
+    const nameKey = `${row.type || 'other'}|${simpKey}`;
     if (seenNames.has(nameKey)) continue;
+
     seenIds.add(id);
     seenNames.add(nameKey);
 
@@ -377,6 +433,8 @@ app.get('/api/search', async (c) => {
       subtitle,
       score: 1.0,
     });
+
+    if (results.length >= limit) break;
   }
 
   const response: SearchResponse = {

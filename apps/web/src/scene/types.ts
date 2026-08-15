@@ -6,6 +6,8 @@ export interface GraphNode2D {
   name: string;
   color: string;
   val: number;
+  degree?: number;
+  radius?: number;
   labels: Record<string, string>;
   x?: number;
   y?: number;

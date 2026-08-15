@@ -1,8 +1,8 @@
 import {
-  forceCenter,
   forceCollide,
   forceLink,
   forceManyBody,
+  forceRadial,
   forceSimulation,
   type Simulation,
 } from 'd3-force';
@@ -64,6 +64,8 @@ export class KnowledgeGraph2D {
       node.y = Math.sin(angle) * r;
       node.vx = 0;
       node.vy = 0;
+      node.degree = 0;
+      node.radius = node.type === 'author' ? 12 : 8;
       this.nodesMap.set(node.id, node);
       this.nodesList.push(node);
     }
@@ -93,6 +95,8 @@ export class KnowledgeGraph2D {
         neighbor.y = cy + Math.sin(angle) * dist;
         neighbor.vx = (Math.random() - 0.5) * 1.5;
         neighbor.vy = (Math.random() - 0.5) * 1.5;
+        neighbor.degree = 0;
+        neighbor.radius = neighbor.type === 'author' ? 10 : 7;
 
         this.nodesMap.set(neighbor.id, neighbor);
         this.nodesList.push(neighbor);
@@ -115,10 +119,8 @@ export class KnowledgeGraph2D {
       }
     }
 
-    if (addedCount > 0) {
-      this.rebuildSimulation();
-      this.reheat(0.6);
-    }
+    this.rebuildSimulation();
+    this.reheat(0.6);
 
     return addedCount;
   }
@@ -128,14 +130,40 @@ export class KnowledgeGraph2D {
       this.simulation.stop();
     }
 
-    // Map links to node objects or string IDs
+    // 1. Calculate dynamic degree and radius for each node (Obsidian-style scaling)
+    const degreeMap = new Map<string, number>();
+    for (const link of this.linksList) {
+      const srcId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
+      degreeMap.set(srcId, (degreeMap.get(srcId) || 0) + 1);
+      degreeMap.set(tgtId, (degreeMap.get(tgtId) || 0) + 1);
+    }
+
+    for (const node of this.nodesList) {
+      const deg = degreeMap.get(node.id) || 0;
+      node.degree = deg;
+      const boost = Math.min(Math.sqrt(deg) * 3.5, 14);
+      if (node.type === 'author') {
+        node.radius = Math.round(9 + boost);
+      } else if (node.type === 'work') {
+        node.radius = Math.round(5.5 + boost * 0.7);
+      } else if (node.type === 'award') {
+        node.radius = Math.round(7.5 + boost * 0.8);
+      } else if (node.type === 'character') {
+        node.radius = Math.round(6.5 + boost * 0.75);
+      } else {
+        node.radius = Math.round(5 + boost * 0.6);
+      }
+    }
+
+    // 2. Map links to node objects or string IDs
     const simLinks = this.linksList.map((link) => ({
       source: typeof link.source === 'object' ? link.source.id : link.source,
       target: typeof link.target === 'object' ? link.target.id : link.target,
       predicate: link.predicate,
     }));
 
-    // Stop internal timer immediately — simulation will be ticked synchronously on each VectoJS frame
+    // 3. Obsidian-Grade Force Dynamics (Central Gravity + Mass-Aware Repulsion + Dynamic Springs)
     this.simulation = forceSimulation(this.nodesList)
       .force(
         'link',
@@ -144,20 +172,28 @@ export class KnowledgeGraph2D {
           .distance((d: any) => {
             const src = d.source as GraphNode2D;
             const tgt = d.target as GraphNode2D;
-            if (src.type === 'author' && tgt.type === 'work') return 50;
-            if (src.type === 'author' && tgt.type === 'character') return 55;
-            return 70;
+            const rSum = (src.radius || 8) + (tgt.radius || 8);
+            if (src.type === 'author' && tgt.type === 'work') return 30 + rSum * 1.3;
+            if (src.type === 'author' && tgt.type === 'character') return 34 + rSum * 1.4;
+            return 40 + rSum * 1.5;
           })
-          .strength(0.35),
+          .strength(0.42),
       )
-      .force('charge', forceManyBody().strength(-150).distanceMax(450))
-      .force('center', forceCenter(0, 0).strength(0.012))
+      .force(
+        'charge',
+        forceManyBody()
+          .strength((d: any) => -((d.radius || 8) * 11 + 95))
+          .distanceMax(450),
+      )
+      .force('gravity', forceRadial(0, 0, 0).strength(0.016))
       .force(
         'collide',
-        forceCollide().radius((d: any) => (d.type === 'author' ? 28 : 22)),
+        forceCollide()
+          .radius((d: any) => (d.radius || 8) + 14)
+          .strength(0.7),
       )
-      .alphaDecay(0.025)
-      .velocityDecay(0.38)
+      .alphaDecay(0.024)
+      .velocityDecay(0.36)
       .stop();
   }
 
@@ -204,7 +240,8 @@ export class KnowledgeGraph2D {
       const dx = nx - worldX;
       const dy = ny - worldY;
       const distSq = dx * dx + dy * dy;
-      if (distSq < minSq) {
+      const r = (node.radius || 8) + 10;
+      if (distSq < r * r && distSq < minSq) {
         minSq = distSq;
         closest = node;
       }

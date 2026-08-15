@@ -163,4 +163,16 @@ describe('OMM Backend API Endpoints', () => {
     const res = await app.request('/api/entity/non_existent_12345/details', {}, mockEnv);
     expect(res.status).toBe(404);
   });
+
+  it('GET /api/search cleanly deduplicates author name variants and nationality prefixes', async () => {
+    const res = await app.request('/api/search?q=江户川乱步', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.results.length).toBeGreaterThan(0);
+    // Canonical author entity should be top result
+    const authorHit = body.results.find((r: any) => r.type === 'author');
+    expect(authorHit).toBeDefined();
+    expect(authorHit.name).not.toContain('（日）');
+    expect(authorHit.name).not.toContain('(');
+  });
 });
