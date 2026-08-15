@@ -76,11 +76,13 @@ chunkAndImport(
   15000,
 );
 
-// 2b. FTS5 trigram index (populated from search_index on the remote side)
+// 2b. FTS5 trigram index (populated from search_index on the remote side,
+// including separator-stripped variants so CJK queries typed without middle
+// dots still match, e.g. 埃勒里奎因 vs stored 埃勒里·奎因)
 console.log('\n📦 Populating remote search_fts from search_index...');
 try {
   execSync(
-    `wrangler d1 execute omm-db --remote --command="INSERT OR REPLACE INTO search_fts (id, content) SELECT id, COALESCE(name_zh, '') || ' ' || COALESCE(name_en, '') || ' ' || COALESCE(name_ja, '') || ' ' || COALESCE(aliases_text, '') FROM search_index" -y`,
+    `wrangler d1 execute omm-db --remote --command="INSERT OR REPLACE INTO search_fts (id, content) SELECT id, COALESCE(name_zh, '') || ' ' || COALESCE(name_en, '') || ' ' || COALESCE(name_ja, '') || ' ' || COALESCE(aliases_text, '') || ' ' || lower(replace(replace(replace(replace(replace(replace(COALESCE(name_zh || ' ' || name_en || ' ' || name_ja || ' ' || aliases_text, ''), '·', ''), '・', ''), ' ', ''), '•', ''), '-', ''), '|', '')) FROM search_index" -y`,
     { encoding: 'utf-8', env: process.env, maxBuffer: 50 * 1024 * 1024 },
   );
   console.log('  ✓ search_fts populated');

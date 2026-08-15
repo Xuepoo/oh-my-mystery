@@ -131,6 +131,15 @@ const insertSearchFts = db.prepare(`
   INSERT OR REPLACE INTO search_fts (id, content) VALUES (?, ?)
 `);
 
+// Separator-stripped variant so trigram FTS matches queries typed without
+// middle dots (e.g. 埃勒里奎因 vs stored 埃勒里·奎因).
+function normalizeForFts(s: string): string {
+  return s
+    .normalize('NFKC')
+    .replace(/[\s·・•.\-—_–|]+/g, '')
+    .toLowerCase();
+}
+
 const aliasMerge = new Map<string, string[]>();
 let mergedEntityCount = 0;
 
@@ -211,14 +220,32 @@ db.transaction(() => {
       if (!existing.includes(ex)) existing.push(ex);
     }
     db.run('UPDATE search_index SET aliases_text = ? WHERE id = ?', [existing.join(' | '), target]);
-    db.run(
-      "UPDATE search_fts SET content = (SELECT COALESCE(name_zh, '') || ' ' || COALESCE(name_en, '') || ' ' || COALESCE(name_ja, '') || ' ' || COALESCE(aliases_text, '') FROM search_index WHERE id = ?) WHERE id = ?",
-      [target, target],
-    );
   }
 })();
 
 console.log(`✓ Merged ${mergedEntityCount} linked source entities into canonical nodes`);
+
+// 2b. Rebuild FTS content with separator-stripped variants for CJK queries
+console.log('🔎 Rebuilding search_fts with normalized variants...');
+const rebuildFts = db.prepare('UPDATE search_fts SET content = ? WHERE id = ?');
+const ftsRows = db
+  .query('SELECT id, name_zh, name_en, name_ja, aliases_text FROM search_index')
+  .all() as {
+  id: string;
+  name_zh: string | null;
+  name_en: string | null;
+  name_ja: string | null;
+  aliases_text: string | null;
+}[];
+db.transaction(() => {
+  for (const row of ftsRows) {
+    const parts = [row.name_zh, row.name_en, row.name_ja, row.aliases_text].filter(
+      Boolean,
+    ) as string[];
+    const variants = [...new Set(parts.map(normalizeForFts))].filter(Boolean);
+    rebuildFts.run([...parts, ...variants].join(' '), row.id);
+  }
+})();
 
 // 3. Load and Insert Facts
 console.log('💾 Loading and inserting facts into D1 SQLite...');

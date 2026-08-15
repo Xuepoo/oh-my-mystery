@@ -237,6 +237,18 @@ it('GET /api/search with 3+ char query uses FTS and still returns results', asyn
   expect(body.results[0].id).toBe('wd:Q125970');
 });
 
+it('GET /api/search matches names typed without middle dots via FTS variants', async () => {
+  const res = await app.request(
+    '/api/search?q=%E5%9F%83%E5%8B%92%E9%87%8C%E5%A5%8E%E5%9B%A0',
+    {},
+    mockEnv,
+  );
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as any;
+  const ids = body.results.map((r: any) => r.id);
+  expect(ids).toContain('wd:Q586362');
+});
+
 it('sets Cache-Control headers per route', async () => {
   const chronicles = await app.request('/api/chronicles', {}, mockEnv);
   expect(chronicles.headers.get('cache-control')).toContain('max-age=86400');
