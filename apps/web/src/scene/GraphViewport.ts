@@ -178,6 +178,22 @@ export class GraphViewport {
     this.animateCameraTo(targetPanX, targetPanY, targetZoom, 450);
   }
 
+  // Fling gesture: keep panning after the pointer is released with
+  // exponential velocity decay (v = v0 * e^(-t/tau)). The ease-out cubic
+  // animation is matched so its initial velocity equals v0.
+  inertiaPan(vx: number, vy: number): void {
+    const speed = Math.hypot(vx, vy);
+    if (speed < 0.12) return;
+    const tau = 170;
+    const duration = Math.min(3 * tau, 900);
+    const maxDist = 900;
+    const dist = Math.min(speed * tau, maxDist);
+    const scale = dist / Math.max(speed * tau, 0.001);
+    const dx = vx * tau * scale;
+    const dy = vy * tau * scale;
+    this.animateCameraTo(this.panX + dx, this.panY + dy, this.zoom, duration);
+  }
+
   private animateCameraTo(
     targetPanX: number,
     targetPanY: number,

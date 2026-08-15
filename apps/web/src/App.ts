@@ -39,9 +39,16 @@ export class App {
   private pointerDownPos = { x: 0, y: 0 };
   private lastPointerPos = { x: 0, y: 0 };
   private selectEpoch = 0;
+  private activePointers = new Map<number, { x: number; y: number }>();
+  private pinchState: { prevDist: number; prevMidX: number; prevMidY: number } | null = null;
+  private lastPanTime = 0;
+  private panVelocity = { vx: 0, vy: 0 };
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
+    // The canvas owns the whole surface: disable native browser touch
+    // gestures (page pinch-zoom / scroll) so pointer events stay ours.
+    this.canvas.style.touchAction = 'none';
     this.source = new D1DataSource(import.meta.env.VITE_API_URL || '');
 
     // 1. Initialize Single VectoJS Scene
@@ -190,6 +197,27 @@ export class App {
       this.pointerDownPos = { x, y };
       this.lastPointerPos = { x, y };
       this.isPointerDown = true;
+      this.lastPanTime = performance.now();
+      this.panVelocity = { vx: 0, vy: 0 };
+      this.activePointers.set(e.pointerId, { x, y });
+
+      if (this.activePointers.size >= 2) {
+        // Second finger lands: switch to pinch gesture
+        if (this.draggedNode) {
+          this.viewport.graph.unpinNode(this.draggedNode.id);
+          this.draggedNode = null;
+        }
+        this.isPanning = false;
+        const pts = [...this.activePointers.values()];
+        const [a, b] = pts.slice(-2);
+        this.pinchState = {
+          prevDist: Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1),
+          prevMidX: (a.x + b.x) / 2,
+          prevMidY: (a.y + b.y) / 2,
+        };
+        return;
+      }
+      this.pinchState = null;
 
       // 1. Dispatch to UI Panels (Highest overlay priority first)
       if (this.helpModal.isPointInside(x, y)) {
@@ -239,6 +267,7 @@ export class App {
 
     window.addEventListener('pointermove', this.onPointerMove);
     window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('pointercancel', this.onPointerCancel);
     window.addEventListener('keydown', this.onWindowKeydown);
     this.setupCanvasWheel();
 
@@ -307,8 +336,23 @@ export class App {
 
   private onPointerMove = (e: PointerEvent): void => {
     const { x, y } = getEventCoords(e);
+    this.activePointers.set(e.pointerId, { x, y });
+
+    if (this.pinchState && this.activePointers.size >= 2) {
+      const pts = [...this.activePointers.values()];
+      const [a, b] = pts.slice(-2);
+      const dist = Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1);
+      const midX = (a.x + b.x) / 2;
+      const midY = (a.y + b.y) / 2;
+      this.viewport.zoomAt(dist / this.pinchState.prevDist, midX, midY);
+      this.viewport.pan(midX - this.pinchState.prevMidX, midY - this.pinchState.prevMidY);
+      this.pinchState = { prevDist: dist, prevMidX: midX, prevMidY: midY };
+      return;
+    }
 
     if (this.isPointerDown) {
+      const now = performance.now();
+      const dt = now - this.lastPanTime;
       const dx = x - this.lastPointerPos.x;
       const dy = y - this.lastPointerPos.y;
       this.lastPointerPos = { x, y };
@@ -319,7 +363,15 @@ export class App {
         this.scene.markDirty();
       } else if (this.isPanning) {
         this.viewport.pan(dx, dy);
+        if (dt >= 4) {
+          // EMA-smoothed velocity for fling inertia on release
+          // (dt guard avoids spikes from same-frame synthetic events)
+          const alpha = 0.35;
+          this.panVelocity.vx = this.panVelocity.vx * (1 - alpha) + (dx / dt) * alpha;
+          this.panVelocity.vy = this.panVelocity.vy * (1 - alpha) + (dy / dt) * alpha;
+        }
       }
+      this.lastPanTime = now;
     } else {
       // Hover inspection
       if (!this.isEventOverUI(x, y)) {
@@ -333,6 +385,27 @@ export class App {
 
   private onPointerUp = (e: PointerEvent): void => {
     const { x, y } = getEventCoords(e);
+    this.activePointers.delete(e.pointerId);
+
+    if (this.activePointers.size === 1) {
+      // Pinch ended, one finger remains: resume panning from that finger
+      const remaining = [...this.activePointers.values()][0];
+      this.pinchState = null;
+      this.isPointerDown = true;
+      this.isPanning = true;
+      this.draggedNode = null;
+      this.pointerDownPos = { x: remaining.x, y: remaining.y };
+      this.lastPointerPos = { x: remaining.x, y: remaining.y };
+      this.lastPanTime = performance.now();
+      this.panVelocity = { vx: 0, vy: 0 };
+      return;
+    }
+    if (this.activePointers.size === 0) {
+      this.pinchState = null;
+    } else {
+      return;
+    }
+
     const moveDist = Math.hypot(x - this.pointerDownPos.x, y - this.pointerDownPos.y);
 
     if (this.draggedNode) {
@@ -342,13 +415,33 @@ export class App {
         void this.handleSelectNode(this.draggedNode.id);
       }
       this.draggedNode = null;
-    } else if (this.isPanning && moveDist < 6 && !this.isEventOverUI(x, y)) {
-      // Clicked empty canvas space -> close drawer
-      this.drawer.close();
+    } else if (this.isPanning) {
+      if (moveDist < 6 && !this.isEventOverUI(x, y)) {
+        // Clicked empty canvas space -> close drawer
+        this.drawer.close();
+      } else if (moveDist >= 6) {
+        // Fling inertia
+        this.viewport.inertiaPan(this.panVelocity.vx, this.panVelocity.vy);
+      }
     }
 
     this.isPointerDown = false;
     this.isPanning = false;
+    this.panVelocity = { vx: 0, vy: 0 };
+  };
+
+  private onPointerCancel = (e: PointerEvent): void => {
+    this.activePointers.delete(e.pointerId);
+    if (this.activePointers.size === 0) {
+      this.pinchState = null;
+      if (this.draggedNode) {
+        this.viewport.graph.unpinNode(this.draggedNode.id);
+        this.draggedNode = null;
+      }
+      this.isPointerDown = false;
+      this.isPanning = false;
+      this.panVelocity = { vx: 0, vy: 0 };
+    }
   };
 
   private setupCanvasWheel(): void {
@@ -379,6 +472,7 @@ export class App {
   public dispose(): void {
     window.removeEventListener('pointermove', this.onPointerMove);
     window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('pointercancel', this.onPointerCancel);
     window.removeEventListener('resize', this.onResize);
     window.removeEventListener('keydown', this.onWindowKeydown);
     this.canvas.removeEventListener('contextmenu', this.onCanvasContextMenu);
