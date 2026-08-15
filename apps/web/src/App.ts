@@ -8,6 +8,7 @@ import type { GraphNode2D } from './scene/types';
 import { CasefileDrawer } from './ui/CasefileDrawer';
 import { ChroniclePanel } from './ui/ChroniclePanel';
 import { HeaderBar } from './ui/HeaderBar';
+import { HelpModal } from './ui/HelpModal';
 import { Minimap } from './ui/Minimap';
 import { PathfinderModal } from './ui/PathfinderModal';
 import { getEventCoords } from './ui/theme';
@@ -25,6 +26,7 @@ export class App {
   readonly drawer: CasefileDrawer;
   readonly chroniclePanel: ChroniclePanel;
   readonly pathfinderModal: PathfinderModal;
+  readonly helpModal: HelpModal;
   readonly minimap: Minimap;
   readonly controls: ViewportControls;
 
@@ -86,6 +88,12 @@ export class App {
         this.drawer.close();
         this.pathfinderModal.open();
       },
+      onOpenHelp: () => {
+        this.pathfinderModal.close();
+        this.chroniclePanel.close();
+        this.drawer.close();
+        this.helpModal.open();
+      },
       onSelectSearchResult: (id) => {
         void this.handleSelectNode(id);
       },
@@ -133,6 +141,9 @@ export class App {
     });
     this.scene.add(this.pathfinderModal);
 
+    this.helpModal = new HelpModal();
+    this.scene.add(this.helpModal);
+
     this.minimap = new Minimap(this.viewport);
     this.scene.add(this.minimap);
 
@@ -165,6 +176,10 @@ export class App {
       this.isPointerDown = true;
 
       // 1. Dispatch to UI Panels (Highest overlay priority first)
+      if (this.helpModal.isPointInside(x, y)) {
+        this.helpModal.handleClick(x, y);
+        return;
+      }
       if (this.pathfinderModal.isPointInside(x, y)) {
         this.pathfinderModal.handleClick(x, y);
         return;
@@ -218,12 +233,55 @@ export class App {
 
   // Block browser shortcuts that only make sense for document pages
   // (save page, print). Deliberately does not touch refresh/devtools.
+  // Also implements app-level keyboard navigation: Escape closes topmost
+  // panel, '?' / 'h' toggles the help modal.
   private onWindowKeydown = (e: KeyboardEvent): void => {
     const mod = e.ctrlKey || e.metaKey;
-    if (!mod) return;
-    const key = e.key.toLowerCase();
-    if (key === 's' || key === 'p') {
+    if (mod) {
+      const key = e.key.toLowerCase();
+      if (key === 's' || key === 'p') {
+        e.preventDefault();
+      }
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      // The search input handles its own Escape (blur + hide dropdown).
+      const target = e.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (this.headerBar.hideDropdown()) return;
+      if (this.helpModal.isModalOpen()) {
+        this.helpModal.close();
+        return;
+      }
+      if (this.pathfinderModal.isModalOpen()) {
+        this.pathfinderModal.close();
+        return;
+      }
+      if (this.chroniclePanel.isModalOpen()) {
+        this.chroniclePanel.close();
+        return;
+      }
+      this.drawer.close();
+      return;
+    }
+
+    const target = e.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      return;
+    }
+    if (e.key === '?' || e.key === 'h' || e.key === 'H') {
       e.preventDefault();
+      if (this.helpModal.isModalOpen()) {
+        this.helpModal.close();
+      } else {
+        this.pathfinderModal.close();
+        this.chroniclePanel.close();
+        this.drawer.close();
+        this.helpModal.open();
+      }
     }
   };
 

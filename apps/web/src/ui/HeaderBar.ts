@@ -7,6 +7,7 @@ export interface HeaderBarOptions {
   source: D1DataSource;
   onOpenChronicles: () => void;
   onOpenPathfinder: () => void;
+  onOpenHelp: () => void;
   onSelectSearchResult: (id: string) => void;
   onFilterChange: (type: string | null) => void;
   onToggleFullscreen: () => void;
@@ -16,6 +17,7 @@ export class HeaderBar extends Entity {
   private source: D1DataSource;
   private onOpenChroniclesCb: () => void;
   private onOpenPathfinderCb: () => void;
+  private onOpenHelpCb: () => void;
   private onSelectSearchResultCb: (id: string) => void;
   private onFilterChangeCb: (type: string | null) => void;
   private onToggleFullscreenCb: () => void;
@@ -30,6 +32,7 @@ export class HeaderBar extends Entity {
 
   private searchInputRect = { x: 0, y: 0, w: 0, h: 0 };
   private fullscreenBtnRect = { x: 0, y: 0, w: 0, h: 0 };
+  private helpBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private pathfinderBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private chroniclesBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private filterPillRects: {
@@ -68,6 +71,7 @@ export class HeaderBar extends Entity {
     this.source = options.source;
     this.onOpenChroniclesCb = options.onOpenChronicles;
     this.onOpenPathfinderCb = options.onOpenPathfinder;
+    this.onOpenHelpCb = options.onOpenHelp;
     this.onSelectSearchResultCb = options.onSelectSearchResult;
     this.onFilterChangeCb = options.onFilterChange;
     this.onToggleFullscreenCb = options.onToggleFullscreen;
@@ -165,10 +169,11 @@ export class HeaderBar extends Entity {
     container.appendChild(this.domInput);
   }
 
-  private hideDropdown(): void {
-    if (!this.showSearchDropdown) return;
+  public hideDropdown(): boolean {
+    if (!this.showSearchDropdown) return false;
     this.showSearchDropdown = false;
-    this.scene.markDirty();
+    this.scene?.markDirty();
+    return true;
   }
 
   isPointInside(_x: number, y: number): boolean {
@@ -237,7 +242,7 @@ export class HeaderBar extends Entity {
     // 2. Position DOM Search Input
     const searchX = isMobile ? 68 : isTablet ? 245 : 290;
     const searchW = isMobile
-      ? Math.min(Math.max(80, w - 68 - 140), w - 76)
+      ? Math.min(Math.max(80, w - 68 - 188), w - 76)
       : Math.min(260, w * 0.22);
     this.searchInputRect = { x: searchX, y: 14, w: searchW, h: 36 };
 
@@ -312,9 +317,22 @@ export class HeaderBar extends Entity {
       ctx.textBaseline = 'middle';
       ctx.fillText('⛶', this.fullscreenBtnRect.x + 20, 32);
 
+      // Help Btn
+      this.helpBtnRect = { x: this.fullscreenBtnRect.x - 48, y: 14, w: 40, h: 36 };
+      ctx.fillStyle = Theme.colors.bgCard;
+      ctx.beginPath();
+      ctx.roundRect(this.helpBtnRect.x, 14, this.helpBtnRect.w, 36, 6);
+      ctx.fill();
+      ctx.strokeStyle = Theme.colors.border;
+      ctx.stroke();
+
+      ctx.fillStyle = Theme.colors.textMid;
+      ctx.font = `700 15px ${Theme.fonts.sans}`;
+      ctx.fillText('?', this.helpBtnRect.x + 20, 32);
+
       // Pathfinder Btn
       this.pathfinderBtnRect = {
-        x: this.fullscreenBtnRect.x - 114,
+        x: this.helpBtnRect.x - 8 - 106,
         y: 14,
         w: 106,
         h: 36,
@@ -373,6 +391,22 @@ export class HeaderBar extends Entity {
       ctx.fillStyle = '#1A1715';
       ctx.font = `700 14px ${Theme.fonts.sans}`;
       ctx.fillText('📖', this.chroniclesBtnRect.x + 21, 32);
+
+      this.helpBtnRect = {
+        x: this.chroniclesBtnRect.x - 48,
+        y: 14,
+        w: 42,
+        h: 36,
+      };
+      ctx.fillStyle = Theme.colors.bgCard;
+      ctx.beginPath();
+      ctx.roundRect(this.helpBtnRect.x, 14, 42, 36, 6);
+      ctx.fill();
+      ctx.strokeStyle = Theme.colors.border;
+      ctx.stroke();
+      ctx.fillStyle = Theme.colors.textMid;
+      ctx.font = `700 15px ${Theme.fonts.sans}`;
+      ctx.fillText('?', this.helpBtnRect.x + 21, 32);
     }
 
     // 5. Search Results / Hot Queries Dropdown
@@ -549,6 +583,13 @@ export class HeaderBar extends Entity {
     if (this.isInRect(clientX, clientY, this.fullscreenBtnRect)) {
       this.hideDropdown();
       this.onToggleFullscreenCb();
+      return true;
+    }
+
+    // 6. Help
+    if (this.isInRect(clientX, clientY, this.helpBtnRect)) {
+      this.hideDropdown();
+      this.onOpenHelpCb();
       return true;
     }
 
