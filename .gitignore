@@ -39,3 +39,4 @@ data/
 !scripts/data/
 *.sqlite
 *.db
+.playwright-cli/
