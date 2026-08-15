@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ChronicleTrail } from '../packages/shared/src/types';
+import { applyOverrides, cleanNames, isJunkNames, namesToJson } from './clean-labels';
 
 const SOURCE_DB_PATH = join(import.meta.dir, '../../mystery-clawer/data/mystery.db');
 const OUT_DIR = join(import.meta.dir, '../data');
@@ -35,6 +36,16 @@ for (const row of linkRows) {
   }
 }
 console.log(`✓ Loaded ${linkMap.size} entity links`);
+
+function resolveLink(id: string): string {
+  let cur = id;
+  const seen = new Set<string>();
+  while (linkMap.has(cur) && !seen.has(cur)) {
+    seen.add(cur);
+    cur = linkMap.get(cur)!;
+  }
+  return cur;
+}
 
 // Filter entities to mystery/detective core domain (Wikidata + MWJ + Edgar + CWA + Aozora + Douban core)
 const entityRows = srcDb
@@ -76,13 +87,49 @@ const insertSearch = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?)
 `);
 
+const aliasMerge = new Map<string, string[]>();
+let mergedEntityCount = 0;
+
 db.transaction(() => {
   for (const e of entityMap.values()) {
+    const cleaned = applyOverrides(e.id, cleanNames(e.names_json));
+    if (isJunkNames(cleaned, e.type)) {
+      entityMap.delete(e.id);
+      continue;
+    }
+
+    // Cross-source entity merging: entities linked to a canonical Wikidata
+    // node are folded into it (labels become extra search aliases).
+    const canonical = resolveLink(e.id);
+    if (canonical !== e.id) {
+      const labels = cleaned.labels;
+      const extras: string[] = [];
+      for (const key of ['zh', 'zh-cn', 'zh-tw', 'zh-hk', 'en', 'ja']) {
+        const v = labels[key];
+        if (v && !extras.includes(v)) extras.push(v);
+      }
+      for (const arr of Object.values(cleaned.aliases)) {
+        if (Array.isArray(arr)) {
+          for (const a of arr) {
+            if (a && !extras.includes(a)) extras.push(a);
+          }
+        }
+      }
+      const existing = aliasMerge.get(canonical) || [];
+      for (const ex of extras) {
+        if (!existing.includes(ex)) existing.push(ex);
+      }
+      aliasMerge.set(canonical, existing);
+      entityMap.delete(e.id);
+      mergedEntityCount += 1;
+      continue;
+    }
+
     insertEntity.run(
       e.id,
       e.qid || null,
       e.type,
-      e.names_json,
+      namesToJson(cleaned),
       e.bio || null,
       e.birth || null,
       e.death || null,
@@ -91,16 +138,9 @@ db.transaction(() => {
       e.quality || 1,
     );
 
-    let labels: Record<string, string> = {};
-    let aliases: Record<string, string[]> = {};
-    try {
-      const parsed = JSON.parse(e.names_json);
-      labels = parsed.labels || {};
-      aliases = parsed.aliases || {};
-    } catch {}
-
+    const labels = cleaned.labels;
     const allAliases: string[] = [];
-    for (const arr of Object.values(aliases)) {
+    for (const arr of Object.values(cleaned.aliases)) {
       if (Array.isArray(arr)) allAliases.push(...arr);
     }
 
@@ -113,7 +153,19 @@ db.transaction(() => {
       allAliases.join(' | ') || null,
     );
   }
+
+  for (const [target, extras] of aliasMerge) {
+    const row: any = db.query('SELECT aliases_text FROM search_index WHERE id = ?').get(target);
+    if (!row) continue;
+    const existing = (row.aliases_text || '').split(' | ').filter(Boolean);
+    for (const ex of extras) {
+      if (!existing.includes(ex)) existing.push(ex);
+    }
+    db.run('UPDATE search_index SET aliases_text = ? WHERE id = ?', [existing.join(' | '), target]);
+  }
 })();
+
+console.log(`✓ Merged ${mergedEntityCount} linked source entities into canonical nodes`);
 
 // 3. Load and Insert Facts
 console.log('💾 Loading and inserting facts into D1 SQLite...');
@@ -139,8 +191,8 @@ const inEdges = new Map<string, { predicate: string; source: string }[]>();
 db.transaction(() => {
   for (const f of factsRows) {
     // Canonicalize IDs if linked
-    const sub = linkMap.get(f.subject_id) || f.subject_id;
-    const obj = linkMap.get(f.object_ref) || f.object_ref;
+    const sub = resolveLink(f.subject_id);
+    const obj = f.object_ref ? resolveLink(f.object_ref) : f.object_ref;
 
     if (entityMap.has(sub) && (entityMap.has(obj) || !f.object_ref)) {
       validFacts.push({ ...f, subject_id: sub, object_ref: obj });
