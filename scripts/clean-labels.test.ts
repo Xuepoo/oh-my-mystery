@@ -73,6 +73,19 @@ describe('applyOverrides', () => {
     const names = { labels: { zh: '阿加莎·克里斯蒂' }, aliases: {} };
     expect(applyOverrides('wd:Q9999', names)).toEqual(names);
   });
+
+  test('adds curated zh names for awards missing a zh label', () => {
+    const names = cleanNames(JSON.stringify({ labels: { en: 'Gold Dagger' }, aliases: {} }));
+    const r = applyOverrides('cwa:category:e2fb13710b', names);
+    expect(r.labels.zh).toBe('金匕首奖');
+    expect(r.labels.en).toBe('Gold Dagger');
+  });
+
+  test('does not overwrite an existing zh label', () => {
+    const names = { labels: { zh: '钻石匕首奖', en: 'Diamond Dagger' }, aliases: {} };
+    const r = applyOverrides('cwa:category:2858481197', names);
+    expect(r.labels.zh).toBe('钻石匕首奖');
+  });
 });
 
 describe('isJunkNames', () => {

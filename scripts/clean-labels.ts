@@ -1,6 +1,7 @@
 // Label cleaning for the OMM D1 import pipeline.
 // Applied to every names_json (labels + aliases) before entities/search_index are written.
 import { LABEL_OVERRIDES } from './data/label-overrides';
+import { AWARD_ZH_NAMES } from './data/award-zh-names';
 import { ZH_T2S_MAP } from './data/zh-t2s-map';
 
 const TRAILING_SEP_RE = /[，,·;；|、/\\\s]+$/;
@@ -91,16 +92,23 @@ export function cleanNames(namesJson: string | null | undefined): CleanedNames {
 
 export function applyOverrides(id: string, names: CleanedNames): CleanedNames {
   const ov = LABEL_OVERRIDES[id];
-  if (!ov) return names;
-  if (ov.labels) {
-    for (const [lang, value] of Object.entries(ov.labels)) {
-      names.labels[lang] = value;
+  if (ov) {
+    if (ov.labels) {
+      for (const [lang, value] of Object.entries(ov.labels)) {
+        names.labels[lang] = value;
+      }
+    }
+    if (ov.aliases) {
+      for (const [lang, arr] of Object.entries(ov.aliases)) {
+        names.aliases[lang] = arr;
+      }
     }
   }
-  if (ov.aliases) {
-    for (const [lang, arr] of Object.entries(ov.aliases)) {
-      names.aliases[lang] = arr;
-    }
+
+  // Curated zh display names for awards lacking a zh label.
+  const zhName = AWARD_ZH_NAMES[id];
+  if (zhName && !names.labels.zh) {
+    names.labels.zh = zhName;
   }
   return names;
 }
