@@ -12,6 +12,8 @@ export class D1DataSource {
   private baseUrl: string;
   private turnstileToken: string | null = null;
   private cache = new Map<string, GraphNeighborhood2D>();
+  private cacheOrder: string[] = [];
+  private cacheMax = 200;
 
   constructor(baseUrl = '') {
     this.baseUrl = baseUrl;
@@ -19,6 +21,15 @@ export class D1DataSource {
 
   setTurnstileToken(token: string | null) {
     this.turnstileToken = token;
+  }
+
+  private cacheSet(key: string, value: GraphNeighborhood2D) {
+    if (!this.cache.has(key)) this.cacheOrder.push(key);
+    this.cache.set(key, value);
+    while (this.cacheOrder.length > this.cacheMax) {
+      const oldest = this.cacheOrder.shift()!;
+      this.cache.delete(oldest);
+    }
   }
 
   private getHeaders(): HeadersInit {
@@ -71,6 +82,11 @@ export class D1DataSource {
   ): Promise<GraphNeighborhood2D> {
     const strId = String(id);
     if (this.cache.has(strId)) {
+      const idx = this.cacheOrder.indexOf(strId);
+      if (idx !== -1) {
+        this.cacheOrder.splice(idx, 1);
+        this.cacheOrder.push(strId);
+      }
       return this.cache.get(strId)!;
     }
 
@@ -128,7 +144,7 @@ export class D1DataSource {
         neighbors: rawNeighbors,
       };
 
-      this.cache.set(strId, neighborhood);
+      this.cacheSet(strId, neighborhood);
       return neighborhood;
     } catch (err) {
       console.error('Failed to get neighbors for', strId, err);

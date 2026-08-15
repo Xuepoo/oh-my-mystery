@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import type {
   ChronicleTrail,
   EntityDetailResponse,
+  EntityNames,
   OmmEntity,
   OmmFact,
   PathfinderResult,
@@ -42,6 +43,13 @@ export const SEED_AUTHOR_IDS = [
 
 export const app = new Hono<{ Bindings: Env }>();
 
+// Global JSON error responses (Hono defaults return plain text)
+app.notFound((c) => c.json({ error: 'Not found' }, 404));
+app.onError((err, c) => {
+  console.error('Unhandled API error:', err);
+  return c.json({ error: 'Internal server error' }, 500);
+});
+
 // Enable CORS for frontend
 app.use(
   '*',
@@ -51,6 +59,26 @@ app.use(
     allowHeaders: ['Content-Type', 'X-Turnstile-Token'],
   }),
 );
+
+// HTTP caching: the knowledge graph is static between deploys, so browser/CDN
+// caching is safe per route.
+app.use('*', async (c, next) => {
+  await next();
+  const path = new URL(c.req.url).pathname;
+  if (!path.startsWith('/api/')) return;
+  if (c.res.status !== 200) return;
+  if (path === '/api/health') {
+    c.header('Cache-Control', 'no-store');
+  } else if (path === '/api/seeds' || path.startsWith('/api/chronicles')) {
+    c.header('Cache-Control', 'public, max-age=86400');
+  } else if (path.startsWith('/api/search') || path.startsWith('/api/path')) {
+    c.header('Cache-Control', 'private, max-age=60');
+  } else if (path.startsWith('/api/entity')) {
+    c.header('Cache-Control', 'public, max-age=3600');
+  } else {
+    c.header('Cache-Control', 'public, max-age=300');
+  }
+});
 
 // Turnstile optional protection middleware
 const turnstileVerify = async (c: any, next: any) => {
@@ -169,7 +197,7 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
     predicate: row.predicate,
     object_ref: row.object_ref,
     object_value: row.object_value || undefined,
-    qualifiers: row.qualifiers_json ? JSON.parse(row.qualifiers_json) : undefined,
+    qualifiers: safeParseJson(row.qualifiers_json, undefined),
     source: row.source || undefined,
   }));
 
@@ -300,7 +328,7 @@ app.get('/api/entity/:id/details', async (c) => {
     predicate: row.predicate,
     object_ref: row.object_ref,
     object_value: row.object_value || undefined,
-    qualifiers: row.qualifiers_json ? JSON.parse(row.qualifiers_json) : undefined,
+    qualifiers: safeParseJson(row.qualifiers_json, undefined),
     source: row.source || undefined,
   }));
 
@@ -321,15 +349,13 @@ app.get('/api/entity/:id/details', async (c) => {
   const recommendations: RecommendationItem[] = (recRows.results || []).map((row: any) => {
     let targetName = row.target_id;
     if (row.target_names_json) {
-      try {
-        const parsed = JSON.parse(row.target_names_json);
-        targetName =
-          parsed.labels?.zh ||
-          parsed.labels?.['zh-cn'] ||
-          parsed.labels?.en ||
-          parsed.labels?.ja ||
-          row.target_id;
-      } catch {}
+      const parsed = safeParseJson<{ labels?: Record<string, string> }>(row.target_names_json, {});
+      targetName =
+        parsed.labels?.zh ||
+        parsed.labels?.['zh-cn'] ||
+        parsed.labels?.en ||
+        parsed.labels?.ja ||
+        row.target_id;
     }
 
     return {
@@ -405,28 +431,57 @@ app.get('/api/search', async (c) => {
   }
 
   const pattern = `%${q}%`;
-  // Fetch up to 60 candidates to ensure canonical entities (Wikidata/Clean) are preferred
-  const rows = await c.env.DB.prepare(
-    `
-    SELECT s.id, s.type, s.name_zh, s.name_en, s.name_ja, e.names_json
-    FROM search_index s
-    LEFT JOIN entities e ON s.id = e.id
-    WHERE s.name_zh LIKE ? OR s.name_en LIKE ? OR s.name_ja LIKE ? OR s.aliases_text LIKE ?
-    ORDER BY
-      (CASE WHEN s.id LIKE 'wd:%' THEN 0 ELSE 1 END),
-      (CASE WHEN s.name_zh = ? OR s.name_en = ? OR s.name_ja = ? THEN 0 ELSE 1 END),
-      LENGTH(COALESCE(s.name_zh, s.name_en, s.name_ja)) ASC
-    LIMIT 60
-  `,
-  )
-    .bind(pattern, pattern, pattern, pattern, q, q, q)
-    .all();
+  // Fetch up to 60 candidates to ensure canonical entities (Wikidata/Clean) are preferred.
+  // FTS5 trigram for >=3 char queries (indexed substring match), LIKE fallback for
+  // shorter queries or when the FTS index is unavailable.
+  let rows: any;
+  if ([...q].length >= 3) {
+    try {
+      rows = await c.env.DB.prepare(
+        `
+        SELECT s.id, s.type, s.name_zh, s.name_en, s.name_ja, e.names_json
+        FROM search_fts f
+        JOIN search_index s ON s.id = f.id
+        LEFT JOIN entities e ON s.id = e.id
+        WHERE search_fts MATCH ?
+        ORDER BY
+          (CASE WHEN s.id LIKE 'wd:%' THEN 0 ELSE 1 END),
+          (CASE WHEN s.name_zh = ? OR s.name_en = ? OR s.name_ja = ? THEN 0 ELSE 1 END),
+          LENGTH(COALESCE(s.name_zh, s.name_en, s.name_ja)) ASC
+        LIMIT 60
+      `,
+      )
+        .bind(`"${q.replaceAll('"', '""')}"`, q, q, q)
+        .all();
+    } catch (err) {
+      console.warn('FTS search failed, falling back to LIKE:', err);
+      rows = { results: [] };
+    }
+  }
+  if (!rows || (rows.results || []).length === 0) {
+    rows = await c.env.DB.prepare(
+      `
+      SELECT s.id, s.type, s.name_zh, s.name_en, s.name_ja, e.names_json
+      FROM search_index s
+      LEFT JOIN entities e ON s.id = e.id
+      WHERE s.name_zh LIKE ? OR s.name_en LIKE ? OR s.name_ja LIKE ? OR s.aliases_text LIKE ?
+      ORDER BY
+        (CASE WHEN s.id LIKE 'wd:%' THEN 0 ELSE 1 END),
+        (CASE WHEN s.name_zh = ? OR s.name_en = ? OR s.name_ja = ? THEN 0 ELSE 1 END),
+        LENGTH(COALESCE(s.name_zh, s.name_en, s.name_ja)) ASC
+      LIMIT 60
+    `,
+    )
+      .bind(pattern, pattern, pattern, pattern, q, q, q)
+      .all();
+  }
 
   const results: SearchResultItem[] = [];
+  const searchRows = (rows.results || []) as any[];
   const seenIds = new Set<string>();
   const seenNames = new Set<string>();
 
-  for (const row of rows.results || []) {
+  for (const row of searchRows) {
     const id = String(row.id);
     if (seenIds.has(id)) continue;
 
@@ -439,23 +494,21 @@ app.get('/api/search', async (c) => {
           : undefined;
 
     if (row.names_json) {
-      try {
-        const parsed = JSON.parse(row.names_json);
-        const labels = parsed.labels || {};
-        rawName =
-          labels['zh-cn'] ||
-          labels.zh ||
-          labels['zh-hans'] ||
-          labels['zh-hant'] ||
-          labels.ja ||
-          labels.en ||
-          rawName;
-        if (!subtitle && labels.ja && labels.ja !== rawName) {
-          subtitle = labels.ja;
-        } else if (!subtitle && labels.en && labels.en !== rawName) {
-          subtitle = labels.en;
-        }
-      } catch {}
+      const parsed = safeParseJson<{ labels?: Record<string, string> }>(row.names_json, {});
+      const labels: Record<string, string> = parsed.labels ?? {};
+      rawName =
+        labels['zh-cn'] ||
+        labels.zh ||
+        labels['zh-hans'] ||
+        labels['zh-hant'] ||
+        labels.ja ||
+        labels.en ||
+        rawName;
+      if (!subtitle && labels.ja && labels.ja !== rawName) {
+        subtitle = labels.ja;
+      } else if (!subtitle && labels.en && labels.en !== rawName) {
+        subtitle = labels.en;
+      }
     }
 
     const cleanName = normalizeSearchName(rawName);
@@ -515,7 +568,7 @@ app.get('/api/path', async (c) => {
     });
   }
 
-  // Bidirectional BFS pathfinding (Max 5 hops)
+  // Breadth-first pathfinding (Max 5 hops)
   const path = await findShortestPath(c.env.DB, source, target, 5);
 
   if (!path) {
@@ -565,13 +618,21 @@ app.get('/api/path', async (c) => {
 // 8. Chronicle Trails
 app.get('/api/chronicles', async (c) => {
   const rows = await c.env.DB.prepare('SELECT * FROM chronicles').all();
-  const trails: ChronicleTrail[] = (rows.results || []).map((r: any) => ({
-    id: r.id,
-    slug: r.slug,
-    title: JSON.parse(r.title_json),
-    description: JSON.parse(r.description_json),
-    steps: JSON.parse(r.steps_json),
-  }));
+  const trails: ChronicleTrail[] = [];
+  for (const r of (rows.results || []) as any[]) {
+    const steps = parseJsonOrUndefined(r.steps_json);
+    if (!Array.isArray(steps)) {
+      console.warn(`Skipping chronicle ${r.id}: steps_json is not an array`);
+      continue;
+    }
+    trails.push({
+      id: r.id,
+      slug: r.slug,
+      title: safeParseJson<ChronicleTrail['title']>(r.title_json, {}),
+      description: safeParseJson<ChronicleTrail['description']>(r.description_json, {}),
+      steps: steps as ChronicleTrail['steps'],
+    });
+  }
   return c.json(trails);
 });
 
@@ -581,12 +642,16 @@ app.get('/api/chronicles/:slug', async (c) => {
   if (!row) {
     return c.json({ error: 'Trail not found' }, 404);
   }
+  const steps = parseJsonOrUndefined(row.steps_json);
+  if (!Array.isArray(steps)) {
+    return c.json({ error: 'Trail data corrupted' }, 500);
+  }
   const trail: ChronicleTrail = {
     id: row.id as string,
     slug: row.slug as string,
-    title: JSON.parse(row.title_json as string),
-    description: JSON.parse(row.description_json as string),
-    steps: JSON.parse(row.steps_json as string),
+    title: safeParseJson<ChronicleTrail['title']>(row.title_json, {}),
+    description: safeParseJson<ChronicleTrail['description']>(row.description_json, {}),
+    steps: steps as ChronicleTrail['steps'],
   };
   return c.json(trail);
 });
@@ -594,12 +659,14 @@ app.get('/api/chronicles/:slug', async (c) => {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatEntityRow(row: any): OmmEntity {
-  let names: any = { labels: {} };
-  if (row.names_json) {
-    try {
-      names = JSON.parse(row.names_json);
-    } catch {}
-  }
+  const parsed = safeParseJson<{
+    labels?: Record<string, string>;
+    aliases?: Record<string, string[]>;
+  }>(row.names_json, { labels: {} });
+  const names: EntityNames = {
+    labels: parsed.labels ?? {},
+    ...(parsed.aliases ? { aliases: parsed.aliases } : {}),
+  };
 
   return {
     id: row.id,
@@ -613,6 +680,26 @@ function formatEntityRow(row: any): OmmEntity {
     source: row.source || 'wikidata',
     quality: row.quality || 1,
   };
+}
+
+function safeParseJson<T>(raw: unknown, fallback: T): T {
+  if (typeof raw !== 'string' || raw.length === 0) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+// Strict variant: returns undefined when the row is not valid JSON,
+// so callers can distinguish malformed data from legitimate fallbacks.
+function parseJsonOrUndefined(raw: unknown): unknown {
+  if (typeof raw !== 'string' || raw.length === 0) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
 }
 
 async function findShortestPath(
@@ -632,9 +719,10 @@ async function findShortestPath(
 
   const queue: QueueItem[] = [{ id: start, pathNodes: [start], pathEdges: [] }];
   const visited = new Set<string>([start]);
+  let head = 0;
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
+  while (head < queue.length) {
+    const current = queue[head++];
     if (current.pathEdges.length >= maxDepth) continue;
 
     const rows = await db

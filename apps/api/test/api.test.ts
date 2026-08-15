@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
 import { app } from '../src/index';
@@ -174,5 +174,100 @@ describe('OMM Backend API Endpoints', () => {
     expect(authorHit).toBeDefined();
     expect(authorHit.name).not.toContain('（日）');
     expect(authorHit.name).not.toContain('(');
+  });
+});
+
+// --- Malformed data resilience ---
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+function buildCorruptEnv() {
+  const dir = mkdtempSync(join(tmpdir(), 'omm-corrupt-'));
+  const dbPath = join(dir, 'corrupt.sqlite');
+  const db = new Database(dbPath);
+  const schema = readFileSync(join(import.meta.dir, '../schema.sql'), 'utf-8');
+  db.run(schema);
+  db.run(`
+    INSERT INTO entities (id, qid, type, names_json) VALUES
+      ('wd:Q1', 'Q1', 'author', '{"labels": {"zh": "测试作者"}, "aliases": {}}'),
+      ('wd:Q2', 'Q2', 'work', '{"labels": {"zh": "测试作品"}, "aliases": {}}')
+  `);
+  db.run(`
+    INSERT INTO facts (subject_id, predicate, object_ref, object_value, qualifiers_json, source) VALUES
+      ('wd:Q1', 'author', 'wd:Q2', NULL, '{"year": 2000}', 'test'),
+      ('wd:Q1', 'award_received', 'wd:Q2', NULL, '{bad json', 'test')
+  `);
+  db.run(`
+    INSERT INTO chronicles (id, slug, title_json, description_json, steps_json) VALUES
+      ('good', 'good-slug', '{"zh": "好"}', '{"zh": "描述"}', '[{"year": 1900, "summary": {"zh": "s"}}]'),
+      ('bad', 'bad-slug', '{bad', '{bad', '{bad')
+  `);
+  const env = { DB: createMockD1(db) };
+  return { db, dir, env };
+}
+
+it('GET /api/search with 3+ char query uses FTS and still returns results', async () => {
+  const res = await app.request('/api/search?q=%E4%B8%9C%E9%87%8E%E5%9C%AD%E5%90%BE', {}, mockEnv);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as any;
+  expect(body.results.length).toBeGreaterThan(0);
+  expect(body.results[0].id).toBe('wd:Q125970');
+});
+
+it('sets Cache-Control headers per route', async () => {
+  const chronicles = await app.request('/api/chronicles', {}, mockEnv);
+  expect(chronicles.headers.get('cache-control')).toContain('max-age=86400');
+  const search = await app.request('/api/search?q=test', {}, mockEnv);
+  expect(search.headers.get('cache-control')).toContain('max-age=60');
+  const health = await app.request('/api/health', {}, mockEnv);
+  expect(health.headers.get('cache-control')).toBe('no-store');
+});
+
+describe('Malformed data resilience', () => {
+  it('facts with broken qualifiers_json do not 500 neighbors/details', async () => {
+    const { env, db, dir } = buildCorruptEnv();
+    try {
+      const resN = await app.request('/api/entity/wd:Q1/neighbors', {}, env);
+      expect(resN.status).toBe(200);
+      const bodyN = (await resN.json()) as any;
+      const badFact = bodyN.facts.find(
+        (f: any) => f.qualifiers === undefined && f.predicate === 'award_received',
+      );
+      expect(badFact).toBeDefined();
+
+      const resD = await app.request('/api/entity/wd:Q1/details', {}, env);
+      expect(resD.status).toBe(200);
+      const bodyD = (await resD.json()) as any;
+      expect(Array.isArray(bodyD.facts)).toBe(true);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('chronicles list skips corrupt rows, slug endpoint returns 500 JSON', async () => {
+    const { env, db, dir } = buildCorruptEnv();
+    try {
+      const res = await app.request('/api/chronicles', {}, env);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.length).toBe(1);
+      expect(body[0].slug).toBe('good-slug');
+
+      const bad = await app.request('/api/chronicles/bad-slug', {}, env);
+      expect(bad.status).toBe(500);
+      const badBody = (await bad.json()) as any;
+      expect(badBody.error).toBeDefined();
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('unknown api routes return JSON 404', async () => {
+    const res = await app.request('/api/does-not-exist', {}, mockEnv);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as any;
+    expect(body.error).toBeDefined();
   });
 });

@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ChronicleTrail } from '../packages/shared/src/types';
+import { applyOverrides, cleanNames, isJunkNames, namesToJson } from './clean-labels';
 
 const SOURCE_DB_PATH = join(import.meta.dir, '../../mystery-clawer/data/mystery.db');
 const OUT_DIR = join(import.meta.dir, '../data');
@@ -35,6 +36,56 @@ for (const row of linkRows) {
   }
 }
 console.log(`✓ Loaded ${linkMap.size} entity links`);
+
+function resolveLink(id: string): string {
+  let cur = id;
+  const seen = new Set<string>();
+  while (linkMap.has(cur) && !seen.has(cur)) {
+    seen.add(cur);
+    cur = linkMap.get(cur)!;
+  }
+  return cur;
+}
+
+function normPublisherName(raw: string): string {
+  let s = raw.normalize('NFKC').trim().toLowerCase();
+  s = s.replace(/^(株式会社|股份公司|\(株\)|（株）)/u, '');
+  s = s.replace(/[\s（）()·•・,，.。]/g, '');
+  return s;
+}
+
+function stripPublisherSuffix(s: string): string {
+  return s.replace(/(出版社|出版有限公司|出版公司|出版集团|出版)$/u, '');
+}
+
+function djb2Hash(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 33) ^ s.charCodeAt(i);
+  }
+  return h >>> 0;
+}
+
+function matchPublisher(value: string): string | null {
+  const candidates = [value, ...value.split(/[、，,／/・]/u)]
+    .map(normPublisherName)
+    .filter(Boolean);
+  for (const key of candidates) {
+    const direct = publisherByName.get(key);
+    if (direct) return direct;
+    const stripped = stripPublisherSuffix(key);
+    if (stripped && stripped !== key) {
+      const hit = publisherByName.get(stripped);
+      if (hit) return hit;
+    }
+    if (key.length >= 4) {
+      for (const [name, id] of publisherByName) {
+        if (name.length >= 4 && (name.includes(key) || key.includes(name))) return id;
+      }
+    }
+  }
+  return null;
+}
 
 // Filter entities to mystery/detective core domain (Wikidata + MWJ + Edgar + CWA + Aozora + Douban core)
 const entityRows = srcDb
@@ -76,13 +127,53 @@ const insertSearch = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?)
 `);
 
+const insertSearchFts = db.prepare(`
+  INSERT OR REPLACE INTO search_fts (id, content) VALUES (?, ?)
+`);
+
+const aliasMerge = new Map<string, string[]>();
+let mergedEntityCount = 0;
+
 db.transaction(() => {
   for (const e of entityMap.values()) {
+    const cleaned = applyOverrides(e.id, cleanNames(e.names_json));
+    if (isJunkNames(cleaned, e.type)) {
+      entityMap.delete(e.id);
+      continue;
+    }
+
+    // Cross-source entity merging: entities linked to a canonical Wikidata
+    // node are folded into it (labels become extra search aliases).
+    const canonical = resolveLink(e.id);
+    if (canonical !== e.id) {
+      const labels = cleaned.labels;
+      const extras: string[] = [];
+      for (const key of ['zh', 'zh-cn', 'zh-tw', 'zh-hk', 'en', 'ja']) {
+        const v = labels[key];
+        if (v && !extras.includes(v)) extras.push(v);
+      }
+      for (const arr of Object.values(cleaned.aliases)) {
+        if (Array.isArray(arr)) {
+          for (const a of arr) {
+            if (a && !extras.includes(a)) extras.push(a);
+          }
+        }
+      }
+      const existing = aliasMerge.get(canonical) || [];
+      for (const ex of extras) {
+        if (!existing.includes(ex)) existing.push(ex);
+      }
+      aliasMerge.set(canonical, existing);
+      entityMap.delete(e.id);
+      mergedEntityCount += 1;
+      continue;
+    }
+
     insertEntity.run(
       e.id,
       e.qid || null,
       e.type,
-      e.names_json,
+      namesToJson(cleaned),
       e.bio || null,
       e.birth || null,
       e.death || null,
@@ -91,29 +182,43 @@ db.transaction(() => {
       e.quality || 1,
     );
 
-    let labels: Record<string, string> = {};
-    let aliases: Record<string, string[]> = {};
-    try {
-      const parsed = JSON.parse(e.names_json);
-      labels = parsed.labels || {};
-      aliases = parsed.aliases || {};
-    } catch {}
-
+    const labels = cleaned.labels;
     const allAliases: string[] = [];
-    for (const arr of Object.values(aliases)) {
+    for (const arr of Object.values(cleaned.aliases)) {
       if (Array.isArray(arr)) allAliases.push(...arr);
     }
 
+    const nameZh = labels['zh'] || labels['zh-cn'] || labels['zh-tw'] || labels['zh-hk'] || null;
     insertSearch.run(
       e.id,
       e.type,
-      labels['zh'] || labels['zh-cn'] || labels['zh-tw'] || labels['zh-hk'] || null,
+      nameZh,
       labels['en'] || null,
       labels['ja'] || null,
       allAliases.join(' | ') || null,
     );
+    insertSearchFts.run(
+      e.id,
+      [nameZh, labels['en'], labels['ja'], ...allAliases].filter(Boolean).join(' '),
+    );
+  }
+
+  for (const [target, extras] of aliasMerge) {
+    const row: any = db.query('SELECT aliases_text FROM search_index WHERE id = ?').get(target);
+    if (!row) continue;
+    const existing = (row.aliases_text || '').split(' | ').filter(Boolean);
+    for (const ex of extras) {
+      if (!existing.includes(ex)) existing.push(ex);
+    }
+    db.run('UPDATE search_index SET aliases_text = ? WHERE id = ?', [existing.join(' | '), target]);
+    db.run(
+      "UPDATE search_fts SET content = (SELECT COALESCE(name_zh, '') || ' ' || COALESCE(name_en, '') || ' ' || COALESCE(name_ja, '') || ' ' || COALESCE(aliases_text, '') FROM search_index WHERE id = ?) WHERE id = ?",
+      [target, target],
+    );
   }
 })();
+
+console.log(`✓ Merged ${mergedEntityCount} linked source entities into canonical nodes`);
 
 // 3. Load and Insert Facts
 console.log('💾 Loading and inserting facts into D1 SQLite...');
@@ -136,11 +241,100 @@ const validFacts: any[] = [];
 const outEdges = new Map<string, { predicate: string; target: string }[]>();
 const inEdges = new Map<string, { predicate: string; source: string }[]>();
 
+// Publisher entity-ization: index publisher entity names, then rewrite
+// publisher_name string facts into publisher edges when a match exists.
+const publisherByName = new Map<string, string>();
+for (const e of entityMap.values()) {
+  if (e.type !== 'publisher') continue;
+  const cleaned = cleanNames(e.names_json);
+  for (const v of Object.values(cleaned.labels)) {
+    const key = normPublisherName(v);
+    if (key && !publisherByName.has(key)) publisherByName.set(key, e.id);
+  }
+  for (const arr of Object.values(cleaned.aliases)) {
+    if (!Array.isArray(arr)) continue;
+    for (const a of arr) {
+      const key = normPublisherName(a);
+      if (key && !publisherByName.has(key)) publisherByName.set(key, e.id);
+    }
+  }
+}
+let publisherMatched = 0;
+let publisherUnmatched = 0;
+let publisherSynthesized = 0;
+
+// Synthesize publisher entities for publisher_name strings that have no
+// existing publisher entity (common aozora/douban publishers like 筑摩書房).
+{
+  const needed = new Map<string, { id: string; label: string }>();
+  const seenKeys = new Set<string>();
+  for (const f of factsRows) {
+    if (f.predicate !== 'publisher_name' || !f.object_value) continue;
+    if (!entityMap.has(resolveLink(f.subject_id))) continue;
+    const label = String(f.object_value).trim();
+    if (!label) continue;
+    const key = normPublisherName(label);
+    if (!key || seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    if (matchPublisher(label)) continue;
+    const hash = djb2Hash(key).toString(16).padStart(12, '0');
+    needed.set(key, { id: `pname:${hash}`, label });
+  }
+  if (needed.size > 0) {
+    db.transaction(() => {
+      for (const { id, label } of needed.values()) {
+        insertEntity.run(
+          id,
+          null,
+          'publisher',
+          namesToJson({ labels: { ja: label }, aliases: {} }),
+          null,
+          null,
+          null,
+          null,
+          'synthesized',
+          1,
+        );
+        insertSearch.run(id, 'publisher', null, null, label, null);
+        insertSearchFts.run(id, label);
+        publisherByName.set(normPublisherName(label), id);
+        entityMap.set(id, {
+          id,
+          qid: null,
+          type: 'publisher',
+          names_json: namesToJson({ labels: { ja: label }, aliases: {} }),
+          bio: null,
+          birth: null,
+          death: null,
+          country: null,
+          source: 'synthesized',
+          quality: 1,
+        });
+        publisherSynthesized += 1;
+      }
+    })();
+  }
+}
+
 db.transaction(() => {
   for (const f of factsRows) {
     // Canonicalize IDs if linked
-    const sub = linkMap.get(f.subject_id) || f.subject_id;
-    const obj = linkMap.get(f.object_ref) || f.object_ref;
+    const sub = resolveLink(f.subject_id);
+    let obj = f.object_ref ? resolveLink(f.object_ref) : f.object_ref;
+
+    // Rewrite publisher_name string facts into publisher entity edges
+    if (f.predicate === 'publisher_name' && f.object_value) {
+      const pubId = matchPublisher(f.object_value);
+      if (pubId && entityMap.has(pubId)) {
+        f.predicate = 'publisher';
+        f.object_value = null;
+        obj = pubId;
+        publisherMatched += 1;
+      } else {
+        obj = '';
+        publisherUnmatched += 1;
+      }
+    }
 
     if (entityMap.has(sub) && (entityMap.has(obj) || !f.object_ref)) {
       validFacts.push({ ...f, subject_id: sub, object_ref: obj });
@@ -157,14 +351,18 @@ db.transaction(() => {
       outs.push({ predicate: f.predicate, target: obj });
       outEdges.set(sub, outs);
 
-      const inns = inEdges.get(obj) || [];
-      inns.push({ predicate: f.predicate, source: sub });
-      inEdges.set(obj, inns);
+      if (obj) {
+        const inns = inEdges.get(obj) || [];
+        inns.push({ predicate: f.predicate, source: sub });
+        inEdges.set(obj, inns);
+      }
     }
   }
 })();
 
-console.log(`✓ Inserted ${validFacts.length} connected facts`);
+console.log(
+  `✓ Inserted ${validFacts.length} connected facts (publisher entity-ized: ${publisherMatched} matched, ${publisherUnmatched} unmatched)`,
+);
 
 // 4. Compute Top-N Recommendations
 console.log('🧠 Computing Graph-based Recommendations...');
