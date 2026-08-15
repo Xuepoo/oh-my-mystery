@@ -11,14 +11,13 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'esnext',
+    target: 'es2022',
     outDir: 'dist',
     chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         manualChunks: {
-          three: ['three'],
-          vectojs: ['@vectojs/core', '@vectojs/graph3d', '@vectojs/knowledge-graph'],
+          vectojs: ['@vectojs/core', '@vectojs/ui', '@vectojs/styles'],
         },
       },
     },

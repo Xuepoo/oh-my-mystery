@@ -1,22 +1,17 @@
 import type {
-  KgDataSource,
-  KgEntity,
-  KgFact,
-  KgNeighborhood,
-  NodeId,
-} from '@vectojs/knowledge-graph';
-import type {
   ChronicleTrail,
   EntityDetailResponse,
   PathfinderResult,
   SearchResponse,
 } from '@omm/shared';
+import type { GraphLink2D, GraphNeighborhood2D, GraphNode2D, NodeId } from '../scene/types';
+import { pickNodeLabel } from '../scene/types';
 import { Theme } from '../ui/theme';
 
-export class D1DataSource implements KgDataSource {
+export class D1DataSource {
   private baseUrl: string;
   private turnstileToken: string | null = null;
-  private cache = new Map<string, KgNeighborhood>();
+  private cache = new Map<string, GraphNeighborhood2D>();
 
   constructor(baseUrl = '') {
     this.baseUrl = baseUrl;
@@ -36,19 +31,23 @@ export class D1DataSource implements KgDataSource {
     return headers;
   }
 
-  private formatNode(e: any): KgEntity & { color: string; val: number } {
+  private formatNode(e: any): GraphNode2D {
     const type = e.type || 'other';
+    const labels =
+      e.names?.labels || (typeof e.labels === 'object' ? e.labels : { zh: String(e.id) });
+    const name = pickNodeLabel(labels, 'zh') || String(e.id);
+
     return {
-      ...e,
       id: String(e.id),
       type,
+      name,
       color: Theme.getNodeColor(type),
       val: type === 'author' ? 1.4 : type === 'work' ? 1.0 : type === 'character' ? 0.9 : 0.8,
-      labels: e.names?.labels || (typeof e.labels === 'object' ? e.labels : { '': String(e.id) }),
+      labels,
     };
   }
 
-  async getNodes(ids?: readonly NodeId[]): Promise<readonly KgEntity[]> {
+  async getNodes(ids?: readonly NodeId[]): Promise<readonly GraphNode2D[]> {
     if (!ids || ids.length === 0) {
       return this.fetchSeeds();
     }
@@ -69,7 +68,7 @@ export class D1DataSource implements KgDataSource {
   async getNeighbors(
     id: NodeId,
     _options?: { limit?: number; direction?: 'out' | 'in' | 'both' },
-  ): Promise<KgNeighborhood> {
+  ): Promise<GraphNeighborhood2D> {
     const strId = String(id);
     if (this.cache.has(strId)) {
       return this.cache.get(strId)!;
@@ -84,7 +83,14 @@ export class D1DataSource implements KgDataSource {
       );
       if (!res.ok) {
         return {
-          entity: { id: strId, type: 'other', labels: { '': strId } },
+          entity: {
+            id: strId,
+            type: 'other',
+            name: strId,
+            color: Theme.getNodeColor('other'),
+            val: 0.8,
+            labels: { zh: strId },
+          },
           facts: [],
           neighbors: [],
         };
@@ -96,16 +102,14 @@ export class D1DataSource implements KgDataSource {
         neighbors: any[];
       };
 
-      const rawNeighbors: (KgEntity & { color: string; val: number })[] = (
-        data.neighbors || []
-      ).map((n) => this.formatNode(n));
+      const rawNeighbors: GraphNode2D[] = (data.neighbors || []).map((n) => this.formatNode(n));
 
       const knownNodeIds = new Set<string>([
         String(data.entity.id),
         ...rawNeighbors.map((n) => String(n.id)),
       ]);
 
-      const facts: KgFact[] = [];
+      const facts: GraphLink2D[] = [];
       for (const f of data.facts || []) {
         const src = String(f.subject_id || f.source || '');
         const tgt = String(f.object_ref || f.target || '');
@@ -118,7 +122,7 @@ export class D1DataSource implements KgDataSource {
         }
       }
 
-      const neighborhood: KgNeighborhood = {
+      const neighborhood: GraphNeighborhood2D = {
         entity: this.formatNode(data.entity),
         facts,
         neighbors: rawNeighbors,
@@ -129,14 +133,21 @@ export class D1DataSource implements KgDataSource {
     } catch (err) {
       console.error('Failed to get neighbors for', strId, err);
       return {
-        entity: { id: strId, type: 'other', labels: { '': strId } },
+        entity: {
+          id: strId,
+          type: 'other',
+          name: strId,
+          color: Theme.getNodeColor('other'),
+          val: 0.8,
+          labels: { zh: strId },
+        },
         facts: [],
         neighbors: [],
       };
     }
   }
 
-  async fetchSeeds(): Promise<KgEntity[]> {
+  async fetchSeeds(): Promise<GraphNode2D[]> {
     try {
       const res = await fetch(`${this.baseUrl}/api/seeds`, {
         headers: this.getHeaders(),

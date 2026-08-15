@@ -64,9 +64,8 @@ export class Minimap extends Entity {
     ctx.fillText('🧭 鹰眼小地图 (MINIMAP)', startX + 12, startY + 8);
 
     // Mini nodes representation from real positions
-    const entities = this.viewport.getEntities();
-    const positions = this.viewport.getPositions();
-    const count = entities.length;
+    const nodes = this.viewport.getNodes();
+    const count = nodes.length;
 
     const innerX = startX + 12;
     const innerY = startY + 24;
@@ -96,44 +95,56 @@ export class Minimap extends Entity {
     ctx.stroke();
     ctx.restore();
 
-    if (positions && count > 0) {
-      let minX = Infinity,
-        maxX = -Infinity,
-        minY = Infinity,
-        maxY = -Infinity;
+    if (count > 0) {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+
       for (let i = 0; i < count; i++) {
-        const px = positions[i * 3]!;
-        const py = positions[i * 3 + 1]!;
-        if (Number.isFinite(px) && Number.isFinite(py)) {
-          if (px < minX) minX = px;
-          if (px > maxX) maxX = px;
-          if (py < minY) minY = py;
-          if (py > maxY) maxY = py;
-        }
+        const node = nodes[i]!;
+        const px = node.x ?? 0;
+        const py = node.y ?? 0;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
       }
 
       const spanX = Math.max(1, maxX - minX);
       const spanY = Math.max(1, maxY - minY);
 
       for (let i = 0; i < count; i++) {
-        const e = entities[i]!;
-        const px = positions[i * 3]!;
-        const py = positions[i * 3 + 1]!;
-        if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+        const node = nodes[i]!;
+        const px = node.x ?? 0;
+        const py = node.y ?? 0;
 
         const nx = innerX + ((px - minX) / spanX) * innerW;
-        const ny = innerY + (1 - (py - minY) / spanY) * innerH;
+        const ny = innerY + ((py - minY) / spanY) * innerH;
 
-        ctx.fillStyle = Theme.getNodeColor(e.type);
+        ctx.fillStyle = node.color || Theme.getNodeColor(node.type);
         ctx.beginPath();
-        ctx.arc(nx, ny, e.type === 'author' ? 3.0 : 1.8, 0, Math.PI * 2);
+        ctx.arc(nx, ny, node.type === 'author' ? 2.8 : 1.6, 0, Math.PI * 2);
         ctx.fill();
       }
 
       // Camera Box Frame
+      const topLeft = this.viewport.screenToWorld(0, 64);
+      const bottomRight = this.viewport.screenToWorld(this.viewport.width, this.viewport.height);
+      const boxX = Math.max(
+        innerX,
+        Math.min(innerX + innerW, innerX + ((topLeft.x - minX) / spanX) * innerW),
+      );
+      const boxY = Math.max(
+        innerY,
+        Math.min(innerY + innerH, innerY + ((topLeft.y - minY) / spanY) * innerH),
+      );
+      const boxW = Math.max(10, Math.min(innerW, ((bottomRight.x - topLeft.x) / spanX) * innerW));
+      const boxH = Math.max(10, Math.min(innerH, ((bottomRight.y - topLeft.y) / spanY) * innerH));
+
       ctx.strokeStyle = Theme.colors.borderActive;
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(innerX + innerW * 0.22, innerY + innerH * 0.22, innerW * 0.56, innerH * 0.56);
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(boxX, boxY, boxW, boxH);
     }
   }
 }

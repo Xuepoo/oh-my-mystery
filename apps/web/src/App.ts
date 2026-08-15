@@ -4,17 +4,18 @@ import { D1DataSource } from './api/D1DataSource';
 import { BackgroundLayer } from './scene/BackgroundLayer';
 import { GraphOverlayLayer } from './scene/GraphOverlayLayer';
 import { GraphViewport } from './scene/GraphViewport';
+import type { GraphNode2D } from './scene/types';
 import { CasefileDrawer } from './ui/CasefileDrawer';
 import { ChroniclePanel } from './ui/ChroniclePanel';
 import { HeaderBar } from './ui/HeaderBar';
 import { Minimap } from './ui/Minimap';
 import { PathfinderModal } from './ui/PathfinderModal';
+import { getEventCoords } from './ui/theme';
 import { ViewportControls } from './ui/ViewportControls';
 
 export class App {
   readonly scene: Scene;
-  readonly graphCanvas: HTMLCanvasElement;
-  readonly uiCanvas: HTMLCanvasElement;
+  readonly canvas: HTMLCanvasElement;
   readonly source: D1DataSource;
   readonly viewport: GraphViewport;
 
@@ -28,36 +29,39 @@ export class App {
   readonly controls: ViewportControls;
 
   private activeEntityDetails: EntityDetailResponse | null = null;
+  private isPointerDown = false;
+  private isPanning = false;
+  private draggedNode: GraphNode2D | null = null;
+  private pointerDownPos = { x: 0, y: 0 };
+  private lastPointerPos = { x: 0, y: 0 };
 
-  constructor(graphCanvas: HTMLCanvasElement, uiCanvas: HTMLCanvasElement) {
-    this.graphCanvas = graphCanvas;
-    this.uiCanvas = uiCanvas;
+  constructor(canvas: HTMLCanvasElement) {
+    this.canvas = canvas;
     this.source = new D1DataSource(import.meta.env.VITE_API_URL || '');
 
-    // 1. Initialize VectoJS Scene on the UI Canvas
-    this.scene = new Scene(this.uiCanvas, {
+    // 1. Initialize Single VectoJS Scene
+    this.scene = new Scene(this.canvas, {
       pointBackend: 'canvas',
       particleBackend: 'auto',
       maxFPS: 60,
     });
     this.scene.resize(window.innerWidth, window.innerHeight);
 
-    // 2. Initialize 2D Knowledge Graph Viewport on the Graph Canvas
+    // 2. Initialize 2D Knowledge Graph Viewport
     this.viewport = new GraphViewport({
-      canvas: this.graphCanvas,
-      eventElement: this.uiCanvas,
       source: this.source,
-      onSelectNode: (entity) => {
-        if (entity) {
-          void this.handleSelectNode(String(entity.id));
+      onSelectNode: (node) => {
+        if (node) {
+          void this.handleSelectNode(node.id);
         } else {
           this.drawer.close();
         }
       },
-      onHoverNode: (entity) => {
-        this.overlayLayer.setHoveredEntity(entity);
+      onHoverNode: (node) => {
+        this.overlayLayer.setHoveredEntity(node);
       },
     });
+    this.viewport.resize(window.innerWidth, window.innerHeight);
 
     // 3. Mount Entities into Scene
     this.background = new BackgroundLayer();
@@ -131,8 +135,8 @@ export class App {
     this.controls = new ViewportControls(this.viewport);
     this.scene.add(this.controls);
 
-    // 4. Forward Pointer Events to Graph Canvas when not clicking UI
-    this.setupEventForwarding();
+    // 4. Bind Native Canvas Pointer Interactions
+    this.setupInteractions();
 
     // 5. Handle Window Resize
     window.addEventListener('resize', () => {
@@ -140,41 +144,34 @@ export class App {
     });
   }
 
-  isUIHovered(x: number, y: number): boolean {
-    if (this.drawer.isPointInside(x, y)) return true;
-    if (this.headerBar.isPointInside(x, y)) return true;
-    if (this.chroniclePanel.isPointInside(x, y)) return true;
-    if (this.pathfinderModal.isPointInside(x, y)) return true;
-    if (this.minimap.isPointInside(x, y)) return true;
-    if (this.controls.isPointInside(x, y)) return true;
-    return false;
+  private isEventOverUI(x: number, y: number): boolean {
+    return (
+      this.headerBar.isPointInside(x, y) ||
+      this.drawer.isPointInside(x, y) ||
+      this.chroniclePanel.isPointInside(x, y) ||
+      this.pathfinderModal.isPointInside(x, y) ||
+      this.minimap.isPointInside(x, y) ||
+      this.controls.isPointInside(x, y)
+    );
   }
 
-  private setupEventForwarding(): void {
-    let isDragging = false;
-    let dragStartX = 0;
-    let dragStartY = 0;
+  private setupInteractions(): void {
+    this.canvas.addEventListener('pointerdown', (e) => {
+      const { x, y } = getEventCoords(e);
+      this.pointerDownPos = { x, y };
+      this.lastPointerPos = { x, y };
+      this.isPointerDown = true;
 
-    this.uiCanvas.addEventListener('pointerdown', (e: PointerEvent) => {
-      const x = e.clientX;
-      const y = e.clientY;
-      isDragging = false;
-      dragStartX = x;
-      dragStartY = y;
-
-      const isOverUI = this.isUIHovered(x, y);
-      this.viewport.setControlsEnabled(!isOverUI);
-
-      // Direct Dispatch to UI Components when clicking UI areas
-      if (this.pathfinderModal.isModalOpen()) {
+      // 1. Dispatch to UI Panels (Highest overlay priority first)
+      if (this.pathfinderModal.isPointInside(x, y)) {
         this.pathfinderModal.handleClick(x, y);
         return;
       }
-      if (this.chroniclePanel.isModalOpen()) {
+      if (this.chroniclePanel.isPointInside(x, y)) {
         this.chroniclePanel.handleClick(x, y);
         return;
       }
-      if (this.drawer.isDrawerOpen() && this.drawer.isPointInside(x, y)) {
+      if (this.drawer.isPointInside(x, y)) {
         this.drawer.handleClick(x, y);
         return;
       }
@@ -182,62 +179,83 @@ export class App {
         this.headerBar.handleClick(x, y);
         return;
       }
-      if (this.controls.isPointInside(x, y)) {
-        this.controls.handleClick(x, y);
-        return;
-      }
       if (this.minimap.isPointInside(x, y)) {
         this.minimap.handleClick(x, y);
         return;
       }
-    });
-
-    this.uiCanvas.addEventListener('pointermove', (e: PointerEvent) => {
-      const x = e.clientX;
-      const y = e.clientY;
-      if (Math.abs(x - dragStartX) > 4 || Math.abs(y - dragStartY) > 4) {
-        isDragging = true;
+      if (this.controls.isPointInside(x, y)) {
+        this.controls.handleClick(x, y);
+        return;
       }
 
-      const isOverUI = this.isUIHovered(x, y);
-      this.viewport.setControlsEnabled(!isOverUI);
-
-      if (!isOverUI) {
-        const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
-        this.overlayLayer.setHoveredEntity(hitNode);
-        this.uiCanvas.style.cursor = hitNode ? 'pointer' : isDragging ? 'grabbing' : 'grab';
+      // 2. Test Node Click / Drag on Graph
+      const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
+      if (hitNode) {
+        this.draggedNode = hitNode;
+        const worldPos = this.viewport.screenToWorld(x, y);
+        this.viewport.graph.pinNode(hitNode.id, worldPos.x, worldPos.y);
       } else {
-        this.overlayLayer.setHoveredEntity(null);
-        this.uiCanvas.style.cursor = 'default';
+        this.isPanning = true;
       }
     });
 
-    this.uiCanvas.addEventListener('pointerup', (e: PointerEvent) => {
-      const x = e.clientX;
-      const y = e.clientY;
+    window.addEventListener('pointermove', (e) => {
+      const { x, y } = getEventCoords(e);
 
-      if (!this.isUIHovered(x, y)) {
-        if (!isDragging) {
+      if (this.isPointerDown) {
+        const dx = x - this.lastPointerPos.x;
+        const dy = y - this.lastPointerPos.y;
+        this.lastPointerPos = { x, y };
+
+        if (this.draggedNode) {
+          const worldPos = this.viewport.screenToWorld(x, y);
+          this.viewport.graph.pinNode(this.draggedNode.id, worldPos.x, worldPos.y);
+        } else if (this.isPanning) {
+          this.viewport.pan(dx, dy);
+        }
+      } else {
+        // Hover inspection
+        if (!this.isEventOverUI(x, y)) {
           const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
-          if (hitNode) {
-            void this.handleSelectNode(String(hitNode.id));
-          } else if (this.drawer.isDrawerOpen()) {
-            // Click outside drawer closes drawer
-            this.drawer.close();
-          }
+          this.overlayLayer.setHoveredEntity(hitNode);
+        } else {
+          this.overlayLayer.setHoveredEntity(null);
         }
       }
     });
 
-    this.uiCanvas.addEventListener(
+    window.addEventListener('pointerup', (e) => {
+      const { x, y } = getEventCoords(e);
+      const moveDist = Math.hypot(x - this.pointerDownPos.x, y - this.pointerDownPos.y);
+
+      if (this.draggedNode) {
+        this.viewport.graph.unpinNode(this.draggedNode.id);
+        if (moveDist < 6) {
+          // Clicked node
+          void this.handleSelectNode(this.draggedNode.id);
+        }
+        this.draggedNode = null;
+      } else if (this.isPanning && moveDist < 6 && !this.isEventOverUI(x, y)) {
+        // Clicked empty canvas space -> close drawer
+        this.drawer.close();
+      }
+
+      this.isPointerDown = false;
+      this.isPanning = false;
+    });
+
+    this.canvas.addEventListener(
       'wheel',
-      (e: WheelEvent) => {
-        const x = e.clientX;
-        const y = e.clientY;
-        const isOverUI = this.isUIHovered(x, y);
-        this.viewport.setControlsEnabled(!isOverUI);
+      (e) => {
+        const { x, y } = getEventCoords(e);
+        if (this.isEventOverUI(x, y)) {
+          return;
+        }
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.12 : 0.89;
+        this.viewport.zoomAt(factor, x, y);
       },
-      { passive: true },
+      { passive: false },
     );
   }
 
@@ -277,10 +295,5 @@ export class App {
     const h = window.innerHeight;
     this.scene.resize(w, h);
     this.viewport.resize(w, h);
-  }
-
-  dispose(): void {
-    this.scene.stop();
-    this.viewport.dispose();
   }
 }

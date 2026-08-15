@@ -70,7 +70,7 @@ async function runAudit() {
   const appState = await page.evaluate(() => {
     const app = (window as any).__OMM_APP__;
     if (!app) return { initialized: false, nodeCount: 0 };
-    const entities = app.viewport?.getEntities() || [];
+    const entities = app.viewport?.getNodes() || [];
     return {
       initialized: true,
       nodeCount: entities.length,
@@ -87,7 +87,7 @@ async function runAudit() {
   await page.evaluate(() => {
     const app = (window as any).__OMM_APP__;
     if (app && app.viewport) {
-      const entities = app.viewport.getEntities();
+      const entities = app.viewport.getNodes();
       if (entities.length > 0) {
         app.overlayLayer.setHoveredEntity(entities[0]);
       }
@@ -114,7 +114,7 @@ async function runAudit() {
     const app = (window as any).__OMM_APP__;
     return {
       isDrawerOpen: app.drawer?.isDrawerOpen(),
-      nodeCount: app.viewport?.getEntities().length,
+      nodeCount: app.viewport?.getNodes().length,
       drawerDetails: app.activeEntityDetails ? app.activeEntityDetails.entity.names.labels : null,
     };
   });

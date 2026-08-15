@@ -1,188 +1,206 @@
-import { KnowledgeGraphSession, type KgEntity, pickLabel } from '@vectojs/knowledge-graph';
-import * as THREE from 'three';
 import type { D1DataSource } from '../api/D1DataSource';
-import { Theme } from '../ui/theme';
+import { KnowledgeGraph2D } from './KnowledgeGraph2D';
+import type { GraphLink2D, GraphNode2D } from './types';
 
 export interface GraphViewportOptions {
-  canvas: HTMLCanvasElement;
-  eventElement?: HTMLElement;
   source: D1DataSource;
-  onSelectNode: (entity: KgEntity | null) => void;
-  onHoverNode: (entity: KgEntity | null) => void;
+  onSelectNode: (node: GraphNode2D | null) => void;
+  onHoverNode: (node: GraphNode2D | null) => void;
 }
 
 export class GraphViewport {
-  private canvas: HTMLCanvasElement;
-  private eventElement: HTMLElement;
-  private source: D1DataSource;
-  private renderer: THREE.WebGLRenderer;
-  private threeScene: THREE.Scene;
-  private session: KnowledgeGraphSession;
-  private animFrameId: number | null = null;
-  private isFrozen = false;
-  private isDisposed = false;
+  readonly graph: KnowledgeGraph2D;
+  private onSelectCb: (node: GraphNode2D | null) => void;
+  private onHoverCb: (node: GraphNode2D | null) => void;
+
+  // 2D Camera / Viewport Transform
+  public panX = 0;
+  public panY = 0;
+  public zoom = 1.0;
+  public width = 1200;
+  public height = 800;
+
+  // Path Highlighting
   private activeHighlightNodes = new Set<string>();
   private activeHighlightEdges = new Set<string>();
-  private onSelectCb: (entity: KgEntity | null) => void;
-  private onHoverCb: (entity: KgEntity | null) => void;
+
+  // Smooth Camera Animation
+  private targetPanX = 0;
+  private targetPanY = 0;
+  private targetZoom = 1.0;
+  private isCameraAnimating = false;
+  private animStartTime = 0;
+  private animDuration = 400;
+  private startPanX = 0;
+  private startPanY = 0;
+  private startZoom = 1.0;
 
   constructor(options: GraphViewportOptions) {
-    this.canvas = options.canvas;
-    this.eventElement = options.eventElement || options.canvas;
-    this.source = options.source;
     this.onSelectCb = options.onSelectNode;
     this.onHoverCb = options.onHoverNode;
 
-    // 1. Initialize Three.js WebGLRenderer on the target canvas
-    this.renderer = new THREE.WebGLRenderer({
-      canvas: this.canvas,
-      antialias: true,
-      alpha: true,
-      powerPreference: 'high-performance',
+    this.graph = new KnowledgeGraph2D({
+      source: options.source,
     });
-
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.renderer.setPixelRatio(dpr);
-    this.renderer.setSize(window.innerWidth, window.innerHeight, false);
-
-    this.threeScene = new THREE.Scene();
-
-    // Add bright ambient & directional lights for MeshLambertMaterial
-    const ambientLight = new THREE.AmbientLight(0xfff8ee, 2.2);
-    this.threeScene.add(ambientLight);
-
-    const dirLight = new THREE.DirectionalLight(0xfffae6, 2.4);
-    dirLight.position.set(150, 250, 350);
-    this.threeScene.add(dirLight);
-
-    const backLight = new THREE.DirectionalLight(0x88ccff, 1.4);
-    backLight.position.set(-150, -250, 200);
-    this.threeScene.add(backLight);
-
-    // 2. Initialize KnowledgeGraphSession in 2D Mode on eventElement
-    this.session = new KnowledgeGraphSession({
-      domElement: this.eventElement,
-      source: this.source,
-      mode: '2d',
-      lang: 'zh',
-      expandOnSelect: false,
-      graphOptions: {
-        nodeRadius: 1.2,
-        linkOpacity: 0.9,
-        linkColor: Theme.colors.edgeDefault,
-        nodeColor: Theme.colors.author,
-      },
-      onSelect: (entity) => {
-        this.onSelectCb(entity);
-      },
-      onHover: (entity) => {
-        this.onHoverCb(entity);
-      },
-      onExpand: () => {},
-    });
-
-    this.session.attach(this.threeScene);
-  }
-
-  getCamera(): THREE.Camera {
-    return this.session.camera.camera;
-  }
-
-  getPositions(): Float32Array | undefined {
-    return (this.session as any).layout?.positions;
-  }
-
-  setControlsEnabled(enabled: boolean): void {
-    this.session.camera.setEnabled(enabled);
   }
 
   async init(seedIds?: string[]): Promise<void> {
-    this.startLoop();
+    const seedNodes = await this.graph['source'].getNodes(seedIds);
+    await this.graph.bootstrap(seedNodes as GraphNode2D[]);
 
-    const seeds =
-      seedIds && seedIds.length > 0 ? seedIds : (await this.source.fetchSeeds()).map((s) => s.id);
-    await this.session.bootstrap(seeds, false);
-    this.fitToView();
+    // Center camera on origin
+    this.panX = this.width / 2;
+    this.panY = this.height / 2;
+    this.zoom = 1.0;
 
-    // Asynchronously expand top 3 master authors in parallel without blocking initial paint
-    const topMasters = seeds.slice(0, 3);
+    // Asynchronously expand top 3 master authors in parallel for rich starting connections
+    const topMasters = seedNodes.slice(0, 3).map((s) => s.id);
     setTimeout(() => {
-      Promise.all(topMasters.map((id) => this.session.expand(id)))
+      Promise.all(topMasters.map((id) => this.graph.expand(id)))
         .then(() => {
-          (this.session as any).layout?.reheat?.(0.5);
           this.fitToView();
         })
         .catch(() => {});
     }, 120);
   }
 
-  wakeUp(): void {
-    // Continuous 60fps loop is active
+  resize(w: number, h: number): void {
+    if (this.width === 0 || this.height === 0) {
+      this.panX = w / 2;
+      this.panY = h / 2;
+    } else {
+      // Keep center invariant on resize
+      this.panX += (w - this.width) / 2;
+      this.panY += (h - this.height) / 2;
+    }
+    this.width = w;
+    this.height = h;
   }
 
-  freeze(frozen: boolean): void {
-    this.isFrozen = frozen;
+  worldToScreen(x: number, y: number): { x: number; y: number } {
+    return {
+      x: x * this.zoom + this.panX,
+      y: y * this.zoom + this.panY,
+    };
   }
 
-  isPhysicsFrozen(): boolean {
-    return this.isFrozen;
+  screenToWorld(sx: number, sy: number): { x: number; y: number } {
+    return {
+      x: (sx - this.panX) / this.zoom,
+      y: (sy - this.panY) / this.zoom,
+    };
+  }
+
+  pan(dx: number, dy: number): void {
+    this.isCameraAnimating = false;
+    this.panX += dx;
+    this.panY += dy;
+  }
+
+  zoomAt(factor: number, clientX: number, clientY: number): void {
+    this.isCameraAnimating = false;
+    const newZoom = Math.min(Math.max(this.zoom * factor, 0.15), 3.5);
+    if (newZoom === this.zoom) return;
+
+    this.panX = clientX - (clientX - this.panX) * (newZoom / this.zoom);
+    this.panY = clientY - (clientY - this.panY) * (newZoom / this.zoom);
+    this.zoom = newZoom;
   }
 
   fitToView(): void {
-    const positions = (this.session as any).layout?.positions;
-    if (positions && positions.length > 0) {
-      this.session.camera.fitToPositions(positions);
-    }
+    const bb = this.graph.getBoundingBox();
+    const graphW = Math.max(bb.maxX - bb.minX, 200);
+    const graphH = Math.max(bb.maxY - bb.minY, 200);
+    const cx = (bb.minX + bb.maxX) / 2;
+    const cy = (bb.minY + bb.maxY) / 2;
+
+    const availableW = this.width - 160;
+    const availableH = this.height - 180;
+    const scale = Math.min(availableW / graphW, availableH / graphH, 1.2);
+    const targetZoom = Math.max(scale, 0.35);
+
+    const targetPanX = this.width / 2 - cx * targetZoom;
+    const targetPanY = this.height / 2 + 20 - cy * targetZoom;
+
+    this.animateCameraTo(targetPanX, targetPanY, targetZoom, 500);
   }
 
   resetZoom(): void {
     this.fitToView();
   }
 
-  async expandNode(id: string): Promise<number> {
-    const added = await this.session.expand(id);
-    (this.session as any).layout?.reheat?.(0.8);
-    return added;
+  private isFrozen = false;
+
+  freeze(frozen: boolean): void {
+    this.isFrozen = frozen;
+    if (!frozen) {
+      this.graph.reheat(0.3);
+    }
+  }
+
+  isPhysicsFrozen(): boolean {
+    return this.isFrozen;
+  }
+
+  wakeUp(): void {
+    this.graph.reheat(0.4);
   }
 
   focusNode(id: string): void {
-    const entities = this.session.listEntities();
-    const index = entities.findIndex((e) => String(e.id) === id);
-    if (index !== -1) {
-      const positions = (this.session as any).layout?.positions;
-      if (positions && positions.length > index * 3 + 1) {
-        const targetX = positions[index * 3];
-        const targetY = positions[index * 3 + 1];
-        if (Number.isFinite(targetX) && Number.isFinite(targetY)) {
-          this.glideCameraTo(targetX, targetY);
-        }
+    const node = this.graph.getNode(id);
+    if (!node) return;
+
+    const targetX = node.x ?? 0;
+    const targetY = node.y ?? 0;
+    const targetZoom = Math.max(this.zoom, 1.1);
+
+    // Offset slightly to the left so drawer doesn't occlude the node on desktop
+    const screenTargetX = this.width < 768 ? this.width / 2 : this.width * 0.38;
+    const screenTargetY = this.height / 2 + 20;
+
+    const targetPanX = screenTargetX - targetX * targetZoom;
+    const targetPanY = screenTargetY - targetY * targetZoom;
+
+    this.animateCameraTo(targetPanX, targetPanY, targetZoom, 450);
+  }
+
+  private animateCameraTo(
+    targetPanX: number,
+    targetPanY: number,
+    targetZoom: number,
+    duration = 400,
+  ): void {
+    this.startPanX = this.panX;
+    this.startPanY = this.panY;
+    this.startZoom = this.zoom;
+    this.targetPanX = targetPanX;
+    this.targetPanY = targetPanY;
+    this.targetZoom = targetZoom;
+    this.animDuration = duration;
+    this.animStartTime = performance.now();
+    this.isCameraAnimating = true;
+  }
+
+  update(): void {
+    if (this.isCameraAnimating) {
+      const now = performance.now();
+      const elapsed = now - this.animStartTime;
+      const t = Math.min(1, elapsed / this.animDuration);
+      // Cubic ease-out
+      const ease = 1 - Math.pow(1 - t, 3);
+
+      this.panX = this.startPanX + (this.targetPanX - this.startPanX) * ease;
+      this.panY = this.startPanY + (this.targetPanY - this.startPanY) * ease;
+      this.zoom = this.startZoom + (this.targetZoom - this.startZoom) * ease;
+
+      if (t >= 1) {
+        this.isCameraAnimating = false;
       }
     }
   }
 
-  private glideCameraTo(tx: number, ty: number): void {
-    const cam = this.session.camera.camera;
-    const startX = cam.position.x;
-    const startY = cam.position.y;
-    let step = 0;
-    const maxSteps = 24;
-
-    const anim = () => {
-      if (this.isDisposed) return;
-      step++;
-      const progress = step / maxSteps;
-      // Smooth ease-out cubic
-      const ease = 1 - Math.pow(1 - progress, 3);
-      cam.position.x = startX + (tx - startX) * ease;
-      cam.position.y = startY + (ty - startY) * ease;
-      (cam as any).lookAt?.(cam.position.x, cam.position.y, 0);
-      (this.session.camera as any).target?.set(cam.position.x, cam.position.y, 0);
-
-      if (step < maxSteps) {
-        requestAnimationFrame(anim);
-      }
-    };
-    requestAnimationFrame(anim);
+  async expandNode(id: string): Promise<number> {
+    return this.graph.expand(id);
   }
 
   highlightPath(nodeIds: string[], edges: { source: string; target: string }[]): void {
@@ -203,19 +221,12 @@ export class GraphViewport {
     this.activeHighlightEdges.clear();
   }
 
-  resize(width: number, height: number): void {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.renderer.setPixelRatio(dpr);
-    this.renderer.setSize(width, height, false);
-    this.session.setSize(width, height);
+  getNodes(): readonly GraphNode2D[] {
+    return this.graph.nodes;
   }
 
-  getEntities(): KgEntity[] {
-    return this.session.listEntities();
-  }
-
-  getFacts(): readonly any[] {
-    return (this.session as any).facts || [];
+  getLinks(): readonly GraphLink2D[] {
+    return this.graph.links;
   }
 
   getHighlightNodes(): ReadonlySet<string> {
@@ -226,33 +237,15 @@ export class GraphViewport {
     return this.activeHighlightEdges;
   }
 
-  getNodeLabel(entity: KgEntity, lang = 'zh'): string {
-    return pickLabel(entity.labels, lang);
+  selectNode(node: GraphNode2D | null): void {
+    this.onSelectCb(node);
   }
 
-  private startLoop(): void {
-    if (this.animFrameId != null) return;
-
-    const frame = () => {
-      if (!this.isDisposed) {
-        if (!this.isFrozen) {
-          this.session.tick(1);
-        }
-        this.session.render(this.renderer, this.threeScene);
-        this.animFrameId = requestAnimationFrame(frame);
-      }
-    };
-
-    this.animFrameId = requestAnimationFrame(frame);
+  hoverNode(node: GraphNode2D | null): void {
+    this.onHoverCb(node);
   }
 
   dispose(): void {
-    this.isDisposed = true;
-    if (this.animFrameId != null) {
-      cancelAnimationFrame(this.animFrameId);
-      this.animFrameId = null;
-    }
-    this.session.dispose();
-    this.renderer.dispose();
+    this.graph.dispose();
   }
 }
