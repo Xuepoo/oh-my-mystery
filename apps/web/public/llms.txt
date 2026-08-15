@@ -1,0 +1,6 @@
+# Oh My Mystery (OMM)
+> Zero-DOM Canvas & WebGL Detective Fiction Knowledge Graph
+
+- Description: Interactive global mystery literature knowledge graph with relational pathfinding, author profiles, and chronicle walkthroughs.
+- Framework: VectoJS Native
+- URL: https://omm.xuepoo.xyz
