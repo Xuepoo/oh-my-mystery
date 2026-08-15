@@ -204,8 +204,28 @@ export class App {
 
     window.addEventListener('pointermove', this.onPointerMove);
     window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('keydown', this.onWindowKeydown);
     this.setupCanvasWheel();
+
+    // Canvas is the whole app surface: the browser context menu
+    // (save image/copy image) is meaningless here.
+    this.canvas.addEventListener('contextmenu', this.onCanvasContextMenu);
   }
+
+  private onCanvasContextMenu = (e: Event): void => {
+    e.preventDefault();
+  };
+
+  // Block browser shortcuts that only make sense for document pages
+  // (save page, print). Deliberately does not touch refresh/devtools.
+  private onWindowKeydown = (e: KeyboardEvent): void => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (!mod) return;
+    const key = e.key.toLowerCase();
+    if (key === 's' || key === 'p') {
+      e.preventDefault();
+    }
+  };
 
   private onPointerMove = (e: PointerEvent): void => {
     const { x, y } = getEventCoords(e);
@@ -282,6 +302,8 @@ export class App {
     window.removeEventListener('pointermove', this.onPointerMove);
     window.removeEventListener('pointerup', this.onPointerUp);
     window.removeEventListener('resize', this.onResize);
+    window.removeEventListener('keydown', this.onWindowKeydown);
+    this.canvas.removeEventListener('contextmenu', this.onCanvasContextMenu);
     this.headerBar.dispose();
     this.background.dispose();
     this.scene.stop();
