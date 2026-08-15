@@ -9,5 +9,5 @@ ENVIRONMENT = "production"
 [[d1_databases]]
 binding = "DB"
 database_name = "omm-db"
-database_id = "omm-db-id"
+database_id = "83878e93-5d64-418d-b2bc-ad9778352222"
 migrations_dir = "src/db"

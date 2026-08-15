@@ -42,7 +42,7 @@ build:
 # --- Cloudflare Deployment -----------------------------------------------
 
 # Deploy to Cloudflare Pages safely.
-deploy public_dir="apps/web/dist" project_name="mystery-omm" branch="main":
+deploy public_dir="apps/web/dist" project_name="omm" branch="main":
     @./scripts/deploy-pages.sh {{public_dir}} {{project_name}} {{branch}}
 
 # --- Worktree Management --------------------------------------------------
