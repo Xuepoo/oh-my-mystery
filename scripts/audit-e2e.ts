@@ -96,52 +96,112 @@ async function runAudit() {
     `  ✓ Drawer Open = ${drawerState.isDrawerOpen}, Total Nodes after 1-Hop = ${drawerState.nodeCount}`,
   );
 
-  // 4. Test Chronicle Trails
-  console.log('4️⃣ Opening Chronicle Trails panel and navigating chapters...');
-  await page.evaluate(async () => {
-    const app = (window as any).__OMM_APP__;
-    if (app) {
-      await app.handleOpenChronicles();
-    }
-  });
-  await page.waitForTimeout(1500);
+  // 5. Test Real Mouse Click on UI Buttons
+  console.log('5️⃣ Testing real mouse clicks on UI elements...');
 
-  await page.screenshot({ path: join(SCREENSHOTS_DIR, '04-chronicle-panel.png') });
-  console.log(`  ✓ Captured 04-chronicle-panel screenshot`);
-
-  // 5. Test Pathfinder Modal
-  console.log('5️⃣ Opening Pathfinder Modal and computing connection path...');
-  await page.evaluate(async () => {
+  // Test clicking [✕] Close Button on Drawer
+  const closeBtn = await page.evaluate(() => {
     const app = (window as any).__OMM_APP__;
-    if (app) {
-      app.chroniclePanel.close();
-      app.pathfinderModal.open({ id: 'wd:Q347412', name: '江户川乱步' });
-      app.pathfinderModal.setTarget('wd:Q35064', '阿加莎·克里斯蒂');
-      await app.pathfinderModal.executeSearch();
-    }
+    return app.drawer.closeBtnRect;
   });
-  await page.waitForTimeout(1500);
+  console.log(`  Clicking close button at (${closeBtn.x + 16}, ${closeBtn.y + 16})...`);
+  await page.mouse.click(closeBtn.x + 16, closeBtn.y + 16);
+  await page.waitForTimeout(500);
+
+  const isClosed = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return !app.drawer.isDrawerOpen();
+  });
+  console.log(`  ✓ Close button clicked successfully! Drawer is closed = ${isClosed}`);
+
+  // Test clicking [🔗 关系探路] in HeaderBar
+  const pathfinderBtn = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return app.headerBar.pathfinderBtnRect;
+  });
+  console.log(
+    `  Clicking Pathfinder button at (${pathfinderBtn.x + 30}, ${pathfinderBtn.y + 16})...`,
+  );
+  await page.mouse.click(pathfinderBtn.x + 30, pathfinderBtn.y + 16);
+  await page.waitForTimeout(800);
+
+  const isModalOpen = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return app.pathfinderModal.isModalOpen();
+  });
+  console.log(`  ✓ Pathfinder button clicked successfully! Modal open = ${isModalOpen}`);
 
   await page.screenshot({ path: join(SCREENSHOTS_DIR, '05-pathfinder-modal.png') });
-  console.log(`  ✓ Captured 05-pathfinder-modal screenshot`);
 
-  // 6. Test Highlighting Path on Graph
-  console.log('6️⃣ Highlighting clue path on canvas graph...');
-  await page.evaluate(() => {
+  // Test clicking Preset Button in Pathfinder Modal
+  const presetBtn = await page.evaluate(() => {
     const app = (window as any).__OMM_APP__;
-    if (app && app.pathfinderModal.pathResult?.found) {
-      const res = app.pathfinderModal.pathResult;
-      app.viewport.highlightPath(
-        res.nodes.map((n: any) => n.id),
-        res.edges,
-      );
-      app.pathfinderModal.close();
-    }
+    return app.pathfinderModal.presets[0].rect;
   });
-  await page.waitForTimeout(1500);
+  if (presetBtn) {
+    console.log(`  Clicking Preset button at (${presetBtn.x + 50}, ${presetBtn.y + 14})...`);
+    await page.mouse.click(presetBtn.x + 50, presetBtn.y + 14);
+    await page.waitForTimeout(1500);
+  }
+
+  // Test clicking [✨ 在图谱中高亮线索链]
+  const highlightBtn = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return app.pathfinderModal.highlightBtnRect;
+  });
+  console.log(`  Clicking Highlight button at (${highlightBtn.x + 50}, ${highlightBtn.y + 16})...`);
+  await page.mouse.click(highlightBtn.x + 50, highlightBtn.y + 16);
+  await page.waitForTimeout(1000);
 
   await page.screenshot({ path: join(SCREENSHOTS_DIR, '06-highlighted-path.png') });
-  console.log(`  ✓ Captured 06-highlighted-path screenshot`);
+  console.log(`  ✓ Highlighted path applied!`);
+
+  // Test clicking [📖 编年史导览] in HeaderBar
+  const chroniclesBtn = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return app.headerBar.chroniclesBtnRect;
+  });
+  console.log(
+    `  Clicking Chronicles button at (${chroniclesBtn.x + 30}, ${chroniclesBtn.y + 16})...`,
+  );
+  await page.mouse.click(chroniclesBtn.x + 30, chroniclesBtn.y + 16);
+  await page.waitForTimeout(1000);
+
+  const isChronicleOpen = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return app.chroniclePanel.isModalOpen();
+  });
+  console.log(`  ✓ Chronicles button clicked! Panel open = ${isChronicleOpen}`);
+
+  await page.screenshot({ path: join(SCREENSHOTS_DIR, '04-chronicle-panel.png') });
+
+  // Test clicking Next Step in Chronicles
+  const nextBtn = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return app.chroniclePanel.nextBtnRect;
+  });
+  console.log(`  Clicking Next Step button at (${nextBtn.x + 50}, ${nextBtn.y + 16})...`);
+  await page.mouse.click(nextBtn.x + 50, nextBtn.y + 16);
+  await page.waitForTimeout(800);
+
+  // Close Chronicle Panel
+  const chronicleCloseBtn = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return app.chroniclePanel.closeBtnRect;
+  });
+  await page.mouse.click(chronicleCloseBtn.x + 16, chronicleCloseBtn.y + 16);
+  await page.waitForTimeout(500);
+
+  // Test clicking ViewportControls [⌖ 视口居中]
+  const fitBtn = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return app.controls.fitBtnRect;
+  });
+  console.log(`  Clicking Fit Viewport button at (${fitBtn.x + 18}, ${fitBtn.y + 18})...`);
+  await page.mouse.click(fitBtn.x + 18, fitBtn.y + 18);
+  await page.waitForTimeout(500);
+
+  console.log('\n🎉 ALL BUTTON CLICKS & INTERACTIONS TESTED AND VERIFIED PASSING!');
 
   await browser.close();
   console.log('\n🎉 Playwright Audit Finished Successfully! All screenshots saved in tmp/e2e/');

@@ -15,12 +15,26 @@ interface NodeScreenBadge {
   pillH: number;
 }
 
+interface CachedPillInfo {
+  name: string;
+  icon: string;
+  displayText: string;
+  pillW: number;
+  pillH: number;
+  isAuthor: boolean;
+  typeColor: string;
+}
+
+const _projVec = new THREE.Vector3();
+
 export class GraphOverlayLayer extends Entity {
   private viewport: GraphViewport;
   private hoveredEntity: KgEntity | null = null;
   private pulsePhase = 0;
   private ripplePhase = 0;
   private nodeBadges: NodeScreenBadge[] = [];
+  private badgePool: NodeScreenBadge[] = [];
+  private pillCache = new Map<string, CachedPillInfo>();
 
   constructor(viewport: GraphViewport) {
     super();
@@ -54,6 +68,46 @@ export class GraphOverlayLayer extends Entity {
     return null;
   }
 
+  private getCachedPill(ctx: CanvasRenderingContext2D, e: KgEntity): CachedPillInfo {
+    const id = String(e.id);
+    let cached = this.pillCache.get(id);
+    if (cached) return cached;
+
+    const labels = e.labels || (e as any).names?.labels || {};
+    const name =
+      (e as any).name || labels.zh || labels['zh-cn'] || labels.ja || labels.en || labels[''] || id;
+    const type = e.type || 'author';
+    const isAuthor = type === 'author';
+    const icon =
+      type === 'author'
+        ? '✒️'
+        : type === 'work'
+          ? '📖'
+          : type === 'award'
+            ? '🏆'
+            : type === 'character'
+              ? '🔍'
+              : '🔹';
+
+    const displayText = `${icon} ${name}`;
+    ctx.font = isAuthor ? `700 12px ${Theme.fonts.serif}` : `600 11px ${Theme.fonts.sans}`;
+    const textMetrics = ctx.measureText(displayText);
+    const pillW = Math.round(textMetrics.width + 20);
+    const pillH = isAuthor ? 24 : 20;
+
+    cached = {
+      name,
+      icon,
+      displayText,
+      pillW,
+      pillH,
+      isAuthor,
+      typeColor: Theme.getNodeColor(type),
+    };
+    this.pillCache.set(id, cached);
+    return cached;
+  }
+
   render(renderer: any): void {
     const ctx = getCanvasCtx(renderer);
     const camera = this.viewport.getCamera();
@@ -69,11 +123,19 @@ export class GraphOverlayLayer extends Entity {
     const h = this.scene.height;
     const nodeCount = entities.length;
 
-    this.nodeBadges = [];
+    // Reset badge list using pooled objects to prevent GC allocations
+    this.nodeBadges.length = 0;
+    let badgeIndex = 0;
 
-    // 1. Draw Gravitational Pulse Waves for Master Authors
-    ctx.save();
-    for (let i = 0; i < Math.min(8, nodeCount); i++) {
+    // 1. Draw Gravitational Pulse Waves for Top Master Authors (Limited to 4 for optimal performance)
+    const masterLimit = Math.min(4, nodeCount);
+    const rippleR = 14 + this.ripplePhase * 28;
+    const rippleAlpha = (1 - this.ripplePhase) * 0.45;
+    ctx.strokeStyle = `rgba(255, 217, 142, ${rippleAlpha.toFixed(3)})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+
+    for (let i = 0; i < masterLimit; i++) {
       const e = entities[i]!;
       if (e.type !== 'author') continue;
 
@@ -81,163 +143,155 @@ export class GraphOverlayLayer extends Entity {
       const y = positions[i * 3 + 1]!;
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
 
-      const v = new THREE.Vector3(x, y, 0);
-      v.project(camera);
-      const sx = ((v.x + 1) / 2) * w;
-      const sy = ((-v.y + 1) / 2) * h;
+      _projVec.set(x, y, 0).project(camera);
+      const sx = ((_projVec.x + 1) / 2) * w;
+      const sy = ((-_projVec.y + 1) / 2) * h;
       if (sx < -50 || sx > w + 50 || sy < 64 || sy > h + 50) continue;
 
-      // Expanding wave ring
-      const rippleR = 14 + this.ripplePhase * 28;
-      const rippleAlpha = (1 - this.ripplePhase) * 0.45;
-      ctx.strokeStyle = `rgba(255, 217, 142, ${rippleAlpha.toFixed(3)})`;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
+      ctx.moveTo(sx + rippleR, sy);
       ctx.arc(sx, sy, rippleR, 0, Math.PI * 2);
-      ctx.stroke();
     }
-    ctx.restore();
+    ctx.stroke();
 
-    // 2. Draw Node Labels & Badges with Smart LOD
-    ctx.save();
+    // 2. Draw Node Labels & Badges with Smart LOD and zero GC allocation
+    let hoveredData: { entity: KgEntity; sx: number; sy: number } | null = null;
+
     for (let i = 0; i < nodeCount; i++) {
       const e = entities[i]!;
       const x = positions[i * 3]!;
       const y = positions[i * 3 + 1]!;
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
 
-      // Project world coords to screen
-      const v = new THREE.Vector3(x, y, 0);
-      v.project(camera);
-
-      const sx = ((v.x + 1) / 2) * w;
-      const sy = ((-v.y + 1) / 2) * h;
+      // Project world coords to screen using reusable vector
+      _projVec.set(x, y, 0).project(camera);
+      const sx = ((_projVec.x + 1) / 2) * w;
+      const sy = ((-_projVec.y + 1) / 2) * h;
 
       // Skip offscreen or under-header nodes
       if (sx < -100 || sx > w + 100 || sy < 64 || sy > h + 50) continue;
 
-      const labels = e.labels || (e as any).names?.labels || {};
-      const name =
-        (e as any).name ||
-        labels.zh ||
-        labels['zh-cn'] ||
-        labels.ja ||
-        labels.en ||
-        labels[''] ||
-        e.id;
-      const type = e.type || 'author';
       const isHovered = this.hoveredEntity && this.hoveredEntity.id === e.id;
-      const typeColor = Theme.getNodeColor(type);
-
-      const isAuthor = type === 'author';
-      const showFullBadge = isAuthor || isHovered || nodeCount <= 35;
-
-      const icon =
-        type === 'author'
-          ? '✒️'
-          : type === 'work'
-            ? '📖'
-            : type === 'award'
-              ? '🏆'
-              : type === 'character'
-                ? '🔍'
-                : '🔹';
-
-      // Glowing Aura & Loupe Crosshair on Hover
       if (isHovered) {
-        const pulse = Math.sin(this.pulsePhase) * 4 + 22;
-        ctx.save();
-        ctx.strokeStyle = Theme.colors.borderActive;
-        ctx.lineWidth = 2;
-        ctx.shadowColor = Theme.colors.borderActive;
-        ctx.shadowBlur = 20;
-
-        // Outer Loupe Reticle
-        ctx.beginPath();
-        ctx.arc(sx, sy, pulse, 0, Math.PI * 2);
-        ctx.stroke();
-
-        // Crosshair Ticks
-        ctx.beginPath();
-        ctx.moveTo(sx - pulse - 6, sy);
-        ctx.lineTo(sx - pulse + 2, sy);
-        ctx.moveTo(sx + pulse - 2, sy);
-        ctx.lineTo(sx + pulse + 6, sy);
-        ctx.moveTo(sx, sy - pulse - 6);
-        ctx.lineTo(sx, sy - pulse + 2);
-        ctx.moveTo(sx, sy + pulse - 2);
-        ctx.lineTo(sx, sy + pulse + 6);
-        ctx.stroke();
-        ctx.restore();
+        hoveredData = { entity: e, sx, sy };
       }
 
+      const pillInfo = this.getCachedPill(ctx, e);
+      const showFullBadge = pillInfo.isAuthor || isHovered || nodeCount <= 40;
+
       if (showFullBadge) {
-        // Nameplate Pill
-        ctx.font = isAuthor ? `700 12px ${Theme.fonts.serif}` : `600 11px ${Theme.fonts.sans}`;
-        const displayText = `${icon} ${name}`;
-        const textMetrics = ctx.measureText(displayText);
-        const pillW = Math.round(textMetrics.width + 20);
-        const pillH = isAuthor ? 24 : 20;
+        const pillW = pillInfo.pillW;
+        const pillH = pillInfo.pillH;
         const pillX = Math.round(sx - pillW / 2);
-        const pillY = Math.round(sy + (isAuthor ? 14 : 10));
+        const pillY = Math.round(sy + (pillInfo.isAuthor ? 14 : 10));
 
-        this.nodeBadges.push({
-          id: String(e.id),
-          entity: e,
-          sx,
-          sy,
-          pillX,
-          pillY,
-          pillW,
-          pillH,
-        });
+        let badge = this.badgePool[badgeIndex];
+        if (!badge) {
+          badge = {
+            id: String(e.id),
+            entity: e,
+            sx,
+            sy,
+            pillX,
+            pillY,
+            pillW,
+            pillH,
+          };
+          this.badgePool[badgeIndex] = badge;
+        } else {
+          badge.id = String(e.id);
+          badge.entity = e;
+          badge.sx = sx;
+          badge.sy = sy;
+          badge.pillX = pillX;
+          badge.pillY = pillY;
+          badge.pillW = pillW;
+          badge.pillH = pillH;
+        }
+        this.nodeBadges.push(badge);
+        badgeIndex++;
 
-        // Pill Background (Luminous Warm Lacquer with Depth)
-        ctx.save();
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
-        ctx.shadowBlur = 10;
-        ctx.shadowOffsetY = 2;
-
+        // Fast Pill Fill without multi-pass Gaussian blur
         ctx.fillStyle = isHovered
           ? Theme.colors.bgCardHover
-          : isAuthor
+          : pillInfo.isAuthor
             ? Theme.colors.bgCard
             : Theme.colors.bgParchmentDark;
         ctx.beginPath();
         ctx.roundRect(pillX, pillY, pillW, pillH, 5);
         ctx.fill();
 
-        // Pill Border with Bright Gold Foil
-        ctx.strokeStyle = isHovered ? Theme.colors.borderActive : typeColor;
-        ctx.lineWidth = isHovered ? 2.0 : 1.2;
+        // Crisp Border
+        ctx.strokeStyle = isHovered ? Theme.colors.borderActive : pillInfo.typeColor;
+        ctx.lineWidth = isHovered ? 2.0 : 1.0;
         ctx.stroke();
-        ctx.restore();
 
         // Label Text
+        ctx.font = pillInfo.isAuthor
+          ? `700 12px ${Theme.fonts.serif}`
+          : `600 11px ${Theme.fonts.sans}`;
         ctx.fillStyle = isHovered ? Theme.colors.borderActive : Theme.colors.textHigh;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillText(displayText, pillX + 10, pillY + pillH / 2);
+        ctx.fillText(pillInfo.displayText, pillX + 10, pillY + pillH / 2);
       } else {
-        // Compact bead registry for hover hit testing
-        this.nodeBadges.push({
-          id: String(e.id),
-          entity: e,
-          sx,
-          sy,
-          pillX: sx - 12,
-          pillY: sy - 12,
-          pillW: 24,
-          pillH: 24,
-        });
-      }
-
-      // Hovered Magnifying Detail Card
-      if (isHovered) {
-        this.renderHoverCard(ctx, e, sx, sy);
+        // Compact bead for hover hit testing
+        let badge = this.badgePool[badgeIndex];
+        if (!badge) {
+          badge = {
+            id: String(e.id),
+            entity: e,
+            sx,
+            sy,
+            pillX: sx - 12,
+            pillY: sy - 12,
+            pillW: 24,
+            pillH: 24,
+          };
+          this.badgePool[badgeIndex] = badge;
+        } else {
+          badge.id = String(e.id);
+          badge.entity = e;
+          badge.sx = sx;
+          badge.sy = sy;
+          badge.pillX = sx - 12;
+          badge.pillY = sy - 12;
+          badge.pillW = 24;
+          badge.pillH = 24;
+        }
+        this.nodeBadges.push(badge);
+        badgeIndex++;
       }
     }
-    ctx.restore();
+
+    // 3. Render Hover Effects (Crosshairs & Detail Card) only once if hovered
+    if (hoveredData) {
+      const { entity: e, sx, sy } = hoveredData;
+      const pulse = Math.sin(this.pulsePhase) * 4 + 22;
+
+      ctx.save();
+      ctx.strokeStyle = Theme.colors.borderActive;
+      ctx.lineWidth = 2;
+
+      // Outer Loupe Reticle
+      ctx.beginPath();
+      ctx.arc(sx, sy, pulse, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Crosshair Ticks
+      ctx.beginPath();
+      ctx.moveTo(sx - pulse - 6, sy);
+      ctx.lineTo(sx - pulse + 2, sy);
+      ctx.moveTo(sx + pulse - 2, sy);
+      ctx.lineTo(sx + pulse + 6, sy);
+      ctx.moveTo(sx, sy - pulse - 6);
+      ctx.lineTo(sx, sy - pulse + 2);
+      ctx.moveTo(sx, sy + pulse - 2);
+      ctx.lineTo(sx, sy + pulse + 6);
+      ctx.stroke();
+
+      this.renderHoverCard(ctx, e, sx, sy);
+      ctx.restore();
+    }
   }
 
   private renderHoverCard(
@@ -248,54 +302,66 @@ export class GraphOverlayLayer extends Entity {
   ): void {
     const cardW = 230;
     const cardH = 92;
-    const cardX = Math.round(Math.min(this.scene.width - cardW - 20, Math.max(20, sx + 26)));
-    const cardY = Math.round(Math.min(this.scene.height - cardH - 20, Math.max(80, sy - 100)));
+    const padding = 14;
 
-    ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
-    ctx.shadowBlur = 28;
+    const w = this.scene.width;
+    const h = this.scene.height;
 
-    // Card background
-    ctx.fillStyle = Theme.colors.bgCard;
+    // Smart positioning: flip if too close to right or bottom edges
+    let cardX = sx + 24;
+    let cardY = sy - 46;
+
+    if (cardX + cardW > w - 20) {
+      cardX = sx - cardW - 24;
+    }
+    if (cardY + cardH > h - 20) {
+      cardY = h - cardH - 20;
+    }
+    if (cardY < 70) {
+      cardY = 70;
+    }
+
+    // Card Background Box
+    ctx.fillStyle = 'rgba(40, 31, 24, 0.94)';
     ctx.beginPath();
     ctx.roundRect(cardX, cardY, cardW, cardH, 8);
     ctx.fill();
 
-    ctx.strokeStyle = Theme.colors.borderActive;
-    ctx.lineWidth = 1.8;
+    // Gold Border
+    ctx.strokeStyle = Theme.colors.borderHighlight;
+    ctx.lineWidth = 1.5;
     ctx.stroke();
-    ctx.restore();
 
-    // Type Badge
-    const typeLabel = Theme.getNodeTypeLabel(entity.type);
-    ctx.fillStyle = Theme.getNodeColor(entity.type);
-    ctx.beginPath();
-    ctx.roundRect(cardX + 12, cardY + 12, 72, 22, 4);
-    ctx.fill();
-
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = `700 10px ${Theme.fonts.sans}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(typeLabel.split(' / ')[0]!, cardX + 48, cardY + 23);
-
-    // Primary Name
     const labels = entity.labels || (entity as any).names?.labels || {};
     const name =
       (entity as any).name || labels.zh || labels['zh-cn'] || labels.ja || labels.en || entity.id;
+    const type = entity.type || 'author';
+    const typeZh = Theme.getNodeTypeLabel(type);
+
+    // Title
     ctx.fillStyle = Theme.colors.textHigh;
-    ctx.font = `700 15px ${Theme.fonts.serif}`;
+    ctx.font = `700 13px ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(name, cardX + 92, cardY + 14);
+    ctx.fillText(name, cardX + padding, cardY + padding);
 
-    // Tip Hint
-    ctx.fillStyle = Theme.colors.borderActive;
+    // Subtitle / Type badge
+    ctx.fillStyle = Theme.getNodeColor(type);
     ctx.font = `600 11px ${Theme.fonts.sans}`;
-    ctx.fillText('⚡ 单击节点：展开 1-Hop 案卷', cardX + 12, cardY + 44);
+    ctx.fillText(typeZh, cardX + padding, cardY + padding + 20);
 
-    ctx.fillStyle = Theme.colors.textMid;
-    ctx.font = `400 11px ${Theme.fonts.sans}`;
-    ctx.fillText('🖱️ 拖拽画布自由探索 / 滚轮缩放', cardX + 12, cardY + 66);
+    // Coordinate Telemetry
+    ctx.fillStyle = Theme.colors.textLow;
+    ctx.font = `400 10px ${Theme.fonts.sans}`;
+    ctx.fillText(
+      `ID: ${entity.id} • 坐标 (${Math.round(sx)}, ${Math.round(sy)})`,
+      cardX + padding,
+      cardY + padding + 38,
+    );
+
+    // Bottom Action Hint
+    ctx.fillStyle = Theme.colors.borderHighlight;
+    ctx.font = `600 10px ${Theme.fonts.sans}`;
+    ctx.fillText('💡 单击查看完整案卷 • 双击展开关联谱系', cardX + padding, cardY + cardH - 18);
   }
 }

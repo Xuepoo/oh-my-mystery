@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { GraphViewport } from '../scene/GraphViewport';
-import { getCanvasCtx, Theme } from './theme';
+import { getCanvasCtx, getEventCoords, Theme } from './theme';
 
 export class ViewportControls extends Entity {
   private viewport: GraphViewport;
@@ -16,7 +16,8 @@ export class ViewportControls extends Entity {
     this.viewport = viewport;
 
     this.on('pointerdown', (e: any) => {
-      this.handleClick(e.clientX, e.clientY);
+      const { x, y } = getEventCoords(e);
+      this.handleClick(x, y);
     });
   }
 
@@ -70,21 +71,22 @@ export class ViewportControls extends Entity {
     ctx.restore();
   }
 
-  private handleClick(clientX: number, clientY: number): void {
+  public handleClick(clientX: number, clientY: number): boolean {
     if (this.isInRect(clientX, clientY, this.fitBtnRect)) {
       this.viewport.fitToView();
-      return;
+      return true;
     }
 
     if (this.isInRect(clientX, clientY, this.freezeBtnRect)) {
       this.viewport.freeze(!this.viewport.isPhysicsFrozen());
-      return;
+      return true;
     }
 
     if (this.isInRect(clientX, clientY, this.resetBtnRect)) {
       this.viewport.resetZoom();
-      return;
+      return true;
     }
+    return false;
   }
 
   private isInRect(

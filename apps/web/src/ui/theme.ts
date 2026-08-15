@@ -109,3 +109,28 @@ export function getCanvasCtx(r: any): CanvasRenderingContext2D {
   }
   return r as CanvasRenderingContext2D;
 }
+
+export function getEventCoords(e: any): { x: number; y: number } {
+  if (!e) return { x: 0, y: 0 };
+  const x =
+    typeof e.x === 'number'
+      ? e.x
+      : typeof e.sceneX === 'number'
+        ? e.sceneX
+        : typeof e.clientX === 'number'
+          ? e.clientX
+          : typeof e.rawEvent?.clientX === 'number'
+            ? e.rawEvent.clientX
+            : 0;
+  const y =
+    typeof e.y === 'number'
+      ? e.y
+      : typeof e.sceneY === 'number'
+        ? e.sceneY
+        : typeof e.clientY === 'number'
+          ? e.clientY
+          : typeof e.rawEvent?.clientY === 'number'
+            ? e.rawEvent.clientY
+            : 0;
+  return { x, y };
+}

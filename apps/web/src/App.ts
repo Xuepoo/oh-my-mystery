@@ -156,9 +156,34 @@ export class App {
       dragStartX = x;
       dragStartY = y;
 
-      if (!this.isUIHovered(x, y)) {
-        this.graphCanvas.dispatchEvent(new PointerEvent('pointerdown', e));
+      // 1. Direct Dispatch to UI Components when clicking UI areas
+      if (this.pathfinderModal.isModalOpen()) {
+        this.pathfinderModal.handleClick(x, y);
+        return;
       }
+      if (this.chroniclePanel.isModalOpen()) {
+        this.chroniclePanel.handleClick(x, y);
+        return;
+      }
+      if (this.drawer.isDrawerOpen() && this.drawer.isPointInside(x, y)) {
+        this.drawer.handleClick(x, y);
+        return;
+      }
+      if (this.headerBar.isPointInside(x, y)) {
+        this.headerBar.handleClick(x, y);
+        return;
+      }
+      if (this.controls.isPointInside(x, y)) {
+        this.controls.handleClick(x, y);
+        return;
+      }
+      if (this.minimap.isPointInside(x, y)) {
+        this.minimap.handleClick(x, y);
+        return;
+      }
+
+      // 2. Forward to 3D graph canvas for panning
+      this.graphCanvas.dispatchEvent(new PointerEvent('pointerdown', e));
     });
 
     this.uiCanvas.addEventListener('pointermove', (e: PointerEvent) => {
@@ -188,6 +213,9 @@ export class App {
           const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
           if (hitNode) {
             void this.handleSelectNode(String(hitNode.id));
+          } else if (this.drawer.isDrawerOpen()) {
+            // Click outside drawer closes drawer
+            this.drawer.close();
           }
         }
         this.graphCanvas.dispatchEvent(new PointerEvent('pointerup', e));
@@ -199,6 +227,10 @@ export class App {
       (e: WheelEvent) => {
         const x = e.clientX;
         const y = e.clientY;
+        if (this.drawer.isDrawerOpen() && this.drawer.isPointInside(x, y)) {
+          // Handled in drawer
+          return;
+        }
         if (!this.isUIHovered(x, y)) {
           this.graphCanvas.dispatchEvent(new WheelEvent('wheel', e));
         }

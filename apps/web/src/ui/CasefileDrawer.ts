@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { EntityDetailResponse } from '@omm/shared';
-import { getCanvasCtx, Theme } from './theme';
+import { getCanvasCtx, getEventCoords, Theme } from './theme';
 
 export interface CasefileDrawerOptions {
   onClose: () => void;
@@ -36,12 +36,14 @@ export class CasefileDrawer extends Entity {
 
     this.on('pointerdown', (e: any) => {
       if (!this.isOpen) return;
-      this.handleClick(e.clientX, e.clientY);
+      const { x, y } = getEventCoords(e);
+      this.handleClick(x, y);
     });
 
     this.on('wheel', (e: any) => {
       if (!this.isOpen) return;
-      this.scrollY = Math.max(0, Math.min(this.maxScrollY, this.scrollY + e.deltaY * 0.6));
+      const delta = e.deltaY ?? e.rawEvent?.deltaY ?? 0;
+      this.scrollY = Math.max(0, Math.min(this.maxScrollY, this.scrollY + delta * 0.6));
     });
   }
 
@@ -342,13 +344,13 @@ export class CasefileDrawer extends Entity {
     this.maxScrollY = Math.max(0, curY + this.scrollY - drawerHeight + 40);
   }
 
-  private handleClick(clientX: number, clientY: number): void {
-    if (!this.details) return;
+  public handleClick(clientX: number, clientY: number): boolean {
+    if (!this.isOpen || !this.details) return false;
 
     // Check Close button
     if (this.isInRect(clientX, clientY, this.closeBtnRect)) {
       this.close();
-      return;
+      return true;
     }
 
     // Check Pathfinder button
@@ -356,22 +358,23 @@ export class CasefileDrawer extends Entity {
       const labels = this.details.entity.names?.labels || {};
       const name = labels.zh || labels['zh-cn'] || labels.en || this.details.entity.id;
       this.onStartPathfinderCb(this.details.entity.id, name);
-      return;
+      return true;
     }
 
     // Check Expand button
     if (this.isInRect(clientX, clientY, this.expandBtnRect)) {
       this.onExpandNodeCb(this.details.entity.id);
-      return;
+      return true;
     }
 
     // Check Recommendation cards
     for (const rect of this.recItemRects) {
       if (this.isInRect(clientX, clientY, rect)) {
         this.onSelectEntityCb(rect.id);
-        return;
+        return true;
       }
     }
+    return false;
   }
 
   private isInRect(

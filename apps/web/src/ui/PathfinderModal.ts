@@ -1,7 +1,7 @@
 import { Entity } from '@vectojs/core';
 import type { PathfinderResult } from '@omm/shared';
 import type { D1DataSource } from '../api/D1DataSource';
-import { getCanvasCtx, Theme } from './theme';
+import { getCanvasCtx, getEventCoords, Theme } from './theme';
 
 export interface PathfinderModalOptions {
   source: D1DataSource;
@@ -78,7 +78,8 @@ export class PathfinderModal extends Entity {
 
     this.on('pointerdown', (e: any) => {
       if (!this.isOpen) return;
-      this.handleClick(e.clientX, e.clientY);
+      const { x, y } = getEventCoords(e);
+      this.handleClick(x, y);
     });
   }
 
@@ -388,10 +389,12 @@ export class PathfinderModal extends Entity {
     }
   }
 
-  private handleClick(clientX: number, clientY: number): void {
+  public handleClick(clientX: number, clientY: number): boolean {
+    if (!this.isOpen) return false;
+
     if (this.isInRect(clientX, clientY, this.closeBtnRect)) {
       this.close();
-      return;
+      return true;
     }
 
     // Check Preset buttons
@@ -402,21 +405,23 @@ export class PathfinderModal extends Entity {
         this.targetId = p.targetId;
         this.targetName = p.targetName;
         void this.executeSearch();
-        return;
+        return true;
       }
     }
 
     if (this.isInRect(clientX, clientY, this.runBtnRect)) {
       void this.executeSearch();
-      return;
+      return true;
     }
 
     if (this.isInRect(clientX, clientY, this.highlightBtnRect) && this.pathResult?.found) {
       const nodeIds = this.pathResult.nodes.map((n) => n.id);
       this.onHighlightPathCb(nodeIds, this.pathResult.edges);
       this.close();
-      return;
+      return true;
     }
+
+    return true; // Click inside modal absorbed
   }
 
   private isInRect(

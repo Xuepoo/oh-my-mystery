@@ -16,12 +16,15 @@ export class BackgroundLayer extends Entity {
   private mouseX = -1000;
   private mouseY = -1000;
   private time = 0;
+  private cachedCanvas: HTMLCanvasElement | null = null;
+  private cachedW = 0;
+  private cachedH = 0;
 
   constructor() {
     super();
     this.id = 'background-layer';
     this.interactive = false;
-    this.initParticles(45);
+    this.initParticles(24);
 
     // Track mouse for particle interaction
     window.addEventListener('pointermove', (e) => {
@@ -33,14 +36,15 @@ export class BackgroundLayer extends Entity {
   private initParticles(count: number): void {
     const w = typeof window !== 'undefined' ? window.innerWidth : 1920;
     const h = typeof window !== 'undefined' ? window.innerHeight : 1080;
+    this.particles = [];
     for (let i = 0; i < count; i++) {
       this.particles.push({
         x: Math.random() * w,
         y: Math.random() * h,
-        vx: (Math.random() - 0.5) * 0.4,
-        vy: (Math.random() - 0.5) * 0.3 - 0.15, // gentle upward drift
-        size: Math.random() * 2.2 + 1.0,
-        alpha: Math.random() * 0.6 + 0.2,
+        vx: (Math.random() - 0.5) * 0.3,
+        vy: (Math.random() - 0.5) * 0.2 - 0.1, // gentle upward drift
+        size: Math.random() * 2.0 + 1.0,
+        alpha: Math.random() * 0.5 + 0.2,
         phase: Math.random() * Math.PI * 2,
       });
     }
@@ -50,11 +54,21 @@ export class BackgroundLayer extends Entity {
     return false;
   }
 
-  render(renderer: any) {
-    const ctx = getCanvasCtx(renderer);
-    const w = this.scene.width;
-    const h = this.scene.height;
-    this.time += 0.025;
+  private updateCache(w: number, h: number): void {
+    if (this.cachedCanvas && this.cachedW === w && this.cachedH === h) {
+      return;
+    }
+
+    if (!this.cachedCanvas) {
+      this.cachedCanvas = document.createElement('canvas');
+    }
+    this.cachedCanvas.width = w;
+    this.cachedCanvas.height = h;
+    this.cachedW = w;
+    this.cachedH = h;
+
+    const ctx = this.cachedCanvas.getContext('2d');
+    if (!ctx) return;
 
     // 1. Warm Antique Mahogany Parchment Gradient
     const cx = w / 2;
@@ -71,8 +85,7 @@ export class BackgroundLayer extends Entity {
 
     // 2. Subtle Vintage Chart Coordinate Grid
     const gridSize = 64;
-    ctx.save();
-    ctx.strokeStyle = 'rgba(243, 196, 118, 0.06)';
+    ctx.strokeStyle = 'rgba(243, 196, 118, 0.05)';
     ctx.lineWidth = 1;
 
     ctx.beginPath();
@@ -87,18 +100,18 @@ export class BackgroundLayer extends Entity {
     ctx.stroke();
 
     // 3. Ruler Ticks along Borders (Antique Map Scale)
-    ctx.strokeStyle = 'rgba(243, 196, 118, 0.22)';
+    ctx.strokeStyle = 'rgba(243, 196, 118, 0.2)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = 40; x < w - 40; x += 16) {
-      const tickH = x % 80 === 0 ? 9 : 5;
+      const tickH = x % 80 === 0 ? 8 : 4;
       ctx.moveTo(x, 0);
       ctx.lineTo(x, tickH);
       ctx.moveTo(x, h);
       ctx.lineTo(x, h - tickH);
     }
     for (let y = 40; y < h - 40; y += 16) {
-      const tickW = y % 80 === 0 ? 9 : 5;
+      const tickW = y % 80 === 0 ? 8 : 4;
       ctx.moveTo(0, y);
       ctx.lineTo(tickW, y);
       ctx.moveTo(w, y);
@@ -113,7 +126,7 @@ export class BackgroundLayer extends Entity {
     this.drawCornerFiligree(ctx, w - 28, h - 28, -1, -1); // Bottom-Right
 
     // 5. Watermark Stamp (Bottom Center)
-    ctx.fillStyle = 'rgba(243, 196, 118, 0.25)';
+    ctx.fillStyle = 'rgba(243, 196, 118, 0.22)';
     ctx.font = `700 11px ${Theme.fonts.sans}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
@@ -122,14 +135,25 @@ export class BackgroundLayer extends Entity {
       w / 2,
       h - 16,
     );
+  }
 
-    // 6. Astrolabe & Compass Rose in Lower Right
+  render(renderer: any) {
+    const ctx = getCanvasCtx(renderer);
+    const w = this.scene.width;
+    const h = this.scene.height;
+    this.time += 0.025;
+
+    // 1. Blit pre-rendered static background in 0.02ms
+    this.updateCache(w, h);
+    if (this.cachedCanvas) {
+      ctx.drawImage(this.cachedCanvas, 0, 0);
+    }
+
+    // 2. Animated Astrolabe & Compass Rose in Lower Right
     this.drawAstrolabe(ctx, w - 170, h - 150, 72);
 
-    // 7. Floating Golden Dust Embers
+    // 3. Floating Golden Dust Embers
     this.renderParticles(ctx, w, h);
-
-    ctx.restore();
   }
 
   private drawCornerFiligree(
@@ -152,16 +176,18 @@ export class BackgroundLayer extends Entity {
     ctx.lineTo(32, 0);
     ctx.stroke();
 
-    // Filigree Flourish Curve
+    // Filigree Flourish Spiral (卷草花纹)
     ctx.beginPath();
-    ctx.moveTo(6, 26);
-    ctx.quadraticCurveTo(6, 6, 26, 6);
+    ctx.moveTo(0, 16);
+    ctx.bezierCurveTo(8, 16, 16, 8, 16, 0);
+    ctx.moveTo(0, 24);
+    ctx.bezierCurveTo(14, 24, 24, 14, 24, 0);
     ctx.stroke();
 
-    // Corner Accent Dot
+    // Corner Diamond Dot
     ctx.fillStyle = Theme.colors.borderActive;
     ctx.beginPath();
-    ctx.arc(10, 10, 2, 0, Math.PI * 2);
+    ctx.arc(6, 6, 2, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
@@ -169,74 +195,82 @@ export class BackgroundLayer extends Entity {
 
   private drawAstrolabe(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
     ctx.save();
-    ctx.strokeStyle = 'rgba(243, 196, 118, 0.16)';
-    ctx.lineWidth = 1;
+    ctx.translate(cx, cy);
 
-    // Rotating Outer and Inner Astrolabe Rings
+    // Outer Calibrated Ring
+    ctx.strokeStyle = 'rgba(243, 196, 118, 0.16)';
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.arc(cx, cy, r * 0.7, 0, Math.PI * 2);
-    ctx.arc(cx, cy, r * 0.35, 0, Math.PI * 2);
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.stroke();
 
-    // 8-Point Compass Star with slow rotation
-    const rot = this.time * 0.08;
+    // Inner Ring
+    ctx.strokeStyle = 'rgba(243, 196, 118, 0.1)';
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.72, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Rotating 8-Point Compass Star
+    const rot = this.time * 0.25;
+    ctx.rotate(rot);
+
+    ctx.strokeStyle = 'rgba(243, 196, 118, 0.22)';
+    ctx.lineWidth = 1;
     ctx.beginPath();
     for (let i = 0; i < 8; i++) {
-      const angle = (i * Math.PI) / 4 + rot;
-      const isMain = i % 2 === 0;
-      const length = isMain ? r : r * 0.65;
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Math.cos(angle) * length, cy + Math.sin(angle) * length);
+      const angle = (i * Math.PI) / 4;
+      const armLen = i % 2 === 0 ? r * 0.65 : r * 0.42;
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(angle) * armLen, Math.sin(angle) * armLen);
     }
     ctx.stroke();
 
-    // Orbiting bead
-    const orbitAngle = this.time * 0.25;
-    const obX = cx + Math.cos(orbitAngle) * r * 0.7;
-    const obY = cy + Math.sin(orbitAngle) * r * 0.7;
-    ctx.fillStyle = Theme.colors.borderActive;
+    // Orbiting celestial marker bead
+    const orbAngle = this.time * 0.6;
+    const orbX = Math.cos(orbAngle) * (r * 0.72);
+    const orbY = Math.sin(orbAngle) * (r * 0.72);
+    ctx.fillStyle = Theme.colors.borderHighlight;
     ctx.beginPath();
-    ctx.arc(obX, obY, 2.5, 0, Math.PI * 2);
+    ctx.arc(orbX, orbY, 2.5, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
   }
 
   private renderParticles(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-    for (const p of this.particles) {
-      // Mouse avoidance
+    ctx.save();
+    for (let i = 0; i < this.particles.length; i++) {
+      const p = this.particles[i]!;
+
+      // Mouse repulsion impulse
       const dx = p.x - this.mouseX;
       const dy = p.y - this.mouseY;
       const distSq = dx * dx + dy * dy;
-      if (distSq < 14400 && distSq > 0) {
-        // 120px radius
-        const dist = Math.sqrt(distSq);
-        const force = (120 - dist) / 120;
-        p.x += (dx / dist) * force * 1.8;
-        p.y += (dy / dist) * force * 1.8;
+      if (distSq < 10000 && distSq > 1) {
+        const force = (1 - distSq / 10000) * 1.5;
+        p.vx += (dx / Math.sqrt(distSq)) * force;
+        p.vy += (dy / Math.sqrt(distSq)) * force;
       }
 
+      // Linear motion and damping
       p.x += p.vx;
       p.y += p.vy;
+      p.vx *= 0.95;
+      p.vy = p.vy * 0.95 - 0.008; // upward buoyancy
 
-      // Wrap boundaries
+      // Wrap around bounds
       if (p.x < 0) p.x = w;
       if (p.x > w) p.x = 0;
       if (p.y < 0) p.y = h;
       if (p.y > h) p.y = 0;
 
-      // Shimmering alpha
-      const alpha = p.alpha * (0.6 + 0.4 * Math.sin(this.time * 2 + p.phase));
-
-      ctx.save();
-      ctx.fillStyle = `rgba(255, 217, 142, ${alpha.toFixed(3)})`;
-      ctx.shadowColor = '#FFD98E';
-      ctx.shadowBlur = 6;
+      // Render glowing golden dust specks
+      const shimmer = Math.sin(this.time * 2 + p.phase) * 0.2 + p.alpha;
+      ctx.fillStyle = `rgba(255, 217, 142, ${Math.max(0.08, Math.min(0.8, shimmer)).toFixed(3)})`;
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
       ctx.fill();
-      ctx.restore();
     }
+    ctx.restore();
   }
 }

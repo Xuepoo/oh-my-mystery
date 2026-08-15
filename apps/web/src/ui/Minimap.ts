@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { GraphViewport } from '../scene/GraphViewport';
-import { getCanvasCtx, Theme } from './theme';
+import { getCanvasCtx, getEventCoords, Theme } from './theme';
 
 export class Minimap extends Entity {
   private viewport: GraphViewport;
@@ -15,17 +15,19 @@ export class Minimap extends Entity {
     this.viewport = viewport;
 
     this.on('pointerdown', (e: any) => {
-      const startX = 24;
-      const startY = this.scene.height - this.heightPx - 24;
-      if (
-        e.clientX >= startX &&
-        e.clientX <= startX + this.widthPx &&
-        e.clientY >= startY &&
-        e.clientY <= startY + this.heightPx
-      ) {
-        this.viewport.fitToView();
-      }
+      const { x, y } = getEventCoords(e);
+      this.handleClick(x, y);
     });
+  }
+
+  public handleClick(x: number, y: number): boolean {
+    const startX = 24;
+    const startY = this.scene ? this.scene.height - this.heightPx - 24 : 0;
+    if (x >= startX && x <= startX + this.widthPx && y >= startY && y <= startY + this.heightPx) {
+      this.viewport.fitToView();
+      return true;
+    }
+    return false;
   }
 
   isPointInside(x: number, y: number): boolean {

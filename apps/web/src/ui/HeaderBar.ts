@@ -1,7 +1,7 @@
 import { Entity } from '@vectojs/core';
 import type { SearchResultItem } from '@omm/shared';
 import type { D1DataSource } from '../api/D1DataSource';
-import { getCanvasCtx, Theme } from './theme';
+import { getCanvasCtx, getEventCoords, Theme } from './theme';
 
 export interface HeaderBarOptions {
   source: D1DataSource;
@@ -58,7 +58,8 @@ export class HeaderBar extends Entity {
     this.onToggleFullscreenCb = options.onToggleFullscreen;
 
     this.on('pointerdown', (e: any) => {
-      this.handleClick(e.clientX, e.clientY);
+      const { x, y } = getEventCoords(e);
+      this.handleClick(x, y);
     });
 
     // Native text input shortcut for searching
@@ -345,14 +346,14 @@ export class HeaderBar extends Entity {
     }
   }
 
-  private handleClick(clientX: number, clientY: number): void {
+  public handleClick(clientX: number, clientY: number): boolean {
     // Dropdown Items
     if (this.showSearchDropdown) {
       for (const item of this.dropdownItemRects) {
         if (this.isInRect(clientX, clientY, item)) {
           this.showSearchDropdown = false;
           this.onSelectSearchResultCb(item.id);
-          return;
+          return true;
         }
       }
     }
@@ -366,7 +367,7 @@ export class HeaderBar extends Entity {
       if (prompt !== null) {
         this.setSearchQuery(prompt);
       }
-      return;
+      return true;
     }
 
     // Filter Pills
@@ -374,30 +375,35 @@ export class HeaderBar extends Entity {
       if (this.isInRect(clientX, clientY, f)) {
         this.activeFilter = this.activeFilter === f.type ? null : f.type;
         this.onFilterChangeCb(this.activeFilter);
-        return;
+        return true;
       }
     }
 
     // Chronicles
     if (this.isInRect(clientX, clientY, this.chroniclesBtnRect)) {
       this.onOpenChroniclesCb();
-      return;
+      return true;
     }
 
     // Pathfinder
     if (this.isInRect(clientX, clientY, this.pathfinderBtnRect)) {
       this.onOpenPathfinderCb();
-      return;
+      return true;
     }
 
     // Fullscreen
     if (this.isInRect(clientX, clientY, this.fullscreenBtnRect)) {
       this.onToggleFullscreenCb();
-      return;
+      return true;
     }
 
-    // Clicked elsewhere
-    this.showSearchDropdown = false;
+    // Clicked elsewhere on header
+    if (this.showSearchDropdown) {
+      this.showSearchDropdown = false;
+      return true;
+    }
+
+    return clientY <= 64;
   }
 
   private isInRect(

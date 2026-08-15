@@ -1,6 +1,6 @@
 import { Entity } from '@vectojs/core';
 import type { ChronicleStep, ChronicleTrail } from '@omm/shared';
-import { getCanvasCtx, Theme } from './theme';
+import { getCanvasCtx, getEventCoords, Theme } from './theme';
 
 export interface ChroniclePanelOptions {
   onClose: () => void;
@@ -29,7 +29,8 @@ export class ChroniclePanel extends Entity {
 
     this.on('pointerdown', (e: any) => {
       if (!this.isOpen) return;
-      this.handleClick(e.clientX, e.clientY);
+      const { x, y } = getEventCoords(e);
+      this.handleClick(x, y);
     });
   }
 
@@ -51,6 +52,10 @@ export class ChroniclePanel extends Entity {
   }
 
   isPanelOpen(): boolean {
+    return this.isOpen;
+  }
+
+  isModalOpen(): boolean {
     return this.isOpen;
   }
 
@@ -317,10 +322,12 @@ export class ChroniclePanel extends Entity {
     );
   }
 
-  private handleClick(clientX: number, clientY: number): void {
+  public handleClick(clientX: number, clientY: number): boolean {
+    if (!this.isOpen) return false;
+
     if (this.isInRect(clientX, clientY, this.closeBtnRect)) {
       this.close();
-      return;
+      return true;
     }
 
     // Tabs
@@ -329,7 +336,7 @@ export class ChroniclePanel extends Entity {
         this.currentTrailIndex = tab.index;
         this.currentStepIndex = 0;
         this.notifyStep();
-        return;
+        return true;
       }
     }
 
@@ -337,7 +344,7 @@ export class ChroniclePanel extends Entity {
     if (this.isInRect(clientX, clientY, this.prevBtnRect) && this.currentStepIndex > 0) {
       this.currentStepIndex--;
       this.notifyStep();
-      return;
+      return true;
     }
 
     // Next
@@ -349,8 +356,10 @@ export class ChroniclePanel extends Entity {
     ) {
       this.currentStepIndex++;
       this.notifyStep();
-      return;
+      return true;
     }
+
+    return true; // Click was absorbed inside open modal
   }
 
   private isInRect(
