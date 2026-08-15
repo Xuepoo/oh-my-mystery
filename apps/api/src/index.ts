@@ -80,7 +80,12 @@ app.use('*', async (c, next) => {
   }
 });
 
-// Turnstile optional protection middleware
+// Turnstile optional protection middleware.
+// NOTE: intentionally disabled in production — TURNSTILE_SECRET is not set.
+// The frontend does not load the Cloudflare turnstile script. If the secret is
+// ever configured, the web app must load the challenge and send
+// X-Turnstile-Token (D1DataSource.setTurnstileToken) or all neighbor requests
+// will 403 and graph expansion breaks.
 const turnstileVerify = async (c: any, next: any) => {
   const secret = c.env.TURNSTILE_SECRET;
   if (!secret) {

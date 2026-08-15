@@ -76,6 +76,19 @@ chunkAndImport(
   15000,
 );
 
+// 2b. FTS5 trigram index (populated from search_index on the remote side)
+console.log('\n📦 Populating remote search_fts from search_index...');
+try {
+  execSync(
+    `wrangler d1 execute omm-db --remote --command="INSERT OR REPLACE INTO search_fts (id, content) SELECT id, COALESCE(name_zh, '') || ' ' || COALESCE(name_en, '') || ' ' || COALESCE(name_ja, '') || ' ' || COALESCE(aliases_text, '') FROM search_index" -y`,
+    { encoding: 'utf-8', env: process.env, maxBuffer: 50 * 1024 * 1024 },
+  );
+  console.log('  ✓ search_fts populated');
+} catch (err: any) {
+  console.error('  ❌ Failed to populate search_fts:', err.message);
+  throw err;
+}
+
 // 3. Recommendations
 chunkAndImport('recommendations', ['entity_id', 'target_id', 'score', 'reason', 'rank'], 15000);
 
