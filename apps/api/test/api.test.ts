@@ -206,6 +206,23 @@ function buildCorruptEnv() {
   return { db, dir, env };
 }
 
+it('GET /api/search with 3+ char query uses FTS and still returns results', async () => {
+  const res = await app.request('/api/search?q=%E4%B8%9C%E9%87%8E%E5%9C%AD%E5%90%BE', {}, mockEnv);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as any;
+  expect(body.results.length).toBeGreaterThan(0);
+  expect(body.results[0].id).toBe('wd:Q125970');
+});
+
+it('sets Cache-Control headers per route', async () => {
+  const chronicles = await app.request('/api/chronicles', {}, mockEnv);
+  expect(chronicles.headers.get('cache-control')).toContain('max-age=86400');
+  const search = await app.request('/api/search?q=test', {}, mockEnv);
+  expect(search.headers.get('cache-control')).toContain('max-age=60');
+  const health = await app.request('/api/health', {}, mockEnv);
+  expect(health.headers.get('cache-control')).toBe('no-store');
+});
+
 describe('Malformed data resilience', () => {
   it('facts with broken qualifiers_json do not 500 neighbors/details', async () => {
     const { env, db, dir } = buildCorruptEnv();

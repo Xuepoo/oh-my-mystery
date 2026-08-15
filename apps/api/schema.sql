@@ -66,3 +66,10 @@ CREATE TABLE IF NOT EXISTS search_index (
 CREATE INDEX IF NOT EXISTS idx_search_zh ON search_index(name_zh);
 CREATE INDEX IF NOT EXISTS idx_search_en ON search_index(name_en);
 CREATE INDEX IF NOT EXISTS idx_search_ja ON search_index(name_ja);
+
+-- 6. FTS5 Trigram Search (substring matches for CJK + latin queries)
+CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
+  id UNINDEXED,
+  content,
+  tokenize = 'trigram'
+);

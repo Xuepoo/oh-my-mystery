@@ -47,6 +47,46 @@ function resolveLink(id: string): string {
   return cur;
 }
 
+function normPublisherName(raw: string): string {
+  let s = raw.normalize('NFKC').trim().toLowerCase();
+  s = s.replace(/^(株式会社|股份公司|\(株\)|（株）)/u, '');
+  s = s.replace(/[\s（）()·•・,，.。]/g, '');
+  return s;
+}
+
+function stripPublisherSuffix(s: string): string {
+  return s.replace(/(出版社|出版有限公司|出版公司|出版集团|出版)$/u, '');
+}
+
+function djb2Hash(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 33) ^ s.charCodeAt(i);
+  }
+  return h >>> 0;
+}
+
+function matchPublisher(value: string): string | null {
+  const candidates = [value, ...value.split(/[、，,／/・]/u)]
+    .map(normPublisherName)
+    .filter(Boolean);
+  for (const key of candidates) {
+    const direct = publisherByName.get(key);
+    if (direct) return direct;
+    const stripped = stripPublisherSuffix(key);
+    if (stripped && stripped !== key) {
+      const hit = publisherByName.get(stripped);
+      if (hit) return hit;
+    }
+    if (key.length >= 4) {
+      for (const [name, id] of publisherByName) {
+        if (name.length >= 4 && (name.includes(key) || key.includes(name))) return id;
+      }
+    }
+  }
+  return null;
+}
+
 // Filter entities to mystery/detective core domain (Wikidata + MWJ + Edgar + CWA + Aozora + Douban core)
 const entityRows = srcDb
   .query(
@@ -85,6 +125,10 @@ const insertEntity = db.prepare(`
 const insertSearch = db.prepare(`
   INSERT OR REPLACE INTO search_index (id, type, name_zh, name_en, name_ja, aliases_text)
   VALUES (?, ?, ?, ?, ?, ?)
+`);
+
+const insertSearchFts = db.prepare(`
+  INSERT OR REPLACE INTO search_fts (id, content) VALUES (?, ?)
 `);
 
 const aliasMerge = new Map<string, string[]>();
@@ -144,13 +188,18 @@ db.transaction(() => {
       if (Array.isArray(arr)) allAliases.push(...arr);
     }
 
+    const nameZh = labels['zh'] || labels['zh-cn'] || labels['zh-tw'] || labels['zh-hk'] || null;
     insertSearch.run(
       e.id,
       e.type,
-      labels['zh'] || labels['zh-cn'] || labels['zh-tw'] || labels['zh-hk'] || null,
+      nameZh,
       labels['en'] || null,
       labels['ja'] || null,
       allAliases.join(' | ') || null,
+    );
+    insertSearchFts.run(
+      e.id,
+      [nameZh, labels['en'], labels['ja'], ...allAliases].filter(Boolean).join(' '),
     );
   }
 
@@ -162,6 +211,10 @@ db.transaction(() => {
       if (!existing.includes(ex)) existing.push(ex);
     }
     db.run('UPDATE search_index SET aliases_text = ? WHERE id = ?', [existing.join(' | '), target]);
+    db.run(
+      "UPDATE search_fts SET content = (SELECT COALESCE(name_zh, '') || ' ' || COALESCE(name_en, '') || ' ' || COALESCE(name_ja, '') || ' ' || COALESCE(aliases_text, '') FROM search_index WHERE id = ?) WHERE id = ?",
+      [target, target],
+    );
   }
 })();
 
@@ -188,11 +241,100 @@ const validFacts: any[] = [];
 const outEdges = new Map<string, { predicate: string; target: string }[]>();
 const inEdges = new Map<string, { predicate: string; source: string }[]>();
 
+// Publisher entity-ization: index publisher entity names, then rewrite
+// publisher_name string facts into publisher edges when a match exists.
+const publisherByName = new Map<string, string>();
+for (const e of entityMap.values()) {
+  if (e.type !== 'publisher') continue;
+  const cleaned = cleanNames(e.names_json);
+  for (const v of Object.values(cleaned.labels)) {
+    const key = normPublisherName(v);
+    if (key && !publisherByName.has(key)) publisherByName.set(key, e.id);
+  }
+  for (const arr of Object.values(cleaned.aliases)) {
+    if (!Array.isArray(arr)) continue;
+    for (const a of arr) {
+      const key = normPublisherName(a);
+      if (key && !publisherByName.has(key)) publisherByName.set(key, e.id);
+    }
+  }
+}
+let publisherMatched = 0;
+let publisherUnmatched = 0;
+let publisherSynthesized = 0;
+
+// Synthesize publisher entities for publisher_name strings that have no
+// existing publisher entity (common aozora/douban publishers like 筑摩書房).
+{
+  const needed = new Map<string, { id: string; label: string }>();
+  const seenKeys = new Set<string>();
+  for (const f of factsRows) {
+    if (f.predicate !== 'publisher_name' || !f.object_value) continue;
+    if (!entityMap.has(resolveLink(f.subject_id))) continue;
+    const label = String(f.object_value).trim();
+    if (!label) continue;
+    const key = normPublisherName(label);
+    if (!key || seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    if (matchPublisher(label)) continue;
+    const hash = djb2Hash(key).toString(16).padStart(12, '0');
+    needed.set(key, { id: `pname:${hash}`, label });
+  }
+  if (needed.size > 0) {
+    db.transaction(() => {
+      for (const { id, label } of needed.values()) {
+        insertEntity.run(
+          id,
+          null,
+          'publisher',
+          namesToJson({ labels: { ja: label }, aliases: {} }),
+          null,
+          null,
+          null,
+          null,
+          'synthesized',
+          1,
+        );
+        insertSearch.run(id, 'publisher', null, null, label, null);
+        insertSearchFts.run(id, label);
+        publisherByName.set(normPublisherName(label), id);
+        entityMap.set(id, {
+          id,
+          qid: null,
+          type: 'publisher',
+          names_json: namesToJson({ labels: { ja: label }, aliases: {} }),
+          bio: null,
+          birth: null,
+          death: null,
+          country: null,
+          source: 'synthesized',
+          quality: 1,
+        });
+        publisherSynthesized += 1;
+      }
+    })();
+  }
+}
+
 db.transaction(() => {
   for (const f of factsRows) {
     // Canonicalize IDs if linked
     const sub = resolveLink(f.subject_id);
-    const obj = f.object_ref ? resolveLink(f.object_ref) : f.object_ref;
+    let obj = f.object_ref ? resolveLink(f.object_ref) : f.object_ref;
+
+    // Rewrite publisher_name string facts into publisher entity edges
+    if (f.predicate === 'publisher_name' && f.object_value) {
+      const pubId = matchPublisher(f.object_value);
+      if (pubId && entityMap.has(pubId)) {
+        f.predicate = 'publisher';
+        f.object_value = null;
+        obj = pubId;
+        publisherMatched += 1;
+      } else {
+        obj = '';
+        publisherUnmatched += 1;
+      }
+    }
 
     if (entityMap.has(sub) && (entityMap.has(obj) || !f.object_ref)) {
       validFacts.push({ ...f, subject_id: sub, object_ref: obj });
@@ -209,14 +351,18 @@ db.transaction(() => {
       outs.push({ predicate: f.predicate, target: obj });
       outEdges.set(sub, outs);
 
-      const inns = inEdges.get(obj) || [];
-      inns.push({ predicate: f.predicate, source: sub });
-      inEdges.set(obj, inns);
+      if (obj) {
+        const inns = inEdges.get(obj) || [];
+        inns.push({ predicate: f.predicate, source: sub });
+        inEdges.set(obj, inns);
+      }
     }
   }
 })();
 
-console.log(`✓ Inserted ${validFacts.length} connected facts`);
+console.log(
+  `✓ Inserted ${validFacts.length} connected facts (publisher entity-ized: ${publisherMatched} matched, ${publisherUnmatched} unmatched)`,
+);
 
 // 4. Compute Top-N Recommendations
 console.log('🧠 Computing Graph-based Recommendations...');

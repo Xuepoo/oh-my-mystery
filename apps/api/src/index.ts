@@ -60,6 +60,26 @@ app.use(
   }),
 );
 
+// HTTP caching: the knowledge graph is static between deploys, so browser/CDN
+// caching is safe per route.
+app.use('*', async (c, next) => {
+  await next();
+  const path = new URL(c.req.url).pathname;
+  if (!path.startsWith('/api/')) return;
+  if (c.res.status !== 200) return;
+  if (path === '/api/health') {
+    c.header('Cache-Control', 'no-store');
+  } else if (path === '/api/seeds' || path.startsWith('/api/chronicles')) {
+    c.header('Cache-Control', 'public, max-age=86400');
+  } else if (path.startsWith('/api/search') || path.startsWith('/api/path')) {
+    c.header('Cache-Control', 'private, max-age=60');
+  } else if (path.startsWith('/api/entity')) {
+    c.header('Cache-Control', 'public, max-age=3600');
+  } else {
+    c.header('Cache-Control', 'public, max-age=300');
+  }
+});
+
 // Turnstile optional protection middleware
 const turnstileVerify = async (c: any, next: any) => {
   const secret = c.env.TURNSTILE_SECRET;
@@ -411,22 +431,50 @@ app.get('/api/search', async (c) => {
   }
 
   const pattern = `%${q}%`;
-  // Fetch up to 60 candidates to ensure canonical entities (Wikidata/Clean) are preferred
-  const rows = await c.env.DB.prepare(
-    `
-    SELECT s.id, s.type, s.name_zh, s.name_en, s.name_ja, e.names_json
-    FROM search_index s
-    LEFT JOIN entities e ON s.id = e.id
-    WHERE s.name_zh LIKE ? OR s.name_en LIKE ? OR s.name_ja LIKE ? OR s.aliases_text LIKE ?
-    ORDER BY
-      (CASE WHEN s.id LIKE 'wd:%' THEN 0 ELSE 1 END),
-      (CASE WHEN s.name_zh = ? OR s.name_en = ? OR s.name_ja = ? THEN 0 ELSE 1 END),
-      LENGTH(COALESCE(s.name_zh, s.name_en, s.name_ja)) ASC
-    LIMIT 60
-  `,
-  )
-    .bind(pattern, pattern, pattern, pattern, q, q, q)
-    .all();
+  // Fetch up to 60 candidates to ensure canonical entities (Wikidata/Clean) are preferred.
+  // FTS5 trigram for >=3 char queries (indexed substring match), LIKE fallback for
+  // shorter queries or when the FTS index is unavailable.
+  let rows: any;
+  if ([...q].length >= 3) {
+    try {
+      rows = await c.env.DB.prepare(
+        `
+        SELECT s.id, s.type, s.name_zh, s.name_en, s.name_ja, e.names_json
+        FROM search_fts f
+        JOIN search_index s ON s.id = f.id
+        LEFT JOIN entities e ON s.id = e.id
+        WHERE search_fts MATCH ?
+        ORDER BY
+          (CASE WHEN s.id LIKE 'wd:%' THEN 0 ELSE 1 END),
+          (CASE WHEN s.name_zh = ? OR s.name_en = ? OR s.name_ja = ? THEN 0 ELSE 1 END),
+          LENGTH(COALESCE(s.name_zh, s.name_en, s.name_ja)) ASC
+        LIMIT 60
+      `,
+      )
+        .bind(`"${q.replaceAll('"', '""')}"`, q, q, q)
+        .all();
+    } catch (err) {
+      console.warn('FTS search failed, falling back to LIKE:', err);
+      rows = { results: [] };
+    }
+  }
+  if (!rows || (rows.results || []).length === 0) {
+    rows = await c.env.DB.prepare(
+      `
+      SELECT s.id, s.type, s.name_zh, s.name_en, s.name_ja, e.names_json
+      FROM search_index s
+      LEFT JOIN entities e ON s.id = e.id
+      WHERE s.name_zh LIKE ? OR s.name_en LIKE ? OR s.name_ja LIKE ? OR s.aliases_text LIKE ?
+      ORDER BY
+        (CASE WHEN s.id LIKE 'wd:%' THEN 0 ELSE 1 END),
+        (CASE WHEN s.name_zh = ? OR s.name_en = ? OR s.name_ja = ? THEN 0 ELSE 1 END),
+        LENGTH(COALESCE(s.name_zh, s.name_en, s.name_ja)) ASC
+      LIMIT 60
+    `,
+    )
+      .bind(pattern, pattern, pattern, pattern, q, q, q)
+      .all();
+  }
 
   const results: SearchResultItem[] = [];
   const searchRows = (rows.results || []) as any[];
