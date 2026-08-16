@@ -1,5 +1,12 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import {
+  neighborQuerySchema,
+  parseQuery,
+  pathQuerySchema,
+  searchQuerySchema,
+  turnstileResponseSchema,
+} from './validation';
 import type {
   ChronicleTrail,
   EntityDetailResponse,
@@ -80,12 +87,8 @@ app.use('*', async (c, next) => {
   }
 });
 
-// Turnstile optional protection middleware.
-// NOTE: intentionally disabled in production — TURNSTILE_SECRET is not set.
-// The frontend does not load the Cloudflare turnstile script. If the secret is
-// ever configured, the web app must load the challenge and send
-// X-Turnstile-Token (D1DataSource.setTurnstileToken) or all neighbor requests
-// will 403 and graph expansion breaks.
+// Turnstile protection is enabled whenever the Worker secret is configured.
+// Local development remains open when no secret is present.
 const turnstileVerify = async (c: any, next: any) => {
   const secret = c.env.TURNSTILE_SECRET;
   if (!secret) {
@@ -108,12 +111,16 @@ const turnstileVerify = async (c: any, next: any) => {
         remoteip: c.req.header('CF-Connecting-IP'),
       }),
     });
-    const outcome = (await res.json()) as { success: boolean };
-    if (!outcome.success) {
+    if (!res.ok) {
+      return c.json({ error: 'Turnstile verification unavailable' }, 503);
+    }
+    const outcome = turnstileResponseSchema.safeParse(await res.json());
+    if (!outcome.success || !outcome.data.success) {
       return c.json({ error: 'Turnstile verification failed' }, 403);
     }
   } catch (err) {
     console.error('Turnstile verification error:', err);
+    return c.json({ error: 'Turnstile verification unavailable' }, 503);
   }
 
   await next();
@@ -195,7 +202,9 @@ app.get('/api/nodes', async (c) => {
 // 4. Get 1-Hop Neighbors (Strictly conforms to KgDataSource KgNeighborhood format)
 app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
   const id = c.req.param('id');
-  const limit = Math.min(Number(c.req.query('limit') || 50), 100);
+  const parsedQuery = parseQuery(neighborQuerySchema, { limit: c.req.query('limit') });
+  if ('error' in parsedQuery) return c.json({ error: parsedQuery.error }, 400);
+  const limit = parsedQuery.data.limit;
 
   // 1. Fetch the focal entity
   const entityRow = await c.env.DB.prepare('SELECT * FROM entities WHERE id = ?').bind(id).first();
@@ -452,8 +461,12 @@ function toSimpKey(str: string): string {
 
 // 6. Search across multi-language names and aliases
 app.get('/api/search', async (c) => {
-  const q = c.req.query('q')?.trim() || '';
-  const limit = Math.min(Number(c.req.query('limit') || 8), 20);
+  const parsedQuery = parseQuery(searchQuerySchema, {
+    q: c.req.query('q'),
+    limit: c.req.query('limit'),
+  });
+  if ('error' in parsedQuery) return c.json({ error: parsedQuery.error }, 400);
+  const { q, limit } = parsedQuery.data;
 
   if (!q || q.length < 1) {
     const emptyResp: SearchResponse = { query: q, results: [] };
@@ -579,13 +592,15 @@ app.get('/api/search', async (c) => {
 });
 
 // 7. Pathfinder: Shortest relational chain between Source and Target
-app.get('/api/path', async (c) => {
-  const source = c.req.query('source')?.trim();
-  const target = c.req.query('target')?.trim();
-
-  if (!source || !target) {
+app.get('/api/path', turnstileVerify, async (c) => {
+  const parsedQuery = parseQuery(pathQuerySchema, {
+    source: c.req.query('source'),
+    target: c.req.query('target'),
+  });
+  if ('error' in parsedQuery) {
     return c.json({ error: 'Both source and target parameters are required' }, 400);
   }
+  const { source, target } = parsedQuery.data;
 
   if (source === target) {
     const node = await c.env.DB.prepare('SELECT * FROM entities WHERE id = ?').bind(source).first();

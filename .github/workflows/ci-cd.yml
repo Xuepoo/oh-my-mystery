@@ -1,0 +1,101 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: 1.2.4
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check formatting and lint
+        run: bun run check
+
+      - name: Run tests
+        run: bun run test
+
+      - name: Build web application
+        run: bun run --filter '@omm/web' build
+        env:
+          VITE_API_URL: https://omm-api.ven3428set.workers.dev
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+
+      - name: Upload Pages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy-api:
+    name: Deploy API Worker
+    needs: quality
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/api
+          command: deploy
+
+  deploy-pages:
+    name: Deploy Cloudflare Pages
+    needs: deploy-api
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Download Pages artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+
+      - name: Deploy Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/web/dist --project-name=omm --branch=main
