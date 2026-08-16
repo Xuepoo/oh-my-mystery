@@ -105,7 +105,7 @@ async function run(): Promise<void> {
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
   });
-  await page.addInitScript(() => localStorage.setItem('omm-welcome-dismissed', 'true'));
+  await page.addInitScript(() => localStorage.setItem('omm-welcome-dismissed', '1'));
 
   try {
     await reset(page);

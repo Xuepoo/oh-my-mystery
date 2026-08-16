@@ -25,6 +25,7 @@ export class RelationshipFilterBar extends Entity {
   private toggleRect = { x: 16, y: 76, w: 104, h: 44 };
   private filterRects: FilterRect[] = [];
   private onChangeCb: (predicates: ReadonlySet<string> | null) => void;
+  private enabled = true;
 
   constructor(viewport: GraphViewport, onChange: (predicates: ReadonlySet<string> | null) => void) {
     super();
@@ -35,11 +36,13 @@ export class RelationshipFilterBar extends Entity {
   }
 
   isPointInside(x: number, y: number): boolean {
+    if (!this.enabled) return false;
     if (this.inRect(x, y, this.toggleRect)) return true;
     return this.expanded && this.filterRects.some((rect) => this.inRect(x, y, rect));
   }
 
   handleClick(x: number, y: number): boolean {
+    if (!this.enabled) return false;
     if (this.inRect(x, y, this.toggleRect)) {
       this.expanded = !this.expanded;
       this.scene.markDirty();
@@ -61,6 +64,7 @@ export class RelationshipFilterBar extends Entity {
   }
 
   render(r: any): void {
+    if (!this.enabled) return;
     const ctx = getCanvasCtx(r);
     const counts = new Map<string, number>();
     for (const link of this.viewport.getLinks()) {
@@ -95,6 +99,12 @@ export class RelationshipFilterBar extends Entity {
       const count = relation.predicates.reduce((sum, p) => sum + (counts.get(p) || 0), 0);
       this.drawPill(ctx, rect, `${relation.label} ${count}`, this.active.has(i), relation.color);
     }
+  }
+
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+    this.scene?.markDirty();
   }
 
   private drawPill(

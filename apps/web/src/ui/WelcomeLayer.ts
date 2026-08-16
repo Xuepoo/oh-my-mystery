@@ -2,11 +2,13 @@ import { Entity } from '@vectojs/core';
 import type { StatsResponse } from '@omm/shared';
 import type { D1DataSource } from '../api/D1DataSource';
 import { getCanvasCtx, Theme } from './theme';
+import { truncateText, wrapText, withClip } from './text-layout';
 
 export interface WelcomeLayerOptions {
   source: D1DataSource;
   onSelectEntity: (id: string) => void;
   onOpenHelp: () => void;
+  onVisibilityChange?: (visible: boolean) => void;
 }
 
 interface FeaturedEntry {
@@ -22,6 +24,7 @@ export class WelcomeLayer extends Entity {
   private source: D1DataSource;
   private onSelectEntityCb: (id: string) => void;
   private onOpenHelpCb: () => void;
+  private onVisibilityChangeCb: (visible: boolean) => void;
 
   private visible = true;
   private stats: StatsResponse | null = null;
@@ -53,6 +56,7 @@ export class WelcomeLayer extends Entity {
     this.source = options.source;
     this.onSelectEntityCb = options.onSelectEntity;
     this.onOpenHelpCb = options.onOpenHelp;
+    this.onVisibilityChangeCb = options.onVisibilityChange || (() => {});
 
     if (typeof localStorage !== 'undefined') {
       this.visible = localStorage.getItem(DISMISS_KEY) !== '1';
@@ -71,11 +75,13 @@ export class WelcomeLayer extends Entity {
   }
 
   dismiss(): void {
+    if (!this.visible) return;
     this.visible = false;
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(DISMISS_KEY, '1');
     }
     this.scene?.markDirty();
+    this.onVisibilityChangeCb(false);
   }
 
   isVisible(): boolean {
@@ -170,15 +176,24 @@ export class WelcomeLayer extends Entity {
     ctx.font = `700 19px ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText('🕯️ 欢迎来到 OMM', cardX + padX, curY);
+    ctx.fillText(truncateText(ctx, '🕯️ 欢迎来到 OMM', cardW - padX * 2), cardX + padX, curY);
     curY += 34;
 
     // Description
     ctx.fillStyle = Theme.colors.textHigh;
     ctx.font = `500 13px ${Theme.fonts.sans}`;
-    ctx.fillText('以侦探视角漫游推理小说知识图谱:', cardX + padX, curY);
+    const descriptionLines = wrapText(
+      ctx,
+      '以侦探视角漫游推理小说知识图谱: 点击作品追踪奖项,推演人物之间的隐藏关联。',
+      cardW - padX * 2,
+      2,
+    );
     ctx.fillStyle = Theme.colors.textMid;
-    ctx.fillText('点击作品追踪奖项,推演人物之间的隐藏关联。', cardX + padX, curY + 20);
+    withClip(ctx, { x: cardX + padX, y: curY, w: cardW - padX * 2, h: descH }, () => {
+      descriptionLines.forEach((line, index) => {
+        ctx.fillText(line, cardX + padX, curY + index * 20);
+      });
+    });
     curY += descH;
 
     // Stats line
@@ -189,7 +204,7 @@ export class WelcomeLayer extends Entity {
     const statsText = `${fmt(this.stats?.total)} 实体 · ${fmt(byType['work'])} 作品 · ${fmt(
       byType['author'],
     )} 作家 · ${fmt(byType['award'])} 奖项`;
-    ctx.fillText(statsText, cardX + padX, curY + 2);
+    ctx.fillText(truncateText(ctx, statsText, cardW - padX * 2), cardX + padX, curY + 2);
     curY += statsLine;
 
     // Featured entries (2x2 grid)

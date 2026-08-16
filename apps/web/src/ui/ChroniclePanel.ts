@@ -1,6 +1,7 @@
 import { Entity } from '@vectojs/core';
 import type { ChronicleStep, ChronicleTrail } from '@omm/shared';
 import { getCanvasCtx, Theme } from './theme';
+import { truncateText, wrapText, withClip } from './text-layout';
 
 export interface ChroniclePanelOptions {
   onClose: () => void;
@@ -114,22 +115,25 @@ export class ChroniclePanel extends Entity {
     ctx.fillText('✕', this.closeBtnRect.x + 16, this.closeBtnRect.y + 16);
 
     // Trail Tabs
-    let tabX = modalX + 24;
     const tabY = modalY + 58;
     this.trailTabRects = [];
-
-    const maxTabW = Math.min(220, (modalWidth - 48) / Math.max(1, this.trails.length) - 12);
+    const tabColumns = modalWidth < 520 ? 2 : 3;
+    const tabGap = 8;
+    const tabW = (modalWidth - 48 - tabGap * (tabColumns - 1)) / tabColumns;
+    const tabH = 32;
     for (let i = 0; i < this.trails.length; i++) {
       const trail = this.trails[i]!;
       const isSelected = i === this.currentTrailIndex;
-      const tabW = Math.max(90, maxTabW);
-      const tabH = 32;
+      const col = i % tabColumns;
+      const row = Math.floor(i / tabColumns);
+      const tabX = modalX + 24 + col * (tabW + tabGap);
+      const currentTabY = tabY + row * (tabH + tabGap);
 
-      this.trailTabRects.push({ index: i, x: tabX, y: tabY, w: tabW, h: tabH });
+      this.trailTabRects.push({ index: i, x: tabX, y: currentTabY, w: tabW, h: tabH });
 
       ctx.fillStyle = isSelected ? Theme.colors.bgCardHover : Theme.colors.bgCard;
       ctx.beginPath();
-      ctx.roundRect(tabX, tabY, tabW, tabH, 6);
+      ctx.roundRect(tabX, currentTabY, tabW, tabH, 6);
       ctx.fill();
       ctx.strokeStyle = isSelected ? Theme.colors.borderHighlight : Theme.colors.border;
       ctx.stroke();
@@ -139,21 +143,20 @@ export class ChroniclePanel extends Entity {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const tabLabel = trail.title.zh || trail.title.en || trail.slug;
-      ctx.fillText(tabLabel, tabX + tabW / 2, tabY + tabH / 2);
-
-      tabX += tabW + 12;
+      ctx.fillText(truncateText(ctx, tabLabel, tabW - 16), tabX + tabW / 2, currentTabY + tabH / 2);
     }
 
     // Current Trail Details
     const trail = this.trails[this.currentTrailIndex]!;
-    let curY = modalY + 104;
+    const tabRows = Math.ceil(this.trails.length / tabColumns);
+    let curY = tabY + tabRows * (tabH + tabGap) + 12;
 
     // Trail Intro
     ctx.fillStyle = Theme.colors.textMid;
     ctx.font = `400 13px ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    const introLines = this.wrapText(
+    const introLines = wrapText(
       ctx,
       trail.description.zh || trail.description.en || '',
       modalWidth - 48,
@@ -264,17 +267,23 @@ export class ChroniclePanel extends Entity {
     ctx.font = `700 16px ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(step.title.zh || step.title.en || '', cardX + 120, cardY + 27);
+    ctx.fillText(
+      truncateText(ctx, step.title.zh || step.title.en || '', Math.max(0, cardW - 144)),
+      cardX + 120,
+      cardY + 27,
+    );
 
     // Step Summary
     ctx.fillStyle = Theme.colors.textHigh;
     ctx.font = `400 13px ${Theme.fonts.serif}`;
-    const stepLines = this.wrapText(ctx, step.summary.zh || step.summary.en || '', cardW - 32);
+    const stepLines = wrapText(ctx, step.summary.zh || step.summary.en || '', cardW - 32, 4);
     let stepY = cardY + 54;
-    for (const l of stepLines.slice(0, 4)) {
-      ctx.fillText(l, cardX + 16, stepY);
-      stepY += 20;
-    }
+    withClip(ctx, { x: cardX + 12, y: cardY + 50, w: cardW - 24, h: cardH - 80 }, () => {
+      for (const l of stepLines) {
+        ctx.fillText(l, cardX + 16, stepY);
+        stepY += 20;
+      }
+    });
 
     // Step Action Notice
     ctx.fillStyle = Theme.colors.borderHighlight;
@@ -374,23 +383,5 @@ export class ChroniclePanel extends Entity {
     r: { x: number; y: number; w: number; h: number },
   ): boolean {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-  }
-
-  private wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-    const lines: string[] = [];
-    let currentLine = '';
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-      const testLine = currentLine + char;
-      const metrics = ctx.measureText(testLine);
-      if (metrics.width > maxWidth && currentLine !== '') {
-        lines.push(currentLine);
-        currentLine = char;
-      } else {
-        currentLine = testLine;
-      }
-    }
-    if (currentLine) lines.push(currentLine);
-    return lines;
   }
 }

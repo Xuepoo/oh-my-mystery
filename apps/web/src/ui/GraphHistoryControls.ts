@@ -5,6 +5,7 @@ export class GraphHistoryControls extends Entity {
   private count = 0;
   private buttonRect = { x: 128, y: 76, w: 80, h: 44 };
   private readonly onUndoCb: () => void;
+  private enabled = true;
 
   constructor(onUndo: () => void) {
     super();
@@ -20,7 +21,7 @@ export class GraphHistoryControls extends Entity {
   }
 
   isPointInside(x: number, y: number): boolean {
-    return this.count > 0 && this.inRect(x, y, this.buttonRect);
+    return this.enabled && this.count > 0 && this.inRect(x, y, this.buttonRect);
   }
 
   handleClick(x: number, y: number): boolean {
@@ -29,8 +30,14 @@ export class GraphHistoryControls extends Entity {
     return true;
   }
 
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+    this.scene?.markDirty();
+  }
+
   render(r: any): void {
-    if (this.count <= 0) return;
+    if (!this.enabled || this.count <= 0) return;
     const ctx = getCanvasCtx(r);
     this.buttonRect = { x: 128, y: 76, w: 80, h: 44 };
     ctx.fillStyle = 'rgba(30, 24, 19, 0.94)';

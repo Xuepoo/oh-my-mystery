@@ -205,6 +205,7 @@ export class App {
         this.drawer.close();
         this.helpModal.open();
       },
+      onVisibilityChange: () => this.syncWelcomeBarrier(),
     });
     this.scene.add(this.welcomeLayer);
 
@@ -269,6 +270,8 @@ export class App {
     });
     this.scene.add(this.radialMenu);
 
+    this.syncWelcomeBarrier();
+
     // 4. Bind Native Canvas Pointer Interactions
     this.setupInteractions();
 
@@ -277,6 +280,7 @@ export class App {
   }
 
   private isEventOverUI(x: number, y: number): boolean {
+    if (this.welcomeLayer.isVisible()) return true;
     return (
       this.headerBar.isPointInside(x, y) ||
       this.drawer.isPointInside(x, y) ||
@@ -326,6 +330,19 @@ export class App {
         return;
       }
       this.pinchState = null;
+
+      if (this.welcomeLayer.isVisible()) {
+        if (this.helpModal.isModalOpen()) {
+          this.helpModal.handleClick(x, y);
+          return;
+        }
+        if (this.headerBar.isPointInside(x, y)) {
+          this.headerBar.handleClick(x, y);
+          return;
+        }
+        this.welcomeLayer.handleClick(x, y);
+        return;
+      }
 
       // 1. Dispatch to UI Panels (Highest overlay priority first)
       if (this.radialMenu.isMenuOpen()) {
@@ -434,6 +451,7 @@ export class App {
 
   private onCanvasContextMenu = (e: MouseEvent): void => {
     e.preventDefault();
+    if (this.welcomeLayer.isVisible()) return;
     const { x, y } = getEventCoords(e);
     if (this.radialMenu.isMenuOpen()) this.radialMenu.close();
     if (this.isEventOverUI(x, y)) return;
@@ -443,6 +461,7 @@ export class App {
   };
 
   private onCanvasDoubleClick = (e: MouseEvent): void => {
+    if (this.welcomeLayer.isVisible()) return;
     const { x, y } = getEventCoords(e);
     if (this.isEventOverUI(x, y)) return;
     const node = this.overlayLayer.getNodeAtScreenPoint(x, y);
@@ -728,6 +747,24 @@ export class App {
     if (!this.longPressTimer) return;
     clearTimeout(this.longPressTimer);
     this.longPressTimer = null;
+  }
+
+  private syncWelcomeBarrier(): void {
+    const enabled = !this.welcomeLayer.isVisible();
+    this.headerBar.setWelcomeMode(!enabled);
+    this.relationshipFilterBar.setEnabled(enabled);
+    this.graphHistoryControls.setEnabled(enabled);
+    this.visibilityManager.setEnabled(enabled);
+    this.graphStatsPanel.setEnabled(enabled);
+    this.minimap.setEnabled(enabled);
+    this.controls.setVisible(enabled && this.activeEntityDetails === null);
+    if (!enabled) {
+      this.radialMenu.close();
+      this.visibilityManager.close();
+      this.graphStatsPanel.close();
+      this.overlayLayer.setHoveredEntity(null);
+    }
+    this.scene.markDirty();
   }
 
   async start(): Promise<void> {

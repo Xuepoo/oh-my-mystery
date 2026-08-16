@@ -28,6 +28,7 @@ export class HeaderBar extends Entity {
   private searchResults: SearchResultItem[] = [];
   private showSearchDropdown = false;
   private activeFilter: string | null = null;
+  private welcomeMode = false;
   private domInput: HTMLInputElement | null = null;
   private debounceTimer: any = null;
   private searchEpoch = 0;
@@ -180,6 +181,12 @@ export class HeaderBar extends Entity {
     return true;
   }
 
+  setWelcomeMode(enabled: boolean): void {
+    if (this.welcomeMode === enabled) return;
+    this.welcomeMode = enabled;
+    this.scene?.markDirty();
+  }
+
   isPointInside(_x: number, y: number): boolean {
     if (this.showSearchDropdown) return y <= 420;
     return y <= 64;
@@ -259,8 +266,8 @@ export class HeaderBar extends Entity {
       this.domInput.placeholder = isMobile ? '🔍 搜索...' : '🔍 搜索作家/作品/奖项... [/]';
     }
 
-    // 3. Entity Type Filter Pills (Desktop only)
-    if (!isMobile && !isTablet) {
+    // 3. Entity Type Filter Pills (Desktop only, hidden behind Welcome)
+    if (!this.welcomeMode && !isMobile && !isTablet) {
       let filterX = searchX + searchW + 20;
       const filters = [
         { type: null, label: '全部' },
@@ -307,7 +314,22 @@ export class HeaderBar extends Entity {
     // 4. Action Buttons (Right Aligned)
     const rightMargin = w - 16;
 
-    if (!isMobile) {
+    if (this.welcomeMode) {
+      this.fullscreenBtnRect = { x: -100, y: -100, w: 0, h: 0 };
+      this.settingsBtnRect = { x: -100, y: -100, w: 0, h: 0 };
+      this.pathfinderBtnRect = { x: -100, y: -100, w: 0, h: 0 };
+      this.chroniclesBtnRect = { x: -100, y: -100, w: 0, h: 0 };
+      this.helpBtnRect = { x: rightMargin - 40, y: 14, w: 40, h: 36 };
+      ctx.fillStyle = Theme.colors.bgCard;
+      ctx.beginPath();
+      ctx.roundRect(this.helpBtnRect.x, 14, 40, 36, 6);
+      ctx.fill();
+      ctx.strokeStyle = Theme.colors.border;
+      ctx.stroke();
+      ctx.fillStyle = Theme.colors.textMid;
+      ctx.font = `700 15px ${Theme.fonts.sans}`;
+      ctx.fillText('?', this.helpBtnRect.x + 20, 32);
+    } else if (!isMobile) {
       // Fullscreen Btn
       this.fullscreenBtnRect = { x: rightMargin - 40, y: 14, w: 40, h: 36 };
       ctx.fillStyle = Theme.colors.bgCard;
@@ -585,6 +607,15 @@ export class HeaderBar extends Entity {
           return true;
         }
       }
+    }
+
+    if (this.welcomeMode) {
+      if (this.isInRect(clientX, clientY, this.helpBtnRect)) {
+        this.hideDropdown();
+        this.onOpenHelpCb();
+        return true;
+      }
+      return clientY <= 64;
     }
 
     // 2. Filter Pills

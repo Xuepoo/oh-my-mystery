@@ -8,6 +8,7 @@ export class Minimap extends Entity {
   private heightPx = 126;
   private lastSweepTime = 0;
   private radarAngle = 0;
+  private enabled = true;
 
   constructor(viewport: GraphViewport) {
     super();
@@ -17,6 +18,7 @@ export class Minimap extends Entity {
   }
 
   public handleClick(x: number, y: number): boolean {
+    if (!this.enabled) return false;
     const startX = 24;
     const startY = this.scene ? this.scene.height - this.heightPx - 24 : 0;
     // Only the map area (below the title strip) triggers fitToView
@@ -29,12 +31,14 @@ export class Minimap extends Entity {
   }
 
   isPointInside(x: number, y: number): boolean {
+    if (!this.enabled) return false;
     const startX = 24;
     const startY = this.scene ? this.scene.height - this.heightPx - 24 : 0;
     return x >= startX && x <= startX + this.widthPx && y >= startY && y <= startY + this.heightPx;
   }
 
   render(r: any): void {
+    if (!this.enabled) return;
     const ctx = getCanvasCtx(r);
     const startX = 24;
     const startY = this.scene.height - this.heightPx - 24;
@@ -142,5 +146,11 @@ export class Minimap extends Entity {
       ctx.strokeRect(boxLeft, boxTop, boxW, boxH);
     }
     ctx.restore();
+  }
+
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+    this.scene?.markDirty();
   }
 }

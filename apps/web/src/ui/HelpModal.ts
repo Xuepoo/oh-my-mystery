@@ -1,5 +1,6 @@
 import { Entity } from '@vectojs/core';
 import { getCanvasCtx, Theme } from './theme';
+import { truncateText, wrapText, withClip } from './text-layout';
 
 interface HelpSection {
   icon: string;
@@ -181,7 +182,9 @@ export class HelpModal extends Entity {
       const s = SECTIONS[i]!;
       const col = twoCol ? i % 2 : 0;
       const secX = contentX + col * (colW + colGap);
-      const secH = sectionPad * 2 + 22 + s.lines.length * lineH;
+      ctx.font = `500 12px ${Theme.fonts.sans}`;
+      const preparedLines = s.lines.flatMap((line) => wrapText(ctx, line, colW - 24, 2));
+      const secH = sectionPad * 2 + 22 + preparedLines.length * lineH;
       const secY = curY;
 
       // Section card
@@ -197,13 +200,15 @@ export class HelpModal extends Entity {
       ctx.font = `700 13px ${Theme.fonts.serif}`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
-      ctx.fillText(`${s.icon} ${s.title}`, secX + 12, secY + 12);
+      ctx.fillText(truncateText(ctx, `${s.icon} ${s.title}`, colW - 24), secX + 12, secY + 12);
 
       ctx.fillStyle = Theme.colors.textMid;
       ctx.font = `500 12px ${Theme.fonts.sans}`;
-      for (let li = 0; li < s.lines.length; li++) {
-        ctx.fillText(s.lines[li]!, secX + 12, secY + 34 + li * lineH);
-      }
+      withClip(ctx, { x: secX + 8, y: secY + 32, w: colW - 16, h: secH - 36 }, () => {
+        for (let li = 0; li < preparedLines.length; li++) {
+          ctx.fillText(preparedLines[li]!, secX + 12, secY + 34 + li * lineH);
+        }
+      });
 
       if (!twoCol || col === 1) curY += secH + 12;
     }

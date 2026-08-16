@@ -22,6 +22,7 @@ export class VisibilityManager extends Entity {
   private prevRect = { x: 0, y: 0, w: 80, h: 44 };
   private nextRect = { x: 0, y: 0, w: 80, h: 44 };
   private rowRects: RowRect[] = [];
+  private enabled = true;
 
   constructor(viewport: GraphViewport) {
     super();
@@ -41,11 +42,13 @@ export class VisibilityManager extends Entity {
   }
 
   isPointInside(x: number, y: number): boolean {
+    if (!this.enabled) return false;
     if (this.open) return true;
     return this.viewport.getHiddenNodes().length > 0 && this.inRect(x, y, this.toggleRect);
   }
 
   handleClick(x: number, y: number): boolean {
+    if (!this.enabled) return false;
     const hidden = this.viewport.getHiddenNodes();
     if (!this.open) {
       if (!hidden.length || !this.inRect(x, y, this.toggleRect)) return false;
@@ -86,6 +89,7 @@ export class VisibilityManager extends Entity {
   }
 
   render(r: any): void {
+    if (!this.enabled) return;
     const hidden = this.viewport.getHiddenNodes();
     if (!hidden.length) {
       this.open = false;
@@ -141,6 +145,13 @@ export class VisibilityManager extends Entity {
     ctx.font = `500 10px ${Theme.fonts.sans}`;
     ctx.textAlign = 'center';
     ctx.fillText(`${this.page + 1} / ${pageCount}`, modalX + modalW - 140, footerY - 7);
+  }
+
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+    if (!enabled) this.close();
+    this.scene?.markDirty();
   }
 
   private getPageSize(modalH: number): number {

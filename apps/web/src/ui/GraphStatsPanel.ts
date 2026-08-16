@@ -3,6 +3,7 @@ import type { StatsResponse } from '@omm/shared';
 import type { D1DataSource } from '../api/D1DataSource';
 import type { GraphViewport } from '../scene/GraphViewport';
 import { getCanvasCtx, Theme } from './theme';
+import { fitFontSize, truncateText, withClip } from './text-layout';
 
 const TYPE_LABELS: Record<string, string> = {
   author: '作家',
@@ -22,6 +23,7 @@ export class GraphStatsPanel extends Entity {
   private toggleRect = { x: 320, y: 76, w: 96, h: 44 };
   private modalRect = { x: 0, y: 0, w: 0, h: 0 };
   private closeRect = { x: 0, y: 0, w: 44, h: 44 };
+  private enabled = true;
 
   constructor(source: D1DataSource, viewport: GraphViewport) {
     super();
@@ -42,11 +44,13 @@ export class GraphStatsPanel extends Entity {
   }
 
   isPointInside(x: number, y: number): boolean {
+    if (!this.enabled) return false;
     if (this.open) return true;
     return this.inRect(x, y, this.toggleRect);
   }
 
   handleClick(x: number, y: number): boolean {
+    if (!this.enabled) return false;
     if (!this.open) {
       if (!this.inRect(x, y, this.toggleRect)) return false;
       this.open = true;
@@ -61,6 +65,7 @@ export class GraphStatsPanel extends Entity {
   }
 
   render(r: any): void {
+    if (!this.enabled) return;
     const ctx = getCanvasCtx(r);
     const compact = this.scene.width < 480;
     this.toggleRect = {
@@ -151,6 +156,13 @@ export class GraphStatsPanel extends Entity {
     }
   }
 
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) return;
+    this.enabled = enabled;
+    if (!enabled) this.close();
+    this.scene?.markDirty();
+  }
+
   private loadStats(): void {
     if (this.loading || this.stats) return;
     this.loading = true;
@@ -168,16 +180,18 @@ export class GraphStatsPanel extends Entity {
     w: number,
     data: string[],
   ): void {
-    ctx.fillStyle = 'rgba(50, 39, 30, 0.82)';
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, 60, 8);
-    ctx.fill();
-    ctx.fillStyle = Theme.colors.textMuted;
-    ctx.font = `600 10px ${Theme.fonts.sans}`;
-    ctx.fillText(data[0]!, x + 12, y + 18);
-    ctx.fillStyle = Theme.colors.textHigh;
-    ctx.font = `700 18px ${Theme.fonts.serif}`;
-    ctx.fillText(data[1]!, x + 12, y + 42);
+    withClip(ctx, { x, y, w, h: 60 }, () => {
+      ctx.fillStyle = 'rgba(50, 39, 30, 0.82)';
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, 60, 8);
+      ctx.fill();
+      ctx.fillStyle = Theme.colors.textMuted;
+      ctx.font = `600 10px ${Theme.fonts.sans}`;
+      ctx.fillText(truncateText(ctx, data[0]!, w - 24), x + 12, y + 18);
+      ctx.fillStyle = Theme.colors.textHigh;
+      fitFontSize(ctx, data[1]!, w - 24, 18, 12, (size) => `700 ${size}px ${Theme.fonts.serif}`);
+      ctx.fillText(truncateText(ctx, data[1]!, w - 24), x + 12, y + 42);
+    });
   }
 
   private drawButton(
