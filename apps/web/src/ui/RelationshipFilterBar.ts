@@ -111,6 +111,14 @@ export class RelationshipFilterBar extends Entity {
     return [...this.active];
   }
 
+  getActivePredicates(): readonly string[] {
+    const predicates = new Set<string>();
+    for (const index of this.active) {
+      for (const predicate of RELATIONS[index]!.predicates) predicates.add(predicate);
+    }
+    return [...predicates];
+  }
+
   setActiveIndexes(indexes: readonly number[]): void {
     this.active = new Set(indexes.filter((index) => index >= 0 && index < RELATIONS.length));
     const predicates = new Set<string>();

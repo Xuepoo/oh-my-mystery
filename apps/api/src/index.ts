@@ -204,9 +204,14 @@ app.get('/api/nodes', async (c) => {
 // 4. Get 1-Hop Neighbors (Strictly conforms to KgDataSource KgNeighborhood format)
 app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
   const id = c.req.param('id');
-  const parsedQuery = parseQuery(neighborQuerySchema, { limit: c.req.query('limit') });
+  const parsedQuery = parseQuery(neighborQuerySchema, {
+    limit: c.req.query('limit'),
+    cursor: c.req.query('cursor'),
+    direction: c.req.query('direction'),
+    predicates: c.req.query('predicates'),
+  });
   if ('error' in parsedQuery) return c.json({ error: parsedQuery.error }, 400);
-  const limit = parsedQuery.data.limit;
+  const { limit, cursor, direction, predicates } = parsedQuery.data;
 
   // 1. Fetch the focal entity
   const entityRow = await c.env.DB.prepare('SELECT * FROM entities WHERE id = ?').bind(id).first();
@@ -220,20 +225,46 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
       };
 
   // 2. Fetch all raw facts connected to this entity
+  const directionClause =
+    direction === 'out'
+      ? "(subject_id = ? AND object_ref IS NOT NULL AND object_ref != '')"
+      : direction === 'in'
+        ? "(object_ref = ? AND subject_id IS NOT NULL AND subject_id != '')"
+        : `((subject_id = ? AND object_ref IS NOT NULL AND object_ref != '')
+           OR (object_ref = ? AND subject_id IS NOT NULL AND subject_id != ''))`;
+  const bindings: unknown[] = direction === 'both' ? [id, id] : [id];
+  let predicateClause = '';
+  if (predicates?.length) {
+    predicateClause = ` AND predicate IN (${predicates.map(() => '?').join(',')})`;
+    bindings.push(...predicates);
+  }
+  let cursorClause = '';
+  if (cursor) {
+    const [priority, factId] = cursor.split(':');
+    cursorClause = ` AND (
+      CASE WHEN predicate = 'publisher' THEN 0 ELSE 1 END > ?
+      OR (CASE WHEN predicate = 'publisher' THEN 0 ELSE 1 END = ? AND id > ?)
+    )`;
+    bindings.push(Number(priority), Number(priority), factId);
+  }
+  bindings.push(limit + 1);
   const rawFactsRows = await c.env.DB.prepare(
-    `
-    SELECT * FROM facts 
-    WHERE ((subject_id = ? AND object_ref IS NOT NULL AND object_ref != '')
-       OR (object_ref = ? AND subject_id IS NOT NULL AND subject_id != ''))
+    `SELECT * FROM facts
+     WHERE ${directionClause}
        AND predicate NOT IN ('translator', 'publisher_name', 'genre')
        AND (predicate != 'aozora_role' OR object_value = '著者')
-    LIMIT ?
-  `,
+       ${predicateClause}
+       ${cursorClause}
+     ORDER BY CASE WHEN predicate = 'publisher' THEN 0 ELSE 1 END, id
+     LIMIT ?`,
   )
-    .bind(id, id, limit)
+    .bind(...bindings)
     .all();
 
-  const rawFacts: OmmFact[] = (rawFactsRows.results || []).map((row: any) => ({
+  const pageRows = (rawFactsRows.results || []).slice(0, limit) as any[];
+  const hasMore = (rawFactsRows.results || []).length > limit;
+
+  const rawFacts: OmmFact[] = pageRows.map((row: any) => ({
     subject_id: row.subject_id,
     predicate: row.predicate,
     object_ref: row.object_ref,
@@ -341,6 +372,11 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
     entity: kgEntity,
     facts: validFacts,
     neighbors: kgNeighbors,
+    hasMore,
+    nextCursor:
+      hasMore && pageRows.length
+        ? `${pageRows.at(-1)!.predicate === 'publisher' ? 0 : 1}:${pageRows.at(-1)!.id}`
+        : undefined,
   });
 });
 

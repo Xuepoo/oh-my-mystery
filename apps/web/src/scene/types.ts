@@ -29,6 +29,9 @@ export interface GraphNeighborhood2D {
   entity: GraphNode2D;
   facts: GraphLink2D[];
   neighbors: GraphNode2D[];
+  nextCursor?: string;
+  hasMore: boolean;
+  failed?: boolean;
 }
 
 export function pickNodeLabel(

@@ -317,14 +317,23 @@ export class GraphViewport {
     return count;
   }
 
-  async toggleNodeExpansion(id: string): Promise<number> {
-    const count = await this.graph.toggleExpansion(id);
+  async toggleNodeExpansion(id: string, predicates?: readonly string[]): Promise<number> {
+    const count = await this.graph.toggleExpansion(id, predicates);
     this.onChange();
     return count;
   }
 
   isNodeExpanded(id: string): boolean {
     return this.graph.isExpanded(id);
+  }
+
+  canLoadMore(id: string): boolean {
+    return this.graph.canLoadMore(id);
+  }
+
+  collapseNode(id: string): void {
+    this.graph.collapse(id);
+    this.onChange();
   }
 
   async expandBounded(startId: string, maxDepth = 2, maxNewNodes = 80): Promise<number> {

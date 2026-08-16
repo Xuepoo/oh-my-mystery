@@ -18,6 +18,7 @@ const SECTOR_ANGLE = (Math.PI * 2) / 5;
 export interface NodeRadialMenuOptions {
   isPinned: (id: string) => boolean;
   isExpanded: (id: string) => boolean;
+  canLoadMore: (id: string) => boolean;
   onAction: (action: RadialAction, node: GraphNode2D) => void;
 }
 
@@ -27,6 +28,7 @@ export class NodeRadialMenu extends Entity {
   private hoveredAction: RadialAction | null = null;
   private isPinnedCb: (id: string) => boolean;
   private isExpandedCb: (id: string) => boolean;
+  private canLoadMoreCb: (id: string) => boolean;
   private onActionCb: (action: RadialAction, node: GraphNode2D) => void;
 
   constructor(options: NodeRadialMenuOptions) {
@@ -35,6 +37,7 @@ export class NodeRadialMenu extends Entity {
     this.interactive = true;
     this.isPinnedCb = options.isPinned;
     this.isExpandedCb = options.isExpanded;
+    this.canLoadMoreCb = options.canLoadMore;
     this.onActionCb = options.onAction;
   }
 
@@ -100,6 +103,7 @@ export class NodeRadialMenu extends Entity {
     const { x, y } = this.center;
     const pinned = this.isPinnedCb(this.node.id);
     const expanded = this.isExpandedCb(this.node.id);
+    const canLoadMore = this.canLoadMoreCb(this.node.id);
     const items: RadialSector[] = [
       {
         action: 'pin',
@@ -116,8 +120,8 @@ export class NodeRadialMenu extends Entity {
       },
       {
         action: 'expand',
-        icon: expanded ? '↩' : '✦',
-        label: expanded ? '收起' : '展开',
+        icon: canLoadMore ? '+' : expanded ? '↩' : '✦',
+        label: canLoadMore ? '更多' : expanded ? '收起' : '展开',
         centerAngle: -Math.PI / 2 + SECTOR_ANGLE * 3,
       },
       {
