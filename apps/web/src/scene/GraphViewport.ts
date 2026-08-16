@@ -266,6 +266,22 @@ export class GraphViewport {
     return hidden;
   }
 
+  getHiddenNodes(): readonly GraphNode2D[] {
+    return this.graph.getHiddenNodes();
+  }
+
+  restoreNode(id: string): boolean {
+    const restored = this.graph.restoreNode(id);
+    if (restored) this.onChange();
+    return restored;
+  }
+
+  restoreAllHidden(): number {
+    const restored = this.graph.restoreAllHidden();
+    if (restored) this.onChange();
+    return restored;
+  }
+
   highlightPath(nodeIds: string[], edges: { source: string; target: string }[]): void {
     this.activeHighlightNodes.clear();
     for (const nid of nodeIds) {

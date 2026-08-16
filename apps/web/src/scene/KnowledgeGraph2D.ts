@@ -13,6 +13,13 @@ export interface KnowledgeGraph2DOptions {
   source: D1DataSource;
 }
 
+interface HiddenNodeSnapshot {
+  node: GraphNode2D;
+  pinned: boolean;
+  nodeOwners: Set<string>;
+  links: { link: GraphLink2D; owners: Set<string> }[];
+}
+
 export class KnowledgeGraph2D {
   private source: D1DataSource;
   private nodesMap = new Map<string, GraphNode2D>();
@@ -26,6 +33,7 @@ export class KnowledgeGraph2D {
   private nodeOwners = new Map<string, Set<string>>();
   private factOwners = new Map<string, Set<string>>();
   private pinnedIds = new Set<string>();
+  private hiddenNodes = new Map<string, HiddenNodeSnapshot>();
 
   private simulation: Simulation<GraphNode2D, any> | null = null;
 
@@ -65,6 +73,7 @@ export class KnowledgeGraph2D {
     this.nodeOwners.clear();
     this.factOwners.clear();
     this.pinnedIds.clear();
+    this.hiddenNodes.clear();
 
     const count = seedNodes.length;
     for (let i = 0; i < count; i++) {
@@ -328,6 +337,26 @@ export class KnowledgeGraph2D {
     if (!this.nodesMap.has(id)) return false;
     if (this.expandedSet.has(id)) this.collapse(id);
 
+    const node = this.nodesMap.get(id)!;
+    const nodeOwners = new Set(this.nodeOwners.get(id) || []);
+    const incidentLinks: HiddenNodeSnapshot['links'] = [];
+    for (const link of this.linksList) {
+      const source = typeof link.source === 'object' ? link.source.id : link.source;
+      const target = typeof link.target === 'object' ? link.target.id : link.target;
+      if (source !== id && target !== id) continue;
+      const key = `${source}|${link.predicate}|${target}`;
+      incidentLinks.push({
+        link: { source, target, predicate: link.predicate },
+        owners: new Set(this.factOwners.get(key) || []),
+      });
+    }
+    this.hiddenNodes.set(id, {
+      node,
+      pinned: this.pinnedIds.has(id),
+      nodeOwners,
+      links: incidentLinks,
+    });
+
     this.nodesMap.delete(id);
     this.nodesList = this.nodesList.filter((node) => node.id !== id);
     this.pinnedIds.delete(id);
@@ -347,6 +376,65 @@ export class KnowledgeGraph2D {
     this.rebuildSimulation();
     this.reheat(0.35);
     return true;
+  }
+
+  getHiddenNodes(): readonly GraphNode2D[] {
+    return [...this.hiddenNodes.values()].map((snapshot) => snapshot.node);
+  }
+
+  restoreNode(id: string): boolean {
+    const restored = this.restoreHiddenNode(id);
+    if (!restored) return false;
+    this.rebuildSimulation();
+    this.reheat(0.35);
+    return true;
+  }
+
+  private restoreHiddenNode(id: string): boolean {
+    const snapshot = this.hiddenNodes.get(id);
+    if (!snapshot || this.nodesMap.has(id)) return false;
+
+    this.hiddenNodes.delete(id);
+    this.nodesMap.set(id, snapshot.node);
+    this.nodesList.push(snapshot.node);
+    if (snapshot.pinned) {
+      this.pinnedIds.add(id);
+      snapshot.node.fx = snapshot.node.x ?? 0;
+      snapshot.node.fy = snapshot.node.y ?? 0;
+    }
+
+    const owners = new Set([...snapshot.nodeOwners].filter((owner) => this.expandedSet.has(owner)));
+    if (owners.size) {
+      this.nodeOwners.set(id, owners);
+      for (const owner of owners) this.expansionNodes.get(owner)?.add(id);
+    }
+
+    for (const { link, owners: savedOwners } of snapshot.links) {
+      const source = typeof link.source === 'object' ? link.source.id : link.source;
+      const target = typeof link.target === 'object' ? link.target.id : link.target;
+      if (!this.nodesMap.has(source) || !this.nodesMap.has(target)) continue;
+      const key = `${source}|${link.predicate}|${target}`;
+      const factOwners = new Set([...savedOwners].filter((owner) => this.expandedSet.has(owner)));
+      if (!factOwners.size || this.factKeySet.has(key)) continue;
+      this.factKeySet.add(key);
+      this.factOwners.set(key, factOwners);
+      this.linksList.push({ source, target, predicate: link.predicate });
+      for (const owner of factOwners) this.expansionFacts.get(owner)?.add(key);
+    }
+
+    return true;
+  }
+
+  restoreAllHidden(): number {
+    let restored = 0;
+    for (const id of [...this.hiddenNodes.keys()]) {
+      if (this.restoreHiddenNode(id)) restored++;
+    }
+    if (restored) {
+      this.rebuildSimulation();
+      this.reheat(0.35);
+    }
+    return restored;
   }
 
   findNodeAt(worldX: number, worldY: number, hitRadius = 28): GraphNode2D | null {
