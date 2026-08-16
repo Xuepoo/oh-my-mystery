@@ -35,6 +35,7 @@ export class KnowledgeGraph2D {
   private factOwners = new Map<string, Set<string>>();
   private pinnedIds = new Set<string>();
   private hiddenNodes = new Map<string, HiddenNodeSnapshot>();
+  private generation = 0;
 
   private simulation: Simulation<GraphNode2D, any> | null = null;
 
@@ -52,6 +53,10 @@ export class KnowledgeGraph2D {
 
   get nodeCount(): number {
     return this.nodesList.length;
+  }
+
+  getGeneration(): number {
+    return this.generation;
   }
 
   getNode(id: string): GraphNode2D | undefined {
@@ -74,6 +79,8 @@ export class KnowledgeGraph2D {
   }
 
   async bootstrap(seedNodes: GraphNode2D[]): Promise<void> {
+    const generation = this.generation;
+    if (generation !== this.generation) return;
     this.nodesMap.clear();
     this.nodesList = [];
     this.linksList = [];
@@ -109,6 +116,7 @@ export class KnowledgeGraph2D {
   }
 
   async expand(nodeId: string, neighborLimit?: number): Promise<number> {
+    const generation = this.generation;
     if (this.expandedSet.has(nodeId)) return 0;
     const centerNode = this.nodesMap.get(nodeId);
     if (!centerNode) return 0;
@@ -116,6 +124,7 @@ export class KnowledgeGraph2D {
     const cy = centerNode.y ?? 0;
 
     const neighborhood = await this.source.getNeighbors(nodeId, { limit: neighborLimit });
+    if (generation !== this.generation || !this.nodesMap.has(nodeId)) return 0;
     this.expandedSet.add(nodeId);
     let addedCount = 0;
     const ownedNodes = new Set<string>();
@@ -193,6 +202,25 @@ export class KnowledgeGraph2D {
     this.rebuildSimulation();
     this.reheat(0.35);
     return true;
+  }
+
+  clear(): void {
+    this.generation++;
+    this.simulation?.stop();
+    this.simulation = null;
+    this.nodesMap.clear();
+    this.nodesList = [];
+    this.linksList = [];
+    this.factKeySet.clear();
+    this.expandedSet.clear();
+    this.rootIds.clear();
+    this.manualIds.clear();
+    this.expansionNodes.clear();
+    this.expansionFacts.clear();
+    this.nodeOwners.clear();
+    this.factOwners.clear();
+    this.pinnedIds.clear();
+    this.hiddenNodes.clear();
   }
 
   async toggleExpansion(nodeId: string): Promise<number> {

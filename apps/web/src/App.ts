@@ -20,6 +20,7 @@ import { RelationshipFilterBar } from './ui/RelationshipFilterBar';
 import { GraphHistoryControls } from './ui/GraphHistoryControls';
 import { VisibilityManager } from './ui/VisibilityManager';
 import { GraphStatsPanel } from './ui/GraphStatsPanel';
+import { GraphClearControl } from './ui/GraphClearControl';
 import { loadRenderSettings, measureDisplayRefresh, saveRenderSettings } from './render-settings';
 import type { RenderSettings } from './render-settings';
 
@@ -45,6 +46,7 @@ export class App {
   readonly graphHistoryControls: GraphHistoryControls;
   readonly visibilityManager: VisibilityManager;
   readonly graphStatsPanel: GraphStatsPanel;
+  readonly graphClearControl: GraphClearControl;
 
   private activeEntityDetails: EntityDetailResponse | null = null;
   private isPointerDown = false;
@@ -243,6 +245,9 @@ export class App {
     this.graphStatsPanel = new GraphStatsPanel(this.source, this.viewport);
     this.scene.add(this.graphStatsPanel);
 
+    this.graphClearControl = new GraphClearControl(() => this.clearCanvas());
+    this.scene.add(this.graphClearControl);
+
     this.radialMenu = new NodeRadialMenu({
       isPinned: (id) => this.viewport.isNodePinned(id),
       isExpanded: (id) => this.viewport.isNodeExpanded(id),
@@ -291,6 +296,7 @@ export class App {
       this.graphHistoryControls.isPointInside(x, y) ||
       this.visibilityManager.isPointInside(x, y) ||
       this.graphStatsPanel.isPointInside(x, y) ||
+      this.graphClearControl.isPointInside(x, y) ||
       this.minimap.isPointInside(x, y) ||
       this.controls.isPointInside(x, y) ||
       this.radialMenu.isPointInside(x, y)
@@ -375,6 +381,10 @@ export class App {
       }
       if (this.graphStatsPanel.isPointInside(x, y)) {
         this.graphStatsPanel.handleClick(x, y);
+        return;
+      }
+      if (this.graphClearControl.isPointInside(x, y)) {
+        this.graphClearControl.handleClick(x, y);
         return;
       }
       if (this.helpModal.isPointInside(x, y)) {
@@ -768,6 +778,7 @@ export class App {
     this.graphHistoryControls.setEnabled(enabled);
     this.visibilityManager.setEnabled(enabled);
     this.graphStatsPanel.setEnabled(enabled);
+    this.graphClearControl.setEnabled(enabled);
     this.minimap.setEnabled(enabled);
     this.controls.setVisible(enabled && this.activeEntityDetails === null);
     if (!enabled) {
@@ -807,16 +818,43 @@ export class App {
   }
 
   private async addAndFocusSearchNode(id: string): Promise<void> {
+    const generation = this.viewport.graph.getGeneration();
     if (this.viewport.getHiddenNodes().some((node) => node.id === id)) {
       this.viewport.restoreNode(id);
     }
     if (!this.viewport.graph.getNode(id)) {
       const [node] = await this.source.getNodes([id]);
+      if (generation !== this.viewport.graph.getGeneration()) return;
       if (!node) return;
       this.viewport.addManualNode(node);
     }
     this.drawer.close();
     this.viewport.focusNode(id);
+  }
+
+  private clearCanvas(): void {
+    this.selectEpoch++;
+    if (this.pendingNodeClick) {
+      clearTimeout(this.pendingNodeClick);
+      this.pendingNodeClick = null;
+    }
+    this.cancelLongPress();
+    this.lastTouchTap = null;
+    this.activePointers.clear();
+    this.draggedNode = null;
+    this.isPointerDown = false;
+    this.isPanning = false;
+    this.expansionHistory = [];
+    this.graphHistoryControls.setCount(0);
+    this.drawer.close();
+    this.radialMenu.close();
+    this.visibilityManager.close();
+    this.graphStatsPanel.close();
+    this.pathfinderModal.close();
+    this.chroniclePanel.close();
+    this.overlayLayer.setHoveredEntity(null);
+    this.viewport.clear();
+    this.controls.setVisible(true);
   }
 
   private async toggleNodeExpansion(id: string): Promise<void> {

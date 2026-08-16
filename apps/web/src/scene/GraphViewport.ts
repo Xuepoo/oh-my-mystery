@@ -48,7 +48,9 @@ export class GraphViewport {
   }
 
   async init(seedIds?: string[]): Promise<void> {
+    const generation = this.graph.getGeneration();
     const seedNodes = await this.graph['source'].getNodes(seedIds);
+    if (generation !== this.graph.getGeneration()) return;
     await this.graph.bootstrap(seedNodes as GraphNode2D[]);
 
     // Center camera on origin
@@ -59,12 +61,24 @@ export class GraphViewport {
     // Asynchronously expand top 3 master authors in parallel for rich starting connections
     const topMasters = seedNodes.slice(0, 3).map((s) => s.id);
     setTimeout(() => {
+      if (generation !== this.graph.getGeneration()) return;
       Promise.all(topMasters.map((id) => this.graph.expand(id)))
         .then(() => {
           this.fitToView();
         })
         .catch(() => {});
     }, 120);
+  }
+
+  clear(): void {
+    this.graph.clear();
+    this.activeHighlightNodes.clear();
+    this.activeHighlightEdges.clear();
+    this.cameraAnimating = false;
+    this.panX = this.width / 2;
+    this.panY = this.height / 2;
+    this.zoom = 1;
+    this.onChange();
   }
 
   resize(w: number, h: number): void {
