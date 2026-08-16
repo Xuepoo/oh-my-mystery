@@ -333,6 +333,39 @@ export class KnowledgeGraph2D {
     return this.pinnedIds.has(id);
   }
 
+  relayoutAround(id: string): number {
+    const center = this.nodesMap.get(id);
+    if (!center) return 0;
+    const neighborIds = new Set<string>();
+    for (const link of this.linksList) {
+      const source = typeof link.source === 'object' ? link.source.id : link.source;
+      const target = typeof link.target === 'object' ? link.target.id : link.target;
+      if (source === id && this.nodesMap.has(target)) neighborIds.add(target);
+      else if (target === id && this.nodesMap.has(source)) neighborIds.add(source);
+    }
+
+    const neighbors = [...neighborIds]
+      .map((neighborId) => this.nodesMap.get(neighborId))
+      .filter((node): node is GraphNode2D => Boolean(node) && !this.pinnedIds.has(node!.id));
+    if (!neighbors.length) return 0;
+
+    const cx = center.x ?? 0;
+    const cy = center.y ?? 0;
+    const ring = Math.max(95, Math.min(190, 70 + neighbors.length * 5));
+    for (let i = 0; i < neighbors.length; i++) {
+      const node = neighbors[i]!;
+      const angle = -Math.PI / 2 + (i / neighbors.length) * Math.PI * 2;
+      node.x = cx + Math.cos(angle) * ring;
+      node.y = cy + Math.sin(angle) * ring;
+      node.vx = 0;
+      node.vy = 0;
+      node.fx = null;
+      node.fy = null;
+    }
+    this.reheat(0.28);
+    return neighbors.length;
+  }
+
   hideNode(id: string): boolean {
     if (!this.nodesMap.has(id)) return false;
     if (this.expandedSet.has(id)) this.collapse(id);

@@ -249,6 +249,8 @@ export class App {
           }
         } else if (action === 'expand') {
           void this.toggleNodeExpansion(node.id);
+        } else if (action === 'layout') {
+          this.viewport.relayoutAround(node.id);
         } else {
           void this.handleSelectNode(node.id, {
             x: node.sx ?? node.x ?? 0,

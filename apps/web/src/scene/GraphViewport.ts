@@ -260,6 +260,12 @@ export class GraphViewport {
     return this.graph.isPinned(id);
   }
 
+  relayoutAround(id: string): number {
+    const moved = this.graph.relayoutAround(id);
+    if (moved) this.onChange();
+    return moved;
+  }
+
   hideNode(id: string): boolean {
     const hidden = this.graph.hideNode(id);
     if (hidden) this.onChange();

@@ -2,7 +2,7 @@ import { Entity } from '@vectojs/core';
 import type { GraphNode2D } from '../scene/types';
 import { getCanvasCtx, Theme } from './theme';
 
-type RadialAction = 'pin' | 'hide' | 'expand' | 'details';
+type RadialAction = 'pin' | 'hide' | 'expand' | 'details' | 'layout';
 
 export interface NodeRadialMenuOptions {
   isPinned: (id: string) => boolean;
@@ -29,7 +29,7 @@ export class NodeRadialMenu extends Entity {
 
   open(node: GraphNode2D, x: number, y: number): void {
     this.node = node;
-    const margin = 92;
+    const margin = 112;
     this.center = {
       x: Math.max(margin, Math.min(this.scene.width - margin, x)),
       y: Math.max(136, Math.min(this.scene.height - margin, y)),
@@ -50,7 +50,7 @@ export class NodeRadialMenu extends Entity {
 
   isPointInside(x: number, y: number): boolean {
     if (!this.node) return false;
-    return Math.hypot(x - this.center.x, y - this.center.y) <= 96;
+    return Math.hypot(x - this.center.x, y - this.center.y) <= 112;
   }
 
   handleClick(x: number, y: number): boolean {
@@ -87,12 +87,13 @@ export class NodeRadialMenu extends Entity {
         angle: Math.PI / 2,
       },
       { action: 'hide', icon: '◌', label: '隐藏', angle: Math.PI },
+      { action: 'layout', icon: '✣', label: '重排', angle: -Math.PI / 4 },
     ];
 
     ctx.save();
     ctx.fillStyle = 'rgba(20, 15, 12, 0.82)';
     ctx.beginPath();
-    ctx.arc(x, y, 92, 0, Math.PI * 2);
+    ctx.arc(x, y, 108, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = Theme.colors.borderHighlight;
     ctx.lineWidth = 1.5;
