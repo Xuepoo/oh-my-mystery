@@ -2,7 +2,18 @@ import { Entity } from '@vectojs/core';
 import type { GraphNode2D } from '../scene/types';
 import { getCanvasCtx, Theme } from './theme';
 
-type RadialAction = 'pin' | 'hide' | 'expand' | 'details' | 'layout' | 'multihop';
+type RadialAction = 'pin' | 'hide' | 'expand' | 'details' | 'layout';
+
+interface RadialSector {
+  action: RadialAction;
+  icon: string;
+  label: string;
+  centerAngle: number;
+}
+
+const INNER_RADIUS = 38;
+const OUTER_RADIUS = 108;
+const SECTOR_ANGLE = (Math.PI * 2) / 5;
 
 export interface NodeRadialMenuOptions {
   isPinned: (id: string) => boolean;
@@ -13,7 +24,7 @@ export interface NodeRadialMenuOptions {
 export class NodeRadialMenu extends Entity {
   private node: GraphNode2D | null = null;
   private center = { x: 0, y: 0 };
-  private actionRects: { action: RadialAction; x: number; y: number; r: number }[] = [];
+  private hoveredAction: RadialAction | null = null;
   private isPinnedCb: (id: string) => boolean;
   private isExpandedCb: (id: string) => boolean;
   private onActionCb: (action: RadialAction, node: GraphNode2D) => void;
@@ -29,6 +40,7 @@ export class NodeRadialMenu extends Entity {
 
   open(node: GraphNode2D, x: number, y: number): void {
     this.node = node;
+    this.hoveredAction = null;
     const margin = 112;
     this.center = {
       x: Math.max(margin, Math.min(this.scene.width - margin, x)),
@@ -40,7 +52,7 @@ export class NodeRadialMenu extends Entity {
   close(): void {
     if (!this.node) return;
     this.node = null;
-    this.actionRects = [];
+    this.hoveredAction = null;
     this.scene.markDirty();
   }
 
@@ -55,15 +67,20 @@ export class NodeRadialMenu extends Entity {
 
   handleClick(x: number, y: number): boolean {
     if (!this.node) return false;
-    for (const item of this.actionRects) {
-      if (Math.hypot(x - item.x, y - item.y) <= item.r) {
-        const node = this.node;
-        this.close();
-        this.onActionCb(item.action, node);
-        return true;
-      }
-    }
-    return false;
+    const action = this.getActionAt(x, y);
+    if (!action) return false;
+    const node = this.node;
+    this.close();
+    this.onActionCb(action, node);
+    return true;
+  }
+
+  handlePointerMove(x: number, y: number): void {
+    if (!this.node) return;
+    const action = this.getActionAt(x, y);
+    if (action === this.hoveredAction) return;
+    this.hoveredAction = action;
+    this.scene.markDirty();
   }
 
   render(r: any): void {
@@ -72,53 +89,61 @@ export class NodeRadialMenu extends Entity {
     const { x, y } = this.center;
     const pinned = this.isPinnedCb(this.node.id);
     const expanded = this.isExpandedCb(this.node.id);
-    const items: { action: RadialAction; icon: string; label: string; angle: number }[] = [
+    const items: RadialSector[] = [
       {
         action: 'pin',
         icon: pinned ? '📌' : '📍',
         label: pinned ? '取消固定' : '固定',
-        angle: -Math.PI / 2,
+        centerAngle: -Math.PI / 2,
       },
-      { action: 'details', icon: '📜', label: '档案', angle: 0 },
+      { action: 'layout', icon: '✣', label: '重排', centerAngle: -Math.PI / 2 + SECTOR_ANGLE },
+      {
+        action: 'details',
+        icon: '📜',
+        label: '档案',
+        centerAngle: -Math.PI / 2 + SECTOR_ANGLE * 2,
+      },
       {
         action: 'expand',
         icon: expanded ? '↩' : '✦',
         label: expanded ? '收起' : '展开',
-        angle: Math.PI / 2,
+        centerAngle: -Math.PI / 2 + SECTOR_ANGLE * 3,
       },
-      { action: 'hide', icon: '◌', label: '隐藏', angle: Math.PI },
-      { action: 'layout', icon: '✣', label: '重排', angle: -Math.PI / 4 },
-      { action: 'multihop', icon: '↠', label: '两跳', angle: (-Math.PI * 3) / 4 },
+      {
+        action: 'hide',
+        icon: '◌',
+        label: '隐藏',
+        centerAngle: -Math.PI / 2 + SECTOR_ANGLE * 4,
+      },
     ];
 
     ctx.save();
-    ctx.fillStyle = 'rgba(20, 15, 12, 0.82)';
-    ctx.beginPath();
-    ctx.arc(x, y, 108, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = Theme.colors.borderHighlight;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    this.actionRects = [];
     for (const item of items) {
-      const cx = x + Math.cos(item.angle) * 62;
-      const cy = y + Math.sin(item.angle) * 62;
-      this.actionRects.push({ action: item.action, x: cx, y: cy, r: 25 });
-      ctx.fillStyle = Theme.colors.bgCard;
+      const start = item.centerAngle - SECTOR_ANGLE / 2;
+      const end = item.centerAngle + SECTOR_ANGLE / 2;
       ctx.beginPath();
-      ctx.arc(cx, cy, 24, 0, Math.PI * 2);
+      ctx.arc(x, y, OUTER_RADIUS, start, end);
+      ctx.arc(x, y, INNER_RADIUS, end, start, true);
+      ctx.closePath();
+      ctx.fillStyle =
+        this.hoveredAction === item.action ? 'rgba(243, 196, 118, 0.32)' : 'rgba(31, 24, 19, 0.94)';
       ctx.fill();
-      ctx.strokeStyle = Theme.colors.border;
+      ctx.strokeStyle =
+        this.hoveredAction === item.action ? Theme.colors.borderActive : Theme.colors.border;
+      ctx.lineWidth = this.hoveredAction === item.action ? 1.8 : 1;
       ctx.stroke();
+
+      const labelRadius = (INNER_RADIUS + OUTER_RADIUS) / 2;
+      const cx = x + Math.cos(item.centerAngle) * labelRadius;
+      const cy = y + Math.sin(item.centerAngle) * labelRadius;
       ctx.fillStyle = Theme.colors.textHigh;
-      ctx.font = `600 14px ${Theme.fonts.sans}`;
+      ctx.font = `600 15px ${Theme.fonts.sans}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(item.icon, cx, cy - 4);
+      ctx.fillText(item.icon, cx, cy - 7);
       ctx.fillStyle = Theme.colors.textMid;
-      ctx.font = `600 8px ${Theme.fonts.sans}`;
-      ctx.fillText(item.label, cx, cy + 11);
+      ctx.font = `600 9px ${Theme.fonts.sans}`;
+      ctx.fillText(item.label, cx, cy + 10);
     }
 
     ctx.fillStyle = this.node.color || Theme.getNodeColor(this.node.type);
@@ -129,5 +154,18 @@ export class NodeRadialMenu extends Entity {
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.restore();
+  }
+
+  private getActionAt(x: number, y: number): RadialAction | null {
+    const dx = x - this.center.x;
+    const dy = y - this.center.y;
+    const radius = Math.hypot(dx, dy);
+    if (radius < INNER_RADIUS || radius > OUTER_RADIUS) return null;
+
+    const angle = Math.atan2(dy, dx);
+    const start = -Math.PI / 2 - SECTOR_ANGLE / 2;
+    const normalized = (((angle - start) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    const actions: RadialAction[] = ['pin', 'layout', 'details', 'expand', 'hide'];
+    return actions[Math.floor(normalized / SECTOR_ANGLE)] || null;
   }
 }

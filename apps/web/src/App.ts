@@ -259,8 +259,6 @@ export class App {
           void this.toggleNodeExpansion(node.id);
         } else if (action === 'layout') {
           this.viewport.relayoutAround(node.id);
-        } else if (action === 'multihop') {
-          void this.viewport.expandBounded(node.id, 2, 80);
         } else {
           void this.handleSelectNode(node.id, {
             x: node.sx ?? node.x ?? 0,
@@ -530,6 +528,9 @@ export class App {
 
   private onPointerMove = (e: PointerEvent): void => {
     const { x, y } = getEventCoords(e);
+    if (this.radialMenu.isMenuOpen()) {
+      this.radialMenu.handlePointerMove(x, y);
+    }
     if (this.activePointers.has(e.pointerId)) {
       this.activePointers.set(e.pointerId, { x, y });
     }
