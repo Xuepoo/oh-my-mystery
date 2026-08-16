@@ -16,6 +16,7 @@ import { getEventCoords } from './ui/theme';
 import { ViewportControls } from './ui/ViewportControls';
 import { WelcomeLayer } from './ui/WelcomeLayer';
 import { RenderSettingsModal } from './ui/RenderSettingsModal';
+import { RelationshipFilterBar } from './ui/RelationshipFilterBar';
 import { loadRenderSettings, measureDisplayRefresh, saveRenderSettings } from './render-settings';
 import type { RenderSettings } from './render-settings';
 
@@ -37,6 +38,7 @@ export class App {
   readonly controls: ViewportControls;
   readonly radialMenu: NodeRadialMenu;
   readonly renderSettingsModal: RenderSettingsModal;
+  readonly relationshipFilterBar: RelationshipFilterBar;
 
   private activeEntityDetails: EntityDetailResponse | null = null;
   private isPointerDown = false;
@@ -216,6 +218,11 @@ export class App {
     );
     this.scene.add(this.renderSettingsModal);
 
+    this.relationshipFilterBar = new RelationshipFilterBar(this.viewport, (predicates) => {
+      this.overlayLayer.setActivePredicates(predicates);
+    });
+    this.scene.add(this.relationshipFilterBar);
+
     this.radialMenu = new NodeRadialMenu({
       isPinned: (id) => this.viewport.isNodePinned(id),
       isExpanded: (id) => this.viewport.isNodeExpanded(id),
@@ -252,6 +259,7 @@ export class App {
       this.chroniclePanel.isPointInside(x, y) ||
       this.pathfinderModal.isPointInside(x, y) ||
       this.renderSettingsModal.isPointInside(x, y) ||
+      this.relationshipFilterBar.isPointInside(x, y) ||
       this.minimap.isPointInside(x, y) ||
       this.controls.isPointInside(x, y) ||
       this.radialMenu.isPointInside(x, y)
@@ -295,6 +303,10 @@ export class App {
       }
       if (this.renderSettingsModal.isModalOpen()) {
         this.renderSettingsModal.handleClick(x, y);
+        return;
+      }
+      if (this.relationshipFilterBar.isPointInside(x, y)) {
+        this.relationshipFilterBar.handleClick(x, y);
         return;
       }
       if (this.helpModal.isPointInside(x, y)) {

@@ -33,6 +33,7 @@ export class GraphOverlayLayer extends Entity {
   private badgePool: NodeScreenBadge[] = [];
   private pillCache = new Map<string, CachedPillInfo>();
   private activeFilter: string | null = null;
+  private activePredicates: ReadonlySet<string> | null = null;
 
   constructor(viewport: GraphViewport) {
     super();
@@ -51,6 +52,11 @@ export class GraphOverlayLayer extends Entity {
 
   setActiveFilter(filter: string | null): void {
     this.activeFilter = filter;
+    this.scene.markDirty();
+  }
+
+  setActivePredicates(predicates: ReadonlySet<string> | null): void {
+    this.activePredicates = predicates;
     this.scene.markDirty();
   }
 
@@ -171,6 +177,7 @@ export class GraphOverlayLayer extends Entity {
 
     for (let i = 0; i < links.length; i++) {
       const link = links[i]!;
+      if (this.activePredicates && !this.activePredicates.has(link.predicate)) continue;
       const srcId = typeof link.source === 'object' ? link.source.id : link.source;
       const tgtId = typeof link.target === 'object' ? link.target.id : link.target;
 
