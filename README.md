@@ -1,4 +1,4 @@
-# 🔍 Oh My Mystery (OMM) · 全球推理小说知识图谱
+# <img src="https://cdn.xuepoo.xyz/omm/community/omm-logo.png" alt="OMM Logo" width="72" height="72"> Oh My Mystery (OMM) · 全球推理小说知识图谱
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-amber.svg)](LICENSE)
 [![Built with VectoJS](https://img.shields.io/badge/Render-VectoJS%20Zero--DOM-blue.svg)](https://github.com/vectojs/vectojs)
@@ -15,7 +15,7 @@
 
 - 🚀 **Zero-DOM 纯 Canvas 渲染架构**：采用 VectoJS 与 Three.js 2D/3D 双层渲染管线，摒弃沉重 DOM 树，在万级实体拓扑下保持恒定 60FPS 极速交互。
 - 📜 **推理演进编年史 (Chronicle Trails)**：沉浸式多幕叙事导览，带你穿梭于「黄金时代三巨头」与「日本推理小说百年演进史」，镜头自动平滑滑行聚焦至历史线索中心。
-- 🔗 **侦探关系探路器 (Pathfinder)**：基于图拓扑的最短关系链推演算法，一键揭示任意两位侦探作家或作品之间的隐秘脉络（如：_柯南·道尔 $\longleftrightarrow$ 江户川乱步_）。
+- 🔗 **侦探关系探路器 (Pathfinder)**：基于图拓扑的最短关系链推演算法，一键揭示任意两位侦探作家或作品之间的隐秘脉络（如：_柯南·道尔 ↔ 江户川乱步_）。
 - 🌟 **智能文脉关联与推荐 (Recommendations)**：结合图谱拓扑与离线预计算的关联推荐系统，并附带动态文脉共鸣度仪表。
 - 🎨 **顶级获奖级古典案卷美学**：
   - **金色线索星尘场**：具备流体动力学光标避让与呼吸浮动的线索微粒；
@@ -43,7 +43,7 @@ omm/
 | 模块           | 技术选型                             | 说明                                          |
 | :------------- | :----------------------------------- | :-------------------------------------------- |
 | **前端核心**   | VectoJS + Three.js + TypeScript      | Zero-DOM Canvas 渲染与 3D 力导向知识图谱      |
-| **构建工具**   | Vite 6 + Bun                         | 高效模块热更新与代码分包构建                  |
+| **构建工具**   | Vite 8 + Bun                         | 高效模块热更新与代码分包构建                  |
 | **后端框架**   | Hono                                 | 轻量极速 Web 框架，原生运行于 Edge 边缘节点   |
 | **边缘运行时** | Cloudflare Workers + D1              | Serverless 分布式无服务器架构与 SQLite 数据库 |
 | **质量门禁**   | oxfmt + oxlint + Vitest + Playwright | 统一高性能 Rust/Go 代码规范与自动化测试套件   |
@@ -103,6 +103,16 @@ just deploy
 ## 🤝 贡献与反馈
 
 欢迎提交 Issue 与 Pull Request！在贡献代码前，请确保运行 `just check && just test` 并通过所有质量门禁。
+
+### OMM 讨论群
+
+欢迎加入 OMM QQ 群 `1065814686`，交流推理小说数据、图谱使用体验与项目构想。
+
+<p align="center">
+  <img src="https://cdn.xuepoo.xyz/omm/community/omm-discussion-group.webp" alt="OMM QQ 群二维码" width="280">
+</p>
+
+爬虫数据目前由项目维护流程持续整理。后续计划在完成清理、文档和脱敏工作后，开放 `mystery-clawer` 爬虫代码，方便社区共同维护数据来源与采集规则。
 
 ---
 
