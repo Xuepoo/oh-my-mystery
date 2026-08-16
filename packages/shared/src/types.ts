@@ -77,6 +77,8 @@ export interface PathfinderResult {
     source: string;
     target: string;
     predicate: string;
+    storedSource?: string;
+    storedTarget?: string;
   }[];
   hops: number;
   explanation?: string;

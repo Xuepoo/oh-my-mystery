@@ -141,6 +141,32 @@ describe('OMM Backend API Endpoints', () => {
     expect(body.found).toBe(true);
     expect(body.nodes.length).toBeGreaterThan(1);
     expect(body.edges.length).toBeGreaterThan(0);
+    expect(body.nodes.length).toBe(body.edges.length + 1);
+    expect(body.nodes[0].id).toBe('wd:Q347412');
+    expect(body.nodes.at(-1).id).toBe('wd:Q35064');
+    expect(body.hops).toBe(body.edges.length);
+    for (let i = 0; i < body.edges.length; i++) {
+      expect(body.edges[i].source).toBe(body.nodes[i].id);
+      expect(body.edges[i].target).toBe(body.nodes[i + 1].id);
+    }
+  });
+
+  it('GET /api/path traverses stored facts in reverse direction', async () => {
+    const forward = await app.request('/api/path?source=wd:Q347412&target=wd:Q35064', {}, mockEnv);
+    const forwardBody = (await forward.json()) as any;
+    const reverse = await app.request('/api/path?source=wd:Q35064&target=wd:Q347412', {}, mockEnv);
+    expect(reverse.status).toBe(200);
+    const body = (await reverse.json()) as any;
+    expect(body.found).toBe(true);
+    expect(body.nodes[0].id).toBe('wd:Q35064');
+    expect(body.nodes.at(-1).id).toBe('wd:Q347412');
+    expect(body.hops).toBe(forwardBody.hops);
+    for (let i = 0; i < body.edges.length; i++) {
+      expect(body.edges[i].source).toBe(body.nodes[i].id);
+      expect(body.edges[i].target).toBe(body.nodes[i + 1].id);
+      expect(body.edges[i].storedSource).toBeDefined();
+      expect(body.edges[i].storedTarget).toBeDefined();
+    }
   });
 
   it('GET /api/chronicles returns curated storytelling trails', async () => {
@@ -161,6 +187,21 @@ describe('OMM Backend API Endpoints', () => {
     expect(body.hops).toBe(0);
     expect(body.nodes.length).toBe(1);
     expect(body.edges.length).toBe(0);
+  });
+
+  it('Edge Case: GET /api/path rejects unknown endpoints', async () => {
+    const same = await app.request(
+      '/api/path?source=wd:Q0-not-real&target=wd:Q0-not-real',
+      {},
+      mockEnv,
+    );
+    expect(same.status).toBe(404);
+    const distinct = await app.request(
+      '/api/path?source=wd:Q347412&target=wd:Q0-not-real',
+      {},
+      mockEnv,
+    );
+    expect(distinct.status).toBe(404);
   });
 
   it('Edge Case: GET /api/path with missing parameters returns 400', async () => {

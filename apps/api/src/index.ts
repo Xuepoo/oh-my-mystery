@@ -589,6 +589,7 @@ app.get('/api/path', async (c) => {
 
   if (source === target) {
     const node = await c.env.DB.prepare('SELECT * FROM entities WHERE id = ?').bind(source).first();
+    if (!node) return c.json({ error: 'Source and target entity not found' }, 404);
     return c.json({
       found: true,
       nodes: node ? [formatEntityRow(node)] : [],
@@ -596,6 +597,14 @@ app.get('/api/path', async (c) => {
       hops: 0,
       explanation: '起点与终点为同一实体',
     });
+  }
+
+  const endpoints = await c.env.DB.prepare('SELECT id FROM entities WHERE id IN (?, ?)')
+    .bind(source, target)
+    .all();
+  const endpointIds = new Set((endpoints.results || []).map((row: any) => String(row.id)));
+  if (!endpointIds.has(source) || !endpointIds.has(target)) {
+    return c.json({ error: 'Source and target must be existing entities' }, 404);
   }
 
   // Breadth-first pathfinding (Max 5 hops)
@@ -625,14 +634,18 @@ app.get('/api/path', async (c) => {
     nodeMap.set(e.id, e);
   }
 
-  const orderedNodes: OmmEntity[] = path.nodes.map(
-    (nid) =>
-      nodeMap.get(nid) || {
-        id: nid,
-        type: 'other',
-        names: { labels: { '': nid } },
-      },
-  );
+  const orderedNodes = path.nodes.map((nid) => nodeMap.get(nid)).filter(Boolean) as OmmEntity[];
+  if (
+    orderedNodes.length !== path.nodes.length ||
+    orderedNodes.length !== path.edges.length + 1 ||
+    orderedNodes[0]?.id !== source ||
+    orderedNodes.at(-1)?.id !== target ||
+    path.edges.some(
+      (edge, index) => edge.source !== path.nodes[index] || edge.target !== path.nodes[index + 1],
+    )
+  ) {
+    return c.json({ error: 'Path response invariants failed' }, 500);
+  }
 
   const result: PathfinderResult = {
     found: true,
@@ -757,26 +770,30 @@ async function findShortestPath(
 
     const rows = await db
       .prepare(
-        'SELECT * FROM facts WHERE subject_id = ? OR object_ref = ? OR object_value = ? LIMIT 60',
+        `SELECT f.subject_id, f.object_ref, f.predicate
+         FROM facts f
+         JOIN entities subject_entity ON subject_entity.id = f.subject_id
+         JOIN entities object_entity ON object_entity.id = f.object_ref
+         WHERE (f.subject_id = ? OR f.object_ref = ?)
+           AND f.object_ref IS NOT NULL
+           AND TRIM(f.object_ref) <> ''
+         ORDER BY CASE WHEN f.subject_id = ? THEN f.object_ref ELSE f.subject_id END COLLATE NOCASE,
+                  f.predicate COLLATE NOCASE,
+                  f.subject_id COLLATE NOCASE,
+                  f.object_ref COLLATE NOCASE`,
       )
       .bind(current.id, current.id, current.id)
       .all();
 
     for (const r of (rows.results || []) as any[]) {
-      const neighbor = r.subject_id === current.id ? r.object_ref || r.object_value : r.subject_id;
-      if (
-        !neighbor ||
-        typeof neighbor !== 'string' ||
-        !neighbor.trim() ||
-        neighbor.startsWith('+')
-      ) {
-        continue;
-      }
+      const neighbor = r.subject_id === current.id ? String(r.object_ref) : String(r.subject_id);
 
       const edge = {
-        source: r.subject_id,
-        target: r.object_ref || r.object_value,
+        source: current.id,
+        target: neighbor,
         predicate: r.predicate,
+        storedSource: String(r.subject_id),
+        storedTarget: String(r.object_ref),
       };
 
       if (neighbor === end) {
