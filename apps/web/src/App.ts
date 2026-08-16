@@ -10,6 +10,7 @@ import { ChroniclePanel } from './ui/ChroniclePanel';
 import { HeaderBar } from './ui/HeaderBar';
 import { HelpModal } from './ui/HelpModal';
 import { Minimap } from './ui/Minimap';
+import { NodeRadialMenu } from './ui/NodeRadialMenu';
 import { PathfinderModal } from './ui/PathfinderModal';
 import { getEventCoords } from './ui/theme';
 import { ViewportControls } from './ui/ViewportControls';
@@ -31,6 +32,7 @@ export class App {
   readonly welcomeLayer: WelcomeLayer;
   readonly minimap: Minimap;
   readonly controls: ViewportControls;
+  readonly radialMenu: NodeRadialMenu;
 
   private activeEntityDetails: EntityDetailResponse | null = null;
   private isPointerDown = false;
@@ -45,6 +47,7 @@ export class App {
   private panVelocity = { vx: 0, vy: 0 };
   private lastActivityAt = performance.now();
   private static readonly IDLE_AMBIENT_MS = 6000;
+  private pendingNodeClick: ReturnType<typeof setTimeout> | null = null;
 
   // The scene renders on demand; it stays awake while the user is interacting,
   // the physics sim is running, or the camera is animating — plus a short
@@ -133,6 +136,7 @@ export class App {
     this.drawer = new CasefileDrawer({
       onClose: () => {
         this.activeEntityDetails = null;
+        this.controls?.setVisible(true);
       },
       onSelectEntity: (id) => {
         void this.handleSelectNode(id);
@@ -142,7 +146,7 @@ export class App {
         this.pathfinderModal.open({ id, name });
       },
       onExpandNode: (id) => {
-        void this.viewport.expandNode(id);
+        void this.viewport.toggleNodeExpansion(id);
       },
     });
     this.scene.add(this.drawer);
@@ -188,6 +192,28 @@ export class App {
     this.controls = new ViewportControls(this.viewport);
     this.scene.add(this.controls);
 
+    this.radialMenu = new NodeRadialMenu({
+      isPinned: (id) => this.viewport.isNodePinned(id),
+      isExpanded: (id) => this.viewport.isNodeExpanded(id),
+      onAction: (action, node) => {
+        if (action === 'pin') {
+          this.viewport.toggleNodePinned(node.id);
+        } else if (action === 'hide') {
+          if (this.activeEntityDetails?.entity.id === node.id) this.drawer.close();
+          this.overlayLayer.setHoveredEntity(null);
+          this.viewport.hideNode(node.id);
+        } else if (action === 'expand') {
+          void this.viewport.toggleNodeExpansion(node.id);
+        } else {
+          void this.handleSelectNode(node.id, {
+            x: node.sx ?? node.x ?? 0,
+            y: node.sy ?? node.y ?? 0,
+          });
+        }
+      },
+    });
+    this.scene.add(this.radialMenu);
+
     // 4. Bind Native Canvas Pointer Interactions
     this.setupInteractions();
 
@@ -202,12 +228,14 @@ export class App {
       this.chroniclePanel.isPointInside(x, y) ||
       this.pathfinderModal.isPointInside(x, y) ||
       this.minimap.isPointInside(x, y) ||
-      this.controls.isPointInside(x, y)
+      this.controls.isPointInside(x, y) ||
+      this.radialMenu.isPointInside(x, y)
     );
   }
 
   private setupInteractions(): void {
     this.canvas.addEventListener('pointerdown', (e) => {
+      if (e.button === 2) return;
       const { x, y } = getEventCoords(e);
       this.pointerDownPos = { x, y };
       this.lastPointerPos = { x, y };
@@ -236,6 +264,10 @@ export class App {
       this.pinchState = null;
 
       // 1. Dispatch to UI Panels (Highest overlay priority first)
+      if (this.radialMenu.isMenuOpen()) {
+        if (!this.radialMenu.handleClick(x, y)) this.radialMenu.close();
+        return;
+      }
       if (this.helpModal.isPointInside(x, y)) {
         this.helpModal.handleClick(x, y);
         return;
@@ -290,10 +322,31 @@ export class App {
     // Canvas is the whole app surface: the browser context menu
     // (save image/copy image) is meaningless here.
     this.canvas.addEventListener('contextmenu', this.onCanvasContextMenu);
+    this.canvas.addEventListener('dblclick', this.onCanvasDoubleClick);
   }
 
-  private onCanvasContextMenu = (e: Event): void => {
+  private onCanvasContextMenu = (e: MouseEvent): void => {
     e.preventDefault();
+    const { x, y } = getEventCoords(e);
+    if (this.radialMenu.isMenuOpen()) this.radialMenu.close();
+    if (this.isEventOverUI(x, y)) return;
+    const node = this.overlayLayer.getNodeAtScreenPoint(x, y);
+    if (node) this.radialMenu.open(node, x, y);
+    else this.radialMenu.close();
+  };
+
+  private onCanvasDoubleClick = (e: MouseEvent): void => {
+    const { x, y } = getEventCoords(e);
+    if (this.isEventOverUI(x, y)) return;
+    const node = this.overlayLayer.getNodeAtScreenPoint(x, y);
+    if (!node) return;
+    if (this.pendingNodeClick) {
+      clearTimeout(this.pendingNodeClick);
+      this.pendingNodeClick = null;
+    }
+    this.drawer.close();
+    this.radialMenu.close();
+    void this.viewport.toggleNodeExpansion(node.id);
   };
 
   // Block browser shortcuts that only make sense for document pages
@@ -317,6 +370,10 @@ export class App {
         return;
       }
       if (this.headerBar.hideDropdown()) return;
+      if (this.radialMenu.isMenuOpen()) {
+        this.radialMenu.close();
+        return;
+      }
       if (this.helpModal.isModalOpen()) {
         this.helpModal.close();
         return;
@@ -432,8 +489,13 @@ export class App {
     if (this.draggedNode) {
       this.viewport.graph.unpinNode(this.draggedNode.id);
       if (moveDist < 6) {
-        // Clicked node
-        void this.handleSelectNode(this.draggedNode.id);
+        // Delay single-click details so native dblclick can claim the gesture.
+        const node = this.draggedNode;
+        if (this.pendingNodeClick) clearTimeout(this.pendingNodeClick);
+        this.pendingNodeClick = setTimeout(() => {
+          this.pendingNodeClick = null;
+          void this.handleSelectNode(node.id, { x, y });
+        }, 240);
       }
       this.draggedNode = null;
     } else if (this.isPanning) {
@@ -498,6 +560,8 @@ export class App {
     window.removeEventListener('resize', this.onResize);
     window.removeEventListener('keydown', this.onWindowKeydown);
     this.canvas.removeEventListener('contextmenu', this.onCanvasContextMenu);
+    this.canvas.removeEventListener('dblclick', this.onCanvasDoubleClick);
+    if (this.pendingNodeClick) clearTimeout(this.pendingNodeClick);
     this.headerBar.dispose();
     this.background.dispose();
     this.scene.stop();
@@ -508,17 +572,22 @@ export class App {
     await this.viewport.init();
   }
 
-  public async handleSelectNode(id: string): Promise<void> {
+  public async handleSelectNode(id: string, anchor?: { x: number; y: number }): Promise<void> {
     const epoch = ++this.selectEpoch;
     this.scene.markDirty();
-    this.viewport.focusNode(id);
-    void this.viewport.expandNode(id);
+    if (!anchor) this.viewport.focusNode(id);
 
     const details = await this.source.fetchEntityDetails(id);
     if (epoch !== this.selectEpoch) return;
     if (details) {
       this.activeEntityDetails = details;
-      this.drawer.open(details);
+      const node = this.viewport.graph.getNode(id);
+      const cardAnchor = anchor || {
+        x: node?.sx ?? this.scene.width / 2,
+        y: node?.sy ?? this.scene.height / 2,
+      };
+      this.drawer.open(details, cardAnchor);
+      this.controls.setVisible(false);
     }
   }
 

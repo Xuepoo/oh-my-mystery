@@ -20,6 +20,12 @@ export class KnowledgeGraph2D {
   private linksList: GraphLink2D[] = [];
   private factKeySet = new Set<string>();
   private expandedSet = new Set<string>();
+  private rootIds = new Set<string>();
+  private expansionNodes = new Map<string, Set<string>>();
+  private expansionFacts = new Map<string, Set<string>>();
+  private nodeOwners = new Map<string, Set<string>>();
+  private factOwners = new Map<string, Set<string>>();
+  private pinnedIds = new Set<string>();
 
   private simulation: Simulation<GraphNode2D, any> | null = null;
 
@@ -53,6 +59,12 @@ export class KnowledgeGraph2D {
     this.linksList = [];
     this.factKeySet.clear();
     this.expandedSet.clear();
+    this.rootIds.clear();
+    this.expansionNodes.clear();
+    this.expansionFacts.clear();
+    this.nodeOwners.clear();
+    this.factOwners.clear();
+    this.pinnedIds.clear();
 
     const count = seedNodes.length;
     for (let i = 0; i < count; i++) {
@@ -68,6 +80,7 @@ export class KnowledgeGraph2D {
       node.radius = node.type === 'author' ? 12 : 8;
       this.nodesMap.set(node.id, node);
       this.nodesList.push(node);
+      this.rootIds.add(node.id);
     }
 
     this.rebuildSimulation();
@@ -75,19 +88,30 @@ export class KnowledgeGraph2D {
 
   async expand(nodeId: string): Promise<number> {
     if (this.expandedSet.has(nodeId)) return 0;
-    this.expandedSet.add(nodeId);
-
     const centerNode = this.nodesMap.get(nodeId);
-    const cx = centerNode?.x ?? 0;
-    const cy = centerNode?.y ?? 0;
+    if (!centerNode) return 0;
+    const cx = centerNode.x ?? 0;
+    const cy = centerNode.y ?? 0;
 
     const neighborhood = await this.source.getNeighbors(nodeId);
+    this.expandedSet.add(nodeId);
     let addedCount = 0;
+    const ownedNodes = new Set<string>();
+    const ownedFacts = new Set<string>();
+    this.expansionNodes.set(nodeId, ownedNodes);
+    this.expansionFacts.set(nodeId, ownedFacts);
 
     // 1. Ingest Neighbors
     const nLen = neighborhood.neighbors.length;
     for (let i = 0; i < nLen; i++) {
       const neighbor = neighborhood.neighbors[i]!;
+      ownedNodes.add(neighbor.id);
+      let owners = this.nodeOwners.get(neighbor.id);
+      if (!owners) {
+        owners = new Set();
+        this.nodeOwners.set(neighbor.id, owners);
+      }
+      owners.add(nodeId);
       if (!this.nodesMap.has(neighbor.id)) {
         const angle = (i / Math.max(1, nLen)) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
         const dist = 45 + Math.random() * 35;
@@ -117,12 +141,59 @@ export class KnowledgeGraph2D {
           predicate: f.predicate,
         });
       }
+      ownedFacts.add(key);
+      let owners = this.factOwners.get(key);
+      if (!owners) {
+        owners = new Set();
+        this.factOwners.set(key, owners);
+      }
+      owners.add(nodeId);
     }
 
     this.rebuildSimulation();
     this.reheat(0.6);
 
     return addedCount;
+  }
+
+  async toggleExpansion(nodeId: string): Promise<number> {
+    if (this.expandedSet.has(nodeId)) {
+      this.collapse(nodeId);
+      return 0;
+    }
+    return this.expand(nodeId);
+  }
+
+  collapse(nodeId: string): void {
+    this.expandedSet.delete(nodeId);
+    const ownedNodes = this.expansionNodes.get(nodeId) || new Set<string>();
+    const ownedFacts = this.expansionFacts.get(nodeId) || new Set<string>();
+
+    for (const id of ownedNodes) {
+      const owners = this.nodeOwners.get(id);
+      owners?.delete(nodeId);
+      if (!owners?.size) {
+        this.nodeOwners.delete(id);
+        if (!this.rootIds.has(id) && !this.expandedSet.has(id)) this.nodesMap.delete(id);
+      }
+    }
+    for (const key of ownedFacts) {
+      const owners = this.factOwners.get(key);
+      owners?.delete(nodeId);
+      if (!owners?.size) {
+        this.factOwners.delete(key);
+        this.factKeySet.delete(key);
+      }
+    }
+    this.expansionNodes.delete(nodeId);
+    this.expansionFacts.delete(nodeId);
+    this.nodesList = this.nodesList.filter((node) => this.nodesMap.has(node.id));
+    this.linksList = this.linksList.filter((link) => {
+      const source = typeof link.source === 'object' ? link.source.id : link.source;
+      const target = typeof link.target === 'object' ? link.target.id : link.target;
+      return this.factKeySet.has(`${source}|${link.predicate}|${target}`);
+    });
+    this.rebuildSimulation();
   }
 
   private rebuildSimulation(): void {
@@ -228,10 +299,54 @@ export class KnowledgeGraph2D {
 
   unpinNode(id: string): void {
     const node = this.nodesMap.get(id);
-    if (node) {
+    if (node && !this.pinnedIds.has(id)) {
       node.fx = null;
       node.fy = null;
     }
+  }
+
+  togglePinned(id: string): boolean {
+    const node = this.nodesMap.get(id);
+    if (!node) return false;
+    if (this.pinnedIds.has(id)) {
+      this.pinnedIds.delete(id);
+      node.fx = null;
+      node.fy = null;
+      return false;
+    }
+    this.pinnedIds.add(id);
+    node.fx = node.x ?? 0;
+    node.fy = node.y ?? 0;
+    return true;
+  }
+
+  isPinned(id: string): boolean {
+    return this.pinnedIds.has(id);
+  }
+
+  hideNode(id: string): boolean {
+    if (!this.nodesMap.has(id)) return false;
+    if (this.expandedSet.has(id)) this.collapse(id);
+
+    this.nodesMap.delete(id);
+    this.nodesList = this.nodesList.filter((node) => node.id !== id);
+    this.pinnedIds.delete(id);
+
+    this.linksList = this.linksList.filter((link) => {
+      const source = typeof link.source === 'object' ? link.source.id : link.source;
+      const target = typeof link.target === 'object' ? link.target.id : link.target;
+      if (source !== id && target !== id) return true;
+      const key = `${source}|${link.predicate}|${target}`;
+      this.factKeySet.delete(key);
+      this.factOwners.delete(key);
+      return false;
+    });
+
+    for (const nodes of this.expansionNodes.values()) nodes.delete(id);
+    this.nodeOwners.delete(id);
+    this.rebuildSimulation();
+    this.reheat(0.35);
+    return true;
   }
 
   findNodeAt(worldX: number, worldY: number, hitRadius = 28): GraphNode2D | null {

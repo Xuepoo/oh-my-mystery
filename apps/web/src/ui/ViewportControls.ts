@@ -9,6 +9,7 @@ export class ViewportControls extends Entity {
   private freezeBtnRect = { x: -100, y: -100, w: 36, h: 36 };
   private resetBtnRect = { x: -100, y: -100, w: 36, h: 36 };
   private rendered = false;
+  private visible = true;
 
   constructor(viewport: GraphViewport) {
     super();
@@ -18,7 +19,7 @@ export class ViewportControls extends Entity {
   }
 
   isPointInside(x: number, y: number): boolean {
-    if (!this.rendered) return false;
+    if (!this.rendered || !this.visible) return false;
     const endX = this.scene ? this.scene.width - 24 : 0;
     const startY = this.scene ? this.scene.height - 60 : 0;
     // Button area only (no dead sliver left of the fit button)
@@ -26,6 +27,7 @@ export class ViewportControls extends Entity {
   }
 
   render(r: any): void {
+    if (!this.visible) return;
     const ctx = getCanvasCtx(r);
     const endX = this.scene.width - 24;
     const startY = this.scene.height - 60;
@@ -44,6 +46,12 @@ export class ViewportControls extends Entity {
     // 3. Reset Zoom Button (fits the graph back into view)
     this.drawButton(ctx, this.resetBtnRect, '🔄');
     this.rendered = true;
+  }
+
+  setVisible(visible: boolean): void {
+    if (this.visible === visible) return;
+    this.visible = visible;
+    this.scene?.markDirty();
   }
 
   private drawButton(

@@ -18,6 +18,8 @@ export class CasefileDrawer extends Entity {
   private onSelectEntityCb: (id: string) => void;
   private onStartPathfinderCb: (id: string, name: string) => void;
   private onExpandNodeCb: (id: string) => void;
+  private anchor = { x: 0, y: 0 };
+  private cardRect = { x: -1000, y: -1000, w: 0, h: 0 };
 
   private closeBtnRect = { x: 0, y: 0, w: 32, h: 32 };
   private pathfinderBtnRect = { x: 0, y: 0, w: 140, h: 36 };
@@ -43,15 +45,15 @@ export class CasefileDrawer extends Entity {
     this.scene.markDirty();
   }
 
-  isPointInside(x: number, _y: number): boolean {
+  isPointInside(x: number, y: number): boolean {
     if (!this.isOpen) return false;
-    const drawerWidth = Math.min(420, this.scene.width * 0.9);
-    return x >= this.scene.width - drawerWidth;
+    return this.isInRect(x, y, this.cardRect);
   }
 
-  open(details: EntityDetailResponse): void {
+  open(details: EntityDetailResponse, anchor?: { x: number; y: number }): void {
     this.details = details;
     this.isOpen = true;
+    if (anchor) this.anchor = anchor;
     this.scrollY = 0;
     this.scene.markDirty();
   }
@@ -59,6 +61,7 @@ export class CasefileDrawer extends Entity {
   close(): void {
     this.isOpen = false;
     this.details = null;
+    this.cardRect = { x: -1000, y: -1000, w: 0, h: 0 };
     this.onCloseCb();
     this.scene.markDirty();
   }
@@ -71,27 +74,43 @@ export class CasefileDrawer extends Entity {
     if (!this.isOpen || !this.details) return;
 
     const ctx = getCanvasCtx(r);
-    const drawerWidth = Math.min(420, this.scene.width * 0.9);
-    const drawerHeight = this.scene.height;
-    const startX = this.scene.width - drawerWidth;
+    const margin = 16;
+    const drawerWidth = Math.min(420, this.scene.width - margin * 2);
+    const drawerHeight = Math.min(640, this.scene.height - 96);
+    const isMobile = this.scene.width < 640;
+    let startX = isMobile ? margin : this.anchor.x + 28;
+    if (!isMobile && startX + drawerWidth > this.scene.width - margin) {
+      startX = this.anchor.x - drawerWidth - 28;
+    }
+    startX = Math.max(margin, Math.min(this.scene.width - drawerWidth - margin, startX));
+    const startY = isMobile
+      ? 72
+      : Math.max(72, Math.min(this.scene.height - drawerHeight - margin, this.anchor.y - 88));
+    this.cardRect = { x: startX, y: startY, w: drawerWidth, h: drawerHeight };
 
-    // 1. Drawer Container Background & Shadow
+    // 1. Floating card background & shadow
     ctx.save();
     ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
     ctx.shadowBlur = 24;
-    ctx.shadowOffsetX = -6;
+    ctx.shadowOffsetY = 8;
 
     ctx.fillStyle = Theme.colors.bgParchmentDark;
-    ctx.fillRect(startX, 0, drawerWidth, drawerHeight);
+    ctx.beginPath();
+    ctx.roundRect(startX, startY, drawerWidth, drawerHeight, 12);
+    ctx.fill();
     ctx.restore();
 
-    // Left Accent Border (Parchment Line)
+    // Card border
     ctx.strokeStyle = Theme.colors.borderHighlight;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(startX, 0);
-    ctx.lineTo(startX, drawerHeight);
+    ctx.roundRect(startX, startY, drawerWidth, drawerHeight, 12);
     ctx.stroke();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(startX, startY, drawerWidth, drawerHeight, 12);
+    ctx.clip();
 
     // 2. Header Content
     const entity = this.details.entity;
@@ -99,11 +118,11 @@ export class CasefileDrawer extends Entity {
     const primaryName = labels.zh || labels['zh-cn'] || labels.en || labels.ja || entity.id;
     const subtitle = labels.en !== primaryName ? labels.en : labels.ja || '';
 
-    let curY = 24 - this.scrollY;
+    let curY = startY + 24 - this.scrollY;
 
     // Header Bar
     // (close button is drawn last so scrolling content never overlaps it)
-    this.closeBtnRect = { x: startX + drawerWidth - 44, y: 16, w: 32, h: 32 };
+    this.closeBtnRect = { x: startX + drawerWidth - 44, y: startY + 16, w: 32, h: 32 };
 
     // Entity Type Badge
     const typeLabel = Theme.getNodeTypeLabel(entity.type);
@@ -176,8 +195,10 @@ export class CasefileDrawer extends Entity {
 
     // 4. Action Buttons
     const btnY = curY;
-    this.pathfinderBtnRect = { x: startX + 24, y: btnY, w: 160, h: 34 };
-    this.expandBtnRect = { x: startX + 196, y: btnY, w: 160, h: 34 };
+    const actionGap = 12;
+    const actionW = (drawerWidth - 48 - actionGap) / 2;
+    this.pathfinderBtnRect = { x: startX + 24, y: btnY, w: actionW, h: 34 };
+    this.expandBtnRect = { x: startX + 24 + actionW + actionGap, y: btnY, w: actionW, h: 34 };
 
     // Pathfinder Btn
     ctx.fillStyle = Theme.colors.bgCard;
@@ -197,7 +218,7 @@ export class CasefileDrawer extends Entity {
     ctx.font = `600 12px ${Theme.fonts.sans}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('🔗 以此为起点探路', startX + 24 + 80, btnY + 17);
+    ctx.fillText('🔗 以此探路', this.pathfinderBtnRect.x + actionW / 2, btnY + 17);
 
     // Expand Btn
     ctx.fillStyle = Theme.colors.bgCard;
@@ -215,7 +236,7 @@ export class CasefileDrawer extends Entity {
 
     ctx.fillStyle = Theme.colors.textHigh;
     ctx.font = `600 12px ${Theme.fonts.sans}`;
-    ctx.fillText('🔄 展开 1-Hop 关联', startX + 196 + 80, btnY + 17);
+    ctx.fillText('🔄 展开 / 收起', this.expandBtnRect.x + actionW / 2, btnY + 17);
 
     curY += 48;
 
@@ -224,7 +245,7 @@ export class CasefileDrawer extends Entity {
     ctx.font = `700 15px ${Theme.fonts.serif}`;
     // Wax Seal Stamp (Procedural Antique Gold / Crimson Archive Seal)
     const sealX = startX + drawerWidth - 75;
-    const sealY = 60;
+    const sealY = startY + 60;
     ctx.save();
     ctx.strokeStyle = Theme.colors.borderHighlight;
     ctx.lineWidth = 1.5;
@@ -321,7 +342,9 @@ export class CasefileDrawer extends Entity {
       }
     }
 
-    this.maxScrollY = Math.max(0, curY + this.scrollY - drawerHeight + 40);
+    this.maxScrollY = Math.max(0, curY + this.scrollY - startY - drawerHeight + 40);
+
+    ctx.restore();
 
     // Sticky close button drawn on top of scrolled content
     ctx.fillStyle = Theme.colors.bgCard;

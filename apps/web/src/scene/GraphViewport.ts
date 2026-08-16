@@ -235,7 +235,35 @@ export class GraphViewport {
   }
 
   async expandNode(id: string): Promise<number> {
-    return this.graph.expand(id);
+    const count = await this.graph.expand(id);
+    this.onChange();
+    return count;
+  }
+
+  async toggleNodeExpansion(id: string): Promise<number> {
+    const count = await this.graph.toggleExpansion(id);
+    this.onChange();
+    return count;
+  }
+
+  isNodeExpanded(id: string): boolean {
+    return this.graph.isExpanded(id);
+  }
+
+  toggleNodePinned(id: string): boolean {
+    const pinned = this.graph.togglePinned(id);
+    this.onChange();
+    return pinned;
+  }
+
+  isNodePinned(id: string): boolean {
+    return this.graph.isPinned(id);
+  }
+
+  hideNode(id: string): boolean {
+    const hidden = this.graph.hideNode(id);
+    if (hidden) this.onChange();
+    return hidden;
   }
 
   highlightPath(nodeIds: string[], edges: { source: string; target: string }[]): void {
