@@ -60,6 +60,9 @@ export class App {
   private lastActivityAt = performance.now();
   private static readonly IDLE_AMBIENT_MS = 6000;
   private pendingNodeClick: ReturnType<typeof setTimeout> | null = null;
+  private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastTouchTap: { id: string; at: number; x: number; y: number } | null = null;
+  private touchGestureConsumed = false;
   private renderSettings: RenderSettings;
   private displayHz = 60;
   private expansionHistory: string[] = [];
@@ -296,6 +299,8 @@ export class App {
     this.canvas.addEventListener('pointerdown', (e) => {
       if (e.button === 2) return;
       const { x, y } = getEventCoords(e);
+      this.cancelLongPress();
+      this.touchGestureConsumed = false;
       this.pointerDownPos = { x, y };
       this.lastPointerPos = { x, y };
       this.isPointerDown = true;
@@ -306,6 +311,8 @@ export class App {
 
       if (this.activePointers.size >= 2) {
         // Second finger lands: switch to pinch gesture
+        this.cancelLongPress();
+        this.touchGestureConsumed = true;
         if (this.draggedNode) {
           this.viewport.graph.unpinNode(this.draggedNode.id);
           this.draggedNode = null;
@@ -395,6 +402,21 @@ export class App {
         const worldPos = this.viewport.screenToWorld(x, y);
         this.viewport.graph.pinNode(hitNode.id, worldPos.x, worldPos.y);
         this.scene.markDirty();
+        if (e.pointerType === 'touch') {
+          this.longPressTimer = setTimeout(() => {
+            this.longPressTimer = null;
+            if (!this.draggedNode || this.draggedNode.id !== hitNode.id || this.pinchState) return;
+            this.touchGestureConsumed = true;
+            this.lastTouchTap = null;
+            if (this.pendingNodeClick) {
+              clearTimeout(this.pendingNodeClick);
+              this.pendingNodeClick = null;
+            }
+            this.viewport.graph.unpinNode(hitNode.id);
+            this.draggedNode = null;
+            this.radialMenu.open(hitNode, x, y);
+          }, 550);
+        }
       } else {
         this.isPanning = true;
       }
@@ -508,8 +530,13 @@ export class App {
 
   private onPointerMove = (e: PointerEvent): void => {
     const { x, y } = getEventCoords(e);
-    this.activePointers.set(e.pointerId, { x, y });
+    if (this.activePointers.has(e.pointerId)) {
+      this.activePointers.set(e.pointerId, { x, y });
+    }
     const now = performance.now();
+    if (Math.hypot(x - this.pointerDownPos.x, y - this.pointerDownPos.y) > 8) {
+      this.cancelLongPress();
+    }
     this.lastActivityAt = now;
     // Wake the on-demand renderer when activity resumes after idle.
     if (this.isSceneAlive()) {
@@ -562,6 +589,7 @@ export class App {
 
   private onPointerUp = (e: PointerEvent): void => {
     const { x, y } = getEventCoords(e);
+    this.cancelLongPress();
     this.activePointers.delete(e.pointerId);
 
     if (this.activePointers.size === 1) {
@@ -587,14 +615,40 @@ export class App {
 
     if (this.draggedNode) {
       this.viewport.graph.unpinNode(this.draggedNode.id);
-      if (moveDist < 6) {
-        // Delay single-click details so native dblclick can claim the gesture.
+      if (moveDist < (e.pointerType === 'touch' ? 10 : 6) && !this.touchGestureConsumed) {
         const node = this.draggedNode;
-        if (this.pendingNodeClick) clearTimeout(this.pendingNodeClick);
-        this.pendingNodeClick = setTimeout(() => {
-          this.pendingNodeClick = null;
-          void this.handleSelectNode(node.id, { x, y });
-        }, 240);
+        if (e.pointerType === 'touch') {
+          const now = performance.now();
+          const previous = this.lastTouchTap;
+          const isDoubleTap =
+            previous?.id === node.id &&
+            now - previous.at <= 320 &&
+            Math.hypot(x - previous.x, y - previous.y) <= 28;
+          if (isDoubleTap) {
+            this.lastTouchTap = null;
+            if (this.pendingNodeClick) {
+              clearTimeout(this.pendingNodeClick);
+              this.pendingNodeClick = null;
+            }
+            this.drawer.close();
+            void this.toggleNodeExpansion(node.id);
+          } else {
+            this.lastTouchTap = { id: node.id, at: now, x, y };
+            if (this.pendingNodeClick) clearTimeout(this.pendingNodeClick);
+            this.pendingNodeClick = setTimeout(() => {
+              this.pendingNodeClick = null;
+              if (this.lastTouchTap?.id === node.id) this.lastTouchTap = null;
+              void this.handleSelectNode(node.id, { x, y });
+            }, 340);
+          }
+        } else {
+          // Delay mouse single-click details so native dblclick can claim the gesture.
+          if (this.pendingNodeClick) clearTimeout(this.pendingNodeClick);
+          this.pendingNodeClick = setTimeout(() => {
+            this.pendingNodeClick = null;
+            void this.handleSelectNode(node.id, { x, y });
+          }, 240);
+        }
       }
       this.draggedNode = null;
     } else if (this.isPanning) {
@@ -613,6 +667,8 @@ export class App {
   };
 
   private onPointerCancel = (e: PointerEvent): void => {
+    this.cancelLongPress();
+    this.touchGestureConsumed = true;
     this.activePointers.delete(e.pointerId);
     if (this.activePointers.size === 0) {
       this.pinchState = null;
@@ -661,9 +717,16 @@ export class App {
     this.canvas.removeEventListener('contextmenu', this.onCanvasContextMenu);
     this.canvas.removeEventListener('dblclick', this.onCanvasDoubleClick);
     if (this.pendingNodeClick) clearTimeout(this.pendingNodeClick);
+    this.cancelLongPress();
     this.headerBar.dispose();
     this.background.dispose();
     this.scene.stop();
+  }
+
+  private cancelLongPress(): void {
+    if (!this.longPressTimer) return;
+    clearTimeout(this.longPressTimer);
+    this.longPressTimer = null;
   }
 
   async start(): Promise<void> {
