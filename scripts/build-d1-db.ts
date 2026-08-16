@@ -91,9 +91,47 @@ function matchPublisher(value: string): string | null {
 const entityRows = srcDb
   .query(
     `
-  SELECT id, qid, type, names_json, bio, birth, death, country, source, quality
-  FROM entities
-  WHERE type IN ('author', 'work', 'award', 'character', 'series', 'publisher', 'genre')
+  SELECT
+    e.id,
+    e.qid,
+    CASE
+      WHEN e.type = 'person' AND EXISTS (
+        SELECT 1 FROM facts af
+        WHERE af.predicate IN ('author', 'aozora_role')
+          AND af.object_ref = e.id
+        UNION ALL
+        SELECT 1
+        FROM entity_links el
+        JOIN facts af ON af.object_ref = el.source_id
+        WHERE el.target_id = e.id
+          AND af.predicate IN ('author', 'aozora_role')
+      ) THEN 'author'
+      ELSE e.type
+    END AS type,
+    e.names_json,
+    e.bio,
+    e.birth,
+    e.death,
+    e.country,
+    e.source,
+    e.quality
+  FROM entities e
+  WHERE (
+      e.type IN ('author', 'work', 'award', 'character', 'series', 'publisher', 'genre')
+      OR (
+        e.type = 'person' AND EXISTS (
+          SELECT 1 FROM facts af
+          WHERE af.predicate IN ('author', 'aozora_role')
+            AND af.object_ref = e.id
+          UNION ALL
+          SELECT 1
+          FROM entity_links el
+          JOIN facts af ON af.object_ref = el.source_id
+          WHERE el.target_id = e.id
+            AND af.predicate IN ('author', 'aozora_role')
+        )
+      )
+    )
     AND (
       id LIKE 'wd:%'
       OR id LIKE 'club:%'
