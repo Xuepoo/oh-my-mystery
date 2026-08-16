@@ -1,5 +1,5 @@
 import { Scene } from '@vectojs/core';
-import type { ChronicleStep, EntityDetailResponse } from '@omm/shared';
+import type { ChronicleStep, EntityDetailResponse, OmmEntity, PathfinderResult } from '@omm/shared';
 import { D1DataSource } from './api/D1DataSource';
 import { BackgroundLayer } from './scene/BackgroundLayer';
 import { GraphOverlayLayer } from './scene/GraphOverlayLayer';
@@ -13,6 +13,7 @@ import { Minimap } from './ui/Minimap';
 import { NodeRadialMenu } from './ui/NodeRadialMenu';
 import { PathfinderModal } from './ui/PathfinderModal';
 import { getEventCoords } from './ui/theme';
+import { Theme } from './ui/theme';
 import { ViewportControls } from './ui/ViewportControls';
 import { WelcomeLayer } from './ui/WelcomeLayer';
 import { RenderSettingsModal } from './ui/RenderSettingsModal';
@@ -68,6 +69,11 @@ export class App {
   private renderSettings: RenderSettings;
   private displayHz = 60;
   private expansionHistory: string[] = [];
+  private endpointSource: { id: string; name: string } | null = null;
+  private endpointTarget: { id: string; name: string } | null = null;
+  private endpointEpoch = 0;
+  private modifiedPointerDown = false;
+  private pathStatus: 'idle' | 'source' | 'loading' | 'success' | 'noPath' | 'failure' = 'idle';
 
   // The scene renders on demand; it stays awake while the user is interacting,
   // the physics sim is running, or the camera is animating — plus a short
@@ -190,6 +196,9 @@ export class App {
       onHighlightPath: (nodeIds, edges) => {
         this.viewport.highlightPath(nodeIds, edges);
       },
+      onPathResult: (result) => {
+        this.materializePath(result);
+      },
     });
     this.scene.add(this.pathfinderModal);
 
@@ -307,6 +316,25 @@ export class App {
     this.canvas.addEventListener('pointerdown', (e) => {
       if (e.button === 2) return;
       const { x, y } = getEventCoords(e);
+      const modified = (e.ctrlKey || e.metaKey) && e.button === 0;
+      const modifiedNode =
+        modified && !this.isEventOverUI(x, y) ? this.overlayLayer.getNodeAtScreenPoint(x, y) : null;
+      if (modified && modifiedNode) {
+        e.preventDefault();
+        this.cancelLongPress();
+        if (this.pendingNodeClick) {
+          clearTimeout(this.pendingNodeClick);
+          this.pendingNodeClick = null;
+        }
+        this.modifiedPointerDown = true;
+        this.activePointers.set(e.pointerId, { x, y });
+        this.isPointerDown = false;
+        this.isPanning = false;
+        this.draggedNode = null;
+        void this.selectPathEndpoint(modifiedNode.id, modifiedNode.name);
+        return;
+      }
+      this.modifiedPointerDown = false;
       this.cancelLongPress();
       this.touchGestureConsumed = false;
       this.pointerDownPos = { x, y };
@@ -626,6 +654,12 @@ export class App {
     const { x, y } = getEventCoords(e);
     this.cancelLongPress();
     this.activePointers.delete(e.pointerId);
+    if (this.modifiedPointerDown) {
+      this.modifiedPointerDown = false;
+      this.isPointerDown = false;
+      this.isPanning = false;
+      return;
+    }
 
     if (this.drawer.handlePointerUp()) {
       this.isPointerDown = false;
@@ -711,6 +745,7 @@ export class App {
   private onPointerCancel = (e: PointerEvent): void => {
     this.cancelLongPress();
     this.touchGestureConsumed = true;
+    this.modifiedPointerDown = false;
     this.activePointers.delete(e.pointerId);
     if (this.activePointers.size === 0) {
       this.pinchState = null;
@@ -761,6 +796,7 @@ export class App {
     if (this.pendingNodeClick) clearTimeout(this.pendingNodeClick);
     this.cancelLongPress();
     this.headerBar.dispose();
+    this.pathfinderModal.dispose();
     this.background.dispose();
     this.scene.stop();
   }
@@ -832,6 +868,63 @@ export class App {
     this.viewport.focusNode(id);
   }
 
+  private async selectPathEndpoint(id: string, name: string): Promise<void> {
+    if (this.endpointSource && this.endpointTarget) {
+      this.endpointSource = { id, name };
+      this.endpointTarget = null;
+      this.pathStatus = 'source';
+      this.endpointEpoch++;
+      this.viewport.clearHighlight();
+      this.scene.markDirty();
+      return;
+    }
+    if (!this.endpointSource) {
+      this.endpointSource = { id, name };
+      this.pathStatus = 'source';
+      this.scene.markDirty();
+      return;
+    }
+    if (this.endpointSource.id === id) return;
+    this.endpointTarget = { id, name };
+    const epoch = ++this.endpointEpoch;
+    this.pathStatus = 'loading';
+    this.scene.markDirty();
+    const result = await this.source.findPath(this.endpointSource.id, id);
+    if (epoch !== this.endpointEpoch) return;
+    if (!result?.found) {
+      this.pathStatus = result ? 'noPath' : 'failure';
+      this.scene.markDirty();
+      return;
+    }
+    this.pathStatus = 'success';
+    this.materializePath(result);
+    this.pathfinderModal.setSource(this.endpointSource.id, this.endpointSource.name);
+    this.pathfinderModal.setTarget(id, name);
+    this.scene.markDirty();
+  }
+
+  private materializePath(result: PathfinderResult): void {
+    const nodes = result.nodes.map((entity: OmmEntity) => this.entityToGraphNode(entity));
+    this.viewport.addPathNodes(nodes, result.edges);
+    this.viewport.highlightPath(
+      nodes.map((node) => node.id),
+      result.edges,
+    );
+  }
+
+  private entityToGraphNode(entity: OmmEntity): GraphNode2D {
+    const labels = entity.names?.labels || {};
+    const name = labels.zh || labels['zh-cn'] || labels.en || labels.ja || entity.id;
+    return {
+      id: entity.id,
+      type: entity.type,
+      name,
+      color: Theme.getNodeColor(entity.type),
+      val: entity.type === 'author' ? 1.4 : 1,
+      labels,
+    };
+  }
+
   private clearCanvas(): void {
     this.selectEpoch++;
     if (this.pendingNodeClick) {
@@ -845,6 +938,11 @@ export class App {
     this.isPointerDown = false;
     this.isPanning = false;
     this.expansionHistory = [];
+    this.endpointEpoch++;
+    this.endpointSource = null;
+    this.endpointTarget = null;
+    this.pathStatus = 'idle';
+    this.modifiedPointerDown = false;
     this.graphHistoryControls.setCount(0);
     this.drawer.close();
     this.radialMenu.close();

@@ -209,6 +209,12 @@ export class GraphViewport {
     return added;
   }
 
+  addPathNodes(nodes: GraphNode2D[], edges: GraphLink2D[]): void {
+    this.graph.addPath(nodes, edges);
+    this.fitToView();
+    this.onChange();
+  }
+
   // Fling gesture: keep panning after the pointer is released with
   // exponential velocity decay (v = v0 * e^(-t/tau)). The ease-out cubic
   // animation is matched so its initial velocity equals v0.

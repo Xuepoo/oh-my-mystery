@@ -35,6 +35,8 @@ export class KnowledgeGraph2D {
   private factOwners = new Map<string, Set<string>>();
   private pinnedIds = new Set<string>();
   private hiddenNodes = new Map<string, HiddenNodeSnapshot>();
+  private pathNodeIds = new Set<string>();
+  private pathFactKeys = new Set<string>();
   private generation = 0;
 
   private simulation: Simulation<GraphNode2D, any> | null = null;
@@ -94,6 +96,8 @@ export class KnowledgeGraph2D {
     this.factOwners.clear();
     this.pinnedIds.clear();
     this.hiddenNodes.clear();
+    this.pathNodeIds.clear();
+    this.pathFactKeys.clear();
 
     const count = seedNodes.length;
     for (let i = 0; i < count; i++) {
@@ -204,6 +208,72 @@ export class KnowledgeGraph2D {
     return true;
   }
 
+  addPath(nodes: GraphNode2D[], edges: GraphLink2D[]): void {
+    const nextNodeIds = new Set(nodes.map((node) => node.id));
+    const nextFactKeys = new Set(
+      edges.map((edge) => {
+        const source = typeof edge.source === 'object' ? edge.source.id : edge.source;
+        const target = typeof edge.target === 'object' ? edge.target.id : edge.target;
+        return `${source}|${edge.predicate}|${target}`;
+      }),
+    );
+
+    for (const key of this.pathFactKeys) {
+      if (nextFactKeys.has(key) || this.factOwners.get(key)?.size) continue;
+      this.factKeySet.delete(key);
+      this.linksList = this.linksList.filter((link) => {
+        const source = typeof link.source === 'object' ? link.source.id : link.source;
+        const target = typeof link.target === 'object' ? link.target.id : link.target;
+        return `${source}|${link.predicate}|${target}` !== key;
+      });
+    }
+    for (const id of this.pathNodeIds) {
+      if (
+        nextNodeIds.has(id) ||
+        this.rootIds.has(id) ||
+        this.manualIds.has(id) ||
+        this.expandedSet.has(id) ||
+        this.nodeOwners.get(id)?.size
+      ) {
+        continue;
+      }
+      this.nodesMap.delete(id);
+      this.nodesList = this.nodesList.filter((node) => node.id !== id);
+    }
+
+    const center = this.nodesList.length
+      ? this.getBoundingBox()
+      : { minX: -100, minY: -100, maxX: 100, maxY: 100 };
+    const cx = (center.minX + center.maxX) / 2;
+    const cy = (center.minY + center.maxY) / 2;
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]!;
+      if (this.hiddenNodes.has(node.id)) this.restoreHiddenNode(node.id);
+      if (this.nodesMap.has(node.id)) continue;
+      const angle = -Math.PI / 2 + (i / Math.max(1, nodes.length)) * Math.PI * 2;
+      node.x = cx + Math.cos(angle) * 120;
+      node.y = cy + Math.sin(angle) * 120;
+      node.vx = 0;
+      node.vy = 0;
+      node.radius = node.type === 'author' ? 12 : 8;
+      this.nodesMap.set(node.id, node);
+      this.nodesList.push(node);
+    }
+    for (const edge of edges) {
+      const source = typeof edge.source === 'object' ? edge.source.id : edge.source;
+      const target = typeof edge.target === 'object' ? edge.target.id : edge.target;
+      if (!this.nodesMap.has(source) || !this.nodesMap.has(target)) continue;
+      const key = `${source}|${edge.predicate}|${target}`;
+      if (this.factKeySet.has(key)) continue;
+      this.factKeySet.add(key);
+      this.linksList.push({ source, target, predicate: edge.predicate });
+    }
+    this.pathNodeIds = nextNodeIds;
+    this.pathFactKeys = nextFactKeys;
+    this.rebuildSimulation();
+    this.reheat(0.35);
+  }
+
   clear(): void {
     this.generation++;
     this.simulation?.stop();
@@ -221,6 +291,8 @@ export class KnowledgeGraph2D {
     this.factOwners.clear();
     this.pinnedIds.clear();
     this.hiddenNodes.clear();
+    this.pathNodeIds.clear();
+    this.pathFactKeys.clear();
   }
 
   async toggleExpansion(nodeId: string): Promise<number> {
