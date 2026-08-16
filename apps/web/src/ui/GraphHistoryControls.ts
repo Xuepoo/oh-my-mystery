@@ -3,7 +3,7 @@ import { getCanvasCtx, Theme } from './theme';
 
 export class GraphHistoryControls extends Entity {
   private count = 0;
-  private buttonRect = { x: 128, y: 76, w: 80, h: 44 };
+  private buttonRect = { x: 16, y: 232, w: 96, h: 44 };
   private readonly onUndoCb: () => void;
   private enabled = true;
 
@@ -39,7 +39,7 @@ export class GraphHistoryControls extends Entity {
   render(r: any): void {
     if (!this.enabled || this.count <= 0) return;
     const ctx = getCanvasCtx(r);
-    this.buttonRect = { x: 128, y: 76, w: 80, h: 44 };
+    this.buttonRect = { x: 16, y: 232, w: 96, h: 44 };
     ctx.fillStyle = 'rgba(30, 24, 19, 0.94)';
     ctx.beginPath();
     ctx.roundRect(this.buttonRect.x, this.buttonRect.y, this.buttonRect.w, this.buttonRect.h, 8);
@@ -50,7 +50,7 @@ export class GraphHistoryControls extends Entity {
     ctx.font = `600 11px ${Theme.fonts.sans}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`↶ 返回 ${this.count}`, this.buttonRect.x + 40, this.buttonRect.y + 22);
+    ctx.fillText(`↶ 返回 ${this.count}`, this.buttonRect.x + 48, this.buttonRect.y + 22);
   }
 
   private inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {

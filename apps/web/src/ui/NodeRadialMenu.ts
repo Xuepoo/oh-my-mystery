@@ -85,6 +85,17 @@ export class NodeRadialMenu extends Entity {
 
   render(r: any): void {
     if (!this.node) return;
+    const nodeX = this.node.sx;
+    const nodeY = this.node.sy;
+    if (typeof nodeX !== 'number' || typeof nodeY !== 'number') {
+      this.close();
+      return;
+    }
+    const margin = OUTER_RADIUS + 4;
+    this.center = {
+      x: Math.max(margin, Math.min(this.scene.width - margin, nodeX)),
+      y: Math.max(margin, Math.min(this.scene.height - margin, nodeY)),
+    };
     const ctx = getCanvasCtx(r);
     const { x, y } = this.center;
     const pinned = this.isPinnedCb(this.node.id);

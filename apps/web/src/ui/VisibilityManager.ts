@@ -15,7 +15,7 @@ export class VisibilityManager extends Entity {
   private readonly viewport: GraphViewport;
   private open = false;
   private page = 0;
-  private toggleRect = { x: 216, y: 76, w: 96, h: 44 };
+  private toggleRect = { x: 16, y: 284, w: 96, h: 44 };
   private modalRect = { x: 0, y: 0, w: 0, h: 0 };
   private closeRect = { x: 0, y: 0, w: 44, h: 44 };
   private restoreAllRect = { x: 0, y: 0, w: 120, h: 44 };
@@ -96,7 +96,7 @@ export class VisibilityManager extends Entity {
       return;
     }
     const ctx = getCanvasCtx(r);
-    this.toggleRect = { x: 216, y: 76, w: 96, h: 44 };
+    this.toggleRect = { x: 16, y: 284, w: 96, h: 44 };
     this.drawButton(ctx, this.toggleRect, `隐藏 ${hidden.length}`, false);
     if (!this.open) return;
 

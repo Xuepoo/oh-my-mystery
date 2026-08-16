@@ -208,7 +208,7 @@ export class CasefileDrawer extends Entity {
       const d = this.formatYear(entity.death);
       metaParts.push(`${b || '?'} ~ ${d || '至今'}`);
     }
-    if (entity.country) {
+    if ((entity.type === 'author' || entity.type === 'person') && entity.country) {
       metaParts.push(`国籍: ${this.formatCountry(entity.country)}`);
     }
     if (metaParts.length > 0) {

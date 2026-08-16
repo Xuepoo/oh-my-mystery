@@ -32,7 +32,7 @@ export class GraphOverlayLayer extends Entity {
   private nodeBadges: NodeScreenBadge[] = [];
   private badgePool: NodeScreenBadge[] = [];
   private pillCache = new Map<string, CachedPillInfo>();
-  private activeFilter: string | null = null;
+  private activeFilters: ReadonlySet<string> | null = null;
   private activePredicates: ReadonlySet<string> | null = null;
 
   constructor(viewport: GraphViewport) {
@@ -50,8 +50,9 @@ export class GraphOverlayLayer extends Entity {
     return this.viewport.isPhysicsActive() || this.viewport.isCameraAnimating();
   }
 
-  setActiveFilter(filter: string | null): void {
-    this.activeFilter = filter;
+  setActiveFilter(filters: ReadonlySet<string> | readonly string[] | string | null): void {
+    const values = typeof filters === 'string' ? [filters] : filters ? [...filters] : [];
+    this.activeFilters = values.length ? new Set(values) : null;
     this.scene.markDirty();
   }
 
@@ -67,6 +68,7 @@ export class GraphOverlayLayer extends Entity {
   }
 
   getNodeAtScreenPoint(x: number, y: number): GraphNode2D | null {
+    if (this.viewport.getNodes().length === 0) return null;
     // Check badges first (topmost)
     for (let i = this.nodeBadges.length - 1; i >= 0; i--) {
       const b = this.nodeBadges[i]!;
@@ -85,6 +87,14 @@ export class GraphOverlayLayer extends Entity {
     // Check world nodes directly via viewport
     const worldPos = this.viewport.screenToWorld(x, y);
     return this.viewport.graph.findNodeAt(worldPos.x, worldPos.y, 26 / this.viewport.zoom);
+  }
+
+  clearInteractionState(): void {
+    this.hoveredEntity = null;
+    this.nodeBadges = [];
+    this.badgePool = [];
+    this.pillCache.clear();
+    this.scene?.markDirty();
   }
 
   private getCachedPill(ctx: CanvasRenderingContext2D, e: GraphNode2D): CachedPillInfo {
@@ -395,7 +405,7 @@ export class GraphOverlayLayer extends Entity {
       }
 
       const pillInfo = this.getCachedPill(ctx, node);
-      const matchesFilter = !this.activeFilter || node.type === this.activeFilter;
+      const matchesFilter = !this.activeFilters || this.activeFilters.has(node.type);
       const showFullBadge =
         (pillInfo.isAuthor || isHovered || this.viewport.zoom >= 0.7 || nodeCount <= 60) &&
         matchesFilter;

@@ -216,6 +216,22 @@ export class GraphViewport {
     this.animateCameraTo(targetPanX, targetPanY, targetZoom, 450);
   }
 
+  ensureNodeVisible(id: string, margin = 80): void {
+    const node = this.graph.getNode(id);
+    if (!node) return;
+    const screen = this.worldToScreen(node.x ?? 0, node.y ?? 0);
+    if (
+      screen.x >= margin &&
+      screen.x <= this.width - margin &&
+      screen.y >= 64 + margin &&
+      screen.y <= this.height - margin
+    ) {
+      this.onChange();
+      return;
+    }
+    this.focusNode(id);
+  }
+
   addManualNode(node: GraphNode2D): boolean {
     const world = this.screenToWorld(this.width / 2, this.height / 2);
     const hash = [...node.id].reduce(

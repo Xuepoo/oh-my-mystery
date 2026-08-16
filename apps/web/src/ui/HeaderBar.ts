@@ -9,7 +9,7 @@ export interface HeaderBarOptions {
   onOpenPathfinder: () => void;
   onOpenHelp: () => void;
   onSelectSearchResult: (id: string) => void;
-  onFilterChange: (type: string | null) => void;
+  onFilterChange: (types: readonly string[]) => void;
   onToggleFullscreen: () => void;
   onOpenSettings: () => void;
 }
@@ -20,14 +20,14 @@ export class HeaderBar extends Entity {
   private onOpenPathfinderCb: () => void;
   private onOpenHelpCb: () => void;
   private onSelectSearchResultCb: (id: string) => void;
-  private onFilterChangeCb: (type: string | null) => void;
+  private onFilterChangeCb: (types: readonly string[]) => void;
   private onToggleFullscreenCb: () => void;
   private onOpenSettingsCb: () => void;
 
   private searchQuery = '';
   private searchResults: SearchResultItem[] = [];
   private showSearchDropdown = false;
-  private activeFilter: string | null = null;
+  private activeFilters = new Set<string>();
   private welcomeMode = false;
   private domInput: HTMLInputElement | null = null;
   private debounceTimer: any = null;
@@ -280,7 +280,8 @@ export class HeaderBar extends Entity {
 
       this.filterPillRects = [];
       for (const f of filters) {
-        const isSelected = this.activeFilter === f.type;
+        const isSelected =
+          f.type === null ? this.activeFilters.size === 0 : this.activeFilters.has(f.type);
         const pillW = 56;
         const pillH = 28;
         const pillY = 18;
@@ -622,8 +623,14 @@ export class HeaderBar extends Entity {
     for (const f of this.filterPillRects) {
       if (this.isInRect(clientX, clientY, f)) {
         this.hideDropdown();
-        this.activeFilter = this.activeFilter === f.type ? null : f.type;
-        this.onFilterChangeCb(this.activeFilter);
+        if (f.type === null) {
+          this.activeFilters.clear();
+        } else if (this.activeFilters.has(f.type)) {
+          this.activeFilters.delete(f.type);
+        } else {
+          this.activeFilters.add(f.type);
+        }
+        this.onFilterChangeCb([...this.activeFilters]);
         return true;
       }
     }
@@ -680,13 +687,16 @@ export class HeaderBar extends Entity {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
   }
 
-  getActiveFilter(): string | null {
-    return this.activeFilter;
+  getActiveFilter(): string[] {
+    return [...this.activeFilters];
   }
 
-  setActiveFilter(type: string | null): void {
-    this.activeFilter = type;
-    this.onFilterChangeCb(type);
+  setActiveFilter(types: readonly string[] | string | null): void {
+    const values = Array.isArray(types) ? types : types ? [types] : [];
+    this.activeFilters = new Set(
+      values.filter((type) => ['author', 'work', 'award', 'character', 'publisher'].includes(type)),
+    );
+    this.onFilterChangeCb([...this.activeFilters]);
     this.scene?.markDirty();
   }
 }

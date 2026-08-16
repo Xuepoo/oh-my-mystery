@@ -20,7 +20,7 @@ export class GraphStatsPanel extends Entity {
   private stats: StatsResponse | null = null;
   private open = false;
   private loading = false;
-  private toggleRect = { x: 320, y: 76, w: 96, h: 44 };
+  private toggleRect = { x: 16, y: 128, w: 96, h: 44 };
   private modalRect = { x: 0, y: 0, w: 0, h: 0 };
   private closeRect = { x: 0, y: 0, w: 44, h: 44 };
   private enabled = true;
@@ -69,8 +69,8 @@ export class GraphStatsPanel extends Entity {
     const ctx = getCanvasCtx(r);
     const compact = this.scene.width < 480;
     this.toggleRect = {
-      x: compact ? this.scene.width - 60 : 320,
-      y: 76,
+      x: compact ? this.scene.width - 60 : 16,
+      y: compact ? 76 : 128,
       w: compact ? 44 : 96,
       h: 44,
     };

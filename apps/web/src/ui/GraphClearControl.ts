@@ -4,7 +4,7 @@ import { getCanvasCtx, Theme } from './theme';
 export class GraphClearControl extends Entity {
   private enabled = true;
   private armedUntil = 0;
-  private rect = { x: 424, y: 76, w: 96, h: 44 };
+  private rect = { x: 16, y: 180, w: 96, h: 44 };
   private readonly onClear: () => void;
 
   constructor(onClear: () => void) {

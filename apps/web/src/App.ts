@@ -163,8 +163,8 @@ export class App {
       onSelectSearchResult: (id) => {
         void this.addAndFocusSearchNode(id);
       },
-      onFilterChange: (type) => {
-        this.overlayLayer.setActiveFilter(type);
+      onFilterChange: (types) => {
+        this.overlayLayer.setActiveFilter(types);
         this.scheduleSessionSave();
       },
       onToggleFullscreen: () => {
@@ -317,9 +317,9 @@ export class App {
   }
 
   private isEventOverUI(x: number, y: number): boolean {
-    if (this.welcomeLayer.isVisible()) return true;
     return (
       this.headerBar.isPointInside(x, y) ||
+      this.welcomeLayer.isPointInside(x, y) ||
       this.drawer.isPointInside(x, y) ||
       this.chroniclePanel.isPointInside(x, y) ||
       this.pathfinderModal.isPointInside(x, y) ||
@@ -389,7 +389,7 @@ export class App {
       }
       this.pinchState = null;
 
-      if (this.welcomeLayer.isVisible()) {
+      if (this.welcomeLayer.isVisible() && this.welcomeLayer.isPointInside(x, y)) {
         if (this.helpModal.isModalOpen()) {
           this.helpModal.handleClick(x, y);
           return;
@@ -518,7 +518,6 @@ export class App {
 
   private onCanvasContextMenu = (e: MouseEvent): void => {
     e.preventDefault();
-    if (this.welcomeLayer.isVisible()) return;
     const { x, y } = getEventCoords(e);
     if (this.radialMenu.isMenuOpen()) this.radialMenu.close();
     if (this.isEventOverUI(x, y)) return;
@@ -528,7 +527,6 @@ export class App {
   };
 
   private onCanvasDoubleClick = (e: MouseEvent): void => {
-    if (this.welcomeLayer.isVisible()) return;
     const { x, y } = getEventCoords(e);
     if (this.isEventOverUI(x, y)) return;
     const node = this.overlayLayer.getNodeAtScreenPoint(x, y);
@@ -539,7 +537,12 @@ export class App {
     }
     this.drawer.close();
     this.radialMenu.close();
-    void this.toggleNodeExpansion(node.id);
+    // Double-click is an exploration gesture. It must never remove an
+    // already-loaded branch; explicit collapse remains available from the
+    // radial menu and the detail card.
+    if (!this.viewport.isNodeExpanded(node.id)) {
+      void this.toggleNodeExpansion(node.id);
+    }
   };
 
   // Block browser shortcuts that only make sense for document pages
@@ -842,21 +845,16 @@ export class App {
   }
 
   private syncWelcomeBarrier(): void {
-    const enabled = !this.welcomeLayer.isVisible();
-    this.headerBar.setWelcomeMode(!enabled);
-    this.relationshipFilterBar.setEnabled(enabled);
-    this.graphHistoryControls.setEnabled(enabled);
-    this.visibilityManager.setEnabled(enabled);
-    this.graphStatsPanel.setEnabled(enabled);
-    this.graphClearControl.setEnabled(enabled);
-    this.minimap.setEnabled(enabled);
-    this.controls.setVisible(enabled && this.activeEntityDetails === null);
-    if (!enabled) {
-      this.radialMenu.close();
-      this.visibilityManager.close();
-      this.graphStatsPanel.close();
-      this.overlayLayer.setHoveredEntity(null);
-    }
+    // Welcome is an informational card, not a modal barrier. Only its own
+    // bounds own pointer events; the graph and all other tools remain usable.
+    this.headerBar.setWelcomeMode(false);
+    this.relationshipFilterBar.setEnabled(true);
+    this.graphHistoryControls.setEnabled(true);
+    this.visibilityManager.setEnabled(true);
+    this.graphStatsPanel.setEnabled(true);
+    this.graphClearControl.setEnabled(true);
+    this.minimap.setEnabled(true);
+    this.controls.setVisible(this.activeEntityDetails === null);
     this.scene.markDirty();
   }
 
@@ -954,7 +952,7 @@ export class App {
       this.viewport.addManualNode(node);
     }
     this.drawer.close();
-    this.viewport.focusNode(id);
+    this.viewport.ensureNodeVisible(id);
   }
 
   private async selectPathEndpoint(id: string, name: string): Promise<void> {
@@ -1040,6 +1038,7 @@ export class App {
     this.pathfinderModal.close();
     this.chroniclePanel.close();
     this.overlayLayer.setHoveredEntity(null);
+    this.overlayLayer.clearInteractionState();
     this.viewport.clear();
     this.controls.setVisible(true);
   }

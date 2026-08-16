@@ -8,7 +8,7 @@ export interface GraphSessionSnapshot {
   camera: { panX: number; panY: number; zoom: number };
   graph: KnowledgeGraphSnapshot;
   expansionHistory: string[];
-  filter: string | null;
+  filter: string[];
   relationshipIndexes: number[];
   endpoints: {
     source: { id: string; name: string } | null;
