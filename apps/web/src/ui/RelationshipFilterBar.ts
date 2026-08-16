@@ -107,6 +107,20 @@ export class RelationshipFilterBar extends Entity {
     this.scene?.markDirty();
   }
 
+  getActiveIndexes(): readonly number[] {
+    return [...this.active];
+  }
+
+  setActiveIndexes(indexes: readonly number[]): void {
+    this.active = new Set(indexes.filter((index) => index >= 0 && index < RELATIONS.length));
+    const predicates = new Set<string>();
+    for (const index of this.active) {
+      for (const predicate of RELATIONS[index]!.predicates) predicates.add(predicate);
+    }
+    this.onChangeCb(predicates.size ? predicates : null);
+    this.scene?.markDirty();
+  }
+
   private drawPill(
     ctx: CanvasRenderingContext2D,
     rect: { x: number; y: number; w: number; h: number },

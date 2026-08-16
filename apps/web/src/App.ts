@@ -27,6 +27,7 @@ import type { RenderSettings } from './render-settings';
 import { loadNodeStyleSettings, saveNodeStyleSettings } from './node-style-settings';
 import type { NodeStyleSettings } from './node-style-settings';
 import { NodeAppearanceModal } from './ui/NodeAppearanceModal';
+import { clearSession, loadSession, saveSession, type GraphSessionSnapshot } from './session';
 
 export class App {
   readonly scene: Scene;
@@ -79,6 +80,9 @@ export class App {
   private modifiedPointerDown = false;
   private pathStatus: 'idle' | 'source' | 'loading' | 'success' | 'noPath' | 'failure' = 'idle';
   private nodeStyleSettings: NodeStyleSettings;
+  private sessionRestore: GraphSessionSnapshot | null = null;
+  private sessionSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private sessionSavingEnabled = true;
 
   // The scene renders on demand; it stays awake while the user is interacting,
   // the physics sim is running, or the camera is animating — plus a short
@@ -116,6 +120,7 @@ export class App {
       styleSettings: this.nodeStyleSettings,
       onChange: () => {
         this.scene.markDirty();
+        this.scheduleSessionSave();
       },
       onSelectNode: (node) => {
         if (node) {
@@ -160,6 +165,7 @@ export class App {
       },
       onFilterChange: (type) => {
         this.overlayLayer.setActiveFilter(type);
+        this.scheduleSessionSave();
       },
       onToggleFullscreen: () => {
         this.toggleFullscreen();
@@ -245,6 +251,7 @@ export class App {
         this.scene.maxFPS = settings.fps === 'max' ? this.displayHz : settings.fps;
       },
       () => this.nodeAppearanceModal.open(),
+      () => this.clearPersistedSession(),
     );
     this.scene.add(this.renderSettingsModal);
 
@@ -257,6 +264,7 @@ export class App {
 
     this.relationshipFilterBar = new RelationshipFilterBar(this.viewport, (predicates) => {
       this.overlayLayer.setActivePredicates(predicates);
+      this.scheduleSessionSave();
     });
     this.scene.add(this.relationshipFilterBar);
 
@@ -818,6 +826,7 @@ export class App {
     this.canvas.removeEventListener('contextmenu', this.onCanvasContextMenu);
     this.canvas.removeEventListener('dblclick', this.onCanvasDoubleClick);
     if (this.pendingNodeClick) clearTimeout(this.pendingNodeClick);
+    if (this.sessionSaveTimer) clearTimeout(this.sessionSaveTimer);
     this.cancelLongPress();
     this.headerBar.dispose();
     this.pathfinderModal.dispose();
@@ -857,6 +866,61 @@ export class App {
       this.renderSettings.fps === 'max' ? this.displayHz : this.renderSettings.fps;
     this.scene.start();
     await this.viewport.init();
+    const session = this.sessionRestore || loadSession();
+    if (session) this.restoreSession(session);
+  }
+
+  private scheduleSessionSave(): void {
+    if (!this.sessionSavingEnabled) return;
+    if (this.sessionSaveTimer) clearTimeout(this.sessionSaveTimer);
+    this.sessionSaveTimer = setTimeout(() => {
+      this.sessionSaveTimer = null;
+      saveSession({
+        version: 1,
+        camera: { panX: this.viewport.panX, panY: this.viewport.panY, zoom: this.viewport.zoom },
+        graph: this.viewport.exportSnapshot(),
+        expansionHistory: [...this.expansionHistory],
+        filter: this.headerBar.getActiveFilter(),
+        relationshipIndexes: [...this.relationshipFilterBar.getActiveIndexes()],
+        endpoints: {
+          source: this.endpointSource,
+          target: this.endpointTarget,
+          status: this.pathStatus === 'loading' ? 'idle' : this.pathStatus,
+        },
+      });
+    }, 250);
+  }
+
+  private restoreSession(session: GraphSessionSnapshot): void {
+    this.endpointEpoch++;
+    this.selectEpoch++;
+    this.viewport.importSnapshot(session.graph);
+    this.expansionHistory = [...session.expansionHistory].filter((id) =>
+      this.viewport.isNodeExpanded(id),
+    );
+    this.graphHistoryControls.setCount(this.expansionHistory.length);
+    this.headerBar.setActiveFilter(session.filter);
+    this.relationshipFilterBar.setActiveIndexes(session.relationshipIndexes);
+    this.endpointSource = session.endpoints.source;
+    this.endpointTarget = session.endpoints.target;
+    this.pathStatus = session.endpoints.status;
+    if (this.endpointSource)
+      this.pathfinderModal.setSource(this.endpointSource.id, this.endpointSource.name);
+    if (this.endpointTarget)
+      this.pathfinderModal.setTarget(this.endpointTarget.id, this.endpointTarget.name);
+    this.viewport.setCamera(session.camera);
+    this.scene.markDirty();
+  }
+
+  private clearPersistedSession(): void {
+    this.sessionSavingEnabled = false;
+    if (this.sessionSaveTimer) {
+      clearTimeout(this.sessionSaveTimer);
+      this.sessionSaveTimer = null;
+    }
+    clearSession();
+    this.clearCanvas();
+    this.sessionSavingEnabled = true;
   }
 
   public async handleSelectNode(id: string, anchor?: { x: number; y: number }): Promise<void> {

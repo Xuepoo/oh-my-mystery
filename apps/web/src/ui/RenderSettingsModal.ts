@@ -18,13 +18,16 @@ export class RenderSettingsModal extends Entity {
   private optionRects: OptionRect[] = [];
   private closeRect = { x: 0, y: 0, w: 32, h: 32 };
   private appearanceRect = { x: 0, y: 0, w: 120, h: 40 };
+  private clearSessionRect = { x: 0, y: 0, w: 120, h: 40 };
   private onChangeCb: (settings: RenderSettings, backendChanged: boolean) => void;
   private onOpenAppearanceCb?: () => void;
+  private onClearSessionCb?: () => void;
 
   constructor(
     settings: RenderSettings,
     onChange: (settings: RenderSettings, backendChanged: boolean) => void,
     onOpenAppearance?: () => void,
+    onClearSession?: () => void,
   ) {
     super();
     this.id = 'render-settings-modal';
@@ -32,6 +35,7 @@ export class RenderSettingsModal extends Entity {
     this.settings = { ...settings };
     this.onChangeCb = onChange;
     this.onOpenAppearanceCb = onOpenAppearance;
+    this.onClearSessionCb = onClearSession;
   }
 
   open(displayHz: number): void {
@@ -63,6 +67,11 @@ export class RenderSettingsModal extends Entity {
     if (this.onOpenAppearanceCb && this.inRect(x, y, this.appearanceRect)) {
       this.close();
       this.onOpenAppearanceCb();
+      return true;
+    }
+    if (this.onClearSessionCb && this.inRect(x, y, this.clearSessionRect)) {
+      this.close();
+      this.onClearSessionCb();
       return true;
     }
     for (const rect of this.optionRects) {
@@ -177,6 +186,10 @@ export class RenderSettingsModal extends Entity {
       ctx.textBaseline = 'middle';
       ctx.fillText('节点外观', this.appearanceRect.x + 60, this.appearanceRect.y + 20);
     }
+    if (this.onClearSessionCb) {
+      this.clearSessionRect = { x: x + 160, y: y + h - 58, w: 120, h: 40 };
+      this.drawButton(ctx, this.clearSessionRect, '清除会话', false);
+    }
   }
 
   private drawGroup(
@@ -220,5 +233,24 @@ export class RenderSettingsModal extends Entity {
 
   private inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }): boolean {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  }
+
+  private drawButton(
+    ctx: CanvasRenderingContext2D,
+    rect: { x: number; y: number; w: number; h: number },
+    label: string,
+    active: boolean,
+  ): void {
+    ctx.fillStyle = active ? Theme.colors.borderHighlight : Theme.colors.bgCard;
+    ctx.beginPath();
+    ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 7);
+    ctx.fill();
+    ctx.strokeStyle = active ? Theme.colors.borderActive : Theme.colors.border;
+    ctx.stroke();
+    ctx.fillStyle = active ? '#1A1715' : Theme.colors.textMid;
+    ctx.font = `600 11px ${Theme.fonts.sans}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2);
   }
 }

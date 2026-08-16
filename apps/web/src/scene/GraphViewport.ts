@@ -2,6 +2,7 @@ import type { D1DataSource } from '../api/D1DataSource';
 import { KnowledgeGraph2D } from './KnowledgeGraph2D';
 import type { GraphLink2D, GraphNode2D } from './types';
 import type { NodeStyleSettings } from '../node-style-settings';
+import type { KnowledgeGraphSnapshot } from './KnowledgeGraph2D';
 
 export interface GraphViewportOptions {
   source: D1DataSource;
@@ -52,6 +53,21 @@ export class GraphViewport {
 
   applyStyleSettings(settings: NodeStyleSettings): void {
     this.graph.applyStyleSettings(settings);
+    this.onChange();
+  }
+
+  exportSnapshot(): KnowledgeGraphSnapshot {
+    return this.graph.exportSnapshot();
+  }
+  importSnapshot(snapshot: KnowledgeGraphSnapshot): void {
+    this.graph.importSnapshot(snapshot);
+    this.onChange();
+  }
+  setCamera(camera: { panX: number; panY: number; zoom: number }): void {
+    this.cameraAnimating = false;
+    this.panX = camera.panX;
+    this.panY = camera.panY;
+    this.zoom = Math.max(0.15, Math.min(3.5, camera.zoom));
     this.onChange();
   }
 

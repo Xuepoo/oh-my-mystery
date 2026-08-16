@@ -27,6 +27,22 @@ interface HiddenNodeSnapshot {
   links: { link: GraphLink2D; owners: Set<string> }[];
 }
 
+export interface KnowledgeGraphSnapshot {
+  nodes: GraphNode2D[];
+  links: GraphLink2D[];
+  roots: string[];
+  manual: string[];
+  expanded: string[];
+  pinned: { id: string; x: number; y: number }[];
+  hidden: {
+    node: GraphNode2D;
+    pinned: boolean;
+    links: { link: GraphLink2D; owners: string[] }[];
+  }[];
+  pathNodes: string[];
+  pathFacts: string[];
+}
+
 export class KnowledgeGraph2D {
   private source: D1DataSource;
   private styleRegistry: NodeStyleRegistry;
@@ -82,6 +98,83 @@ export class KnowledgeGraph2D {
 
   getNode(id: string): GraphNode2D | undefined {
     return this.nodesMap.get(id);
+  }
+
+  exportSnapshot(): KnowledgeGraphSnapshot {
+    return {
+      nodes: this.nodesList.map((node) => ({ ...node, labels: { ...node.labels } })),
+      links: this.linksList.map((link) => ({ ...link })),
+      roots: [...this.rootIds],
+      manual: [...this.manualIds],
+      expanded: [...this.expandedSet],
+      pinned: [...this.pinnedIds]
+        .map((id) => this.nodesMap.get(id))
+        .filter((node): node is GraphNode2D => Boolean(node))
+        .map((node) => ({ id: node.id, x: node.x ?? 0, y: node.y ?? 0 })),
+      hidden: [...this.hiddenNodes.values()].map((snapshot) => ({
+        node: { ...snapshot.node, labels: { ...snapshot.node.labels } },
+        pinned: snapshot.pinned,
+        links: snapshot.links.map(({ link, owners }) => ({
+          link: { ...link },
+          owners: [...owners],
+        })),
+      })),
+      pathNodes: [...this.pathNodeIds],
+      pathFacts: [...this.pathFactKeys],
+    };
+  }
+
+  importSnapshot(snapshot: KnowledgeGraphSnapshot): void {
+    this.clear();
+    const validNodes = snapshot.nodes.filter((node) => node && typeof node.id === 'string');
+    for (const node of validNodes) {
+      node.labels = { ...node.labels };
+      node.color = this.styleRegistry.getColor(node.type);
+      this.nodesMap.set(node.id, node);
+      this.nodesList.push(node);
+    }
+    this.linksList = snapshot.links
+      .filter((link) => {
+        const source = typeof link.source === 'object' ? link.source.id : link.source;
+        const target = typeof link.target === 'object' ? link.target.id : link.target;
+        return this.nodesMap.has(source) && this.nodesMap.has(target);
+      })
+      .map((link) => ({ ...link }));
+    for (const link of this.linksList) {
+      const source = typeof link.source === 'object' ? link.source.id : link.source;
+      const target = typeof link.target === 'object' ? link.target.id : link.target;
+      const key = `${source}|${link.predicate}|${target}`;
+      this.factKeySet.add(key);
+      this.factOwners.set(key, new Set());
+    }
+    this.rootIds = new Set(snapshot.roots.filter((id) => this.nodesMap.has(id)));
+    this.manualIds = new Set(snapshot.manual.filter((id) => this.nodesMap.has(id)));
+    this.expandedSet = new Set(snapshot.expanded.filter((id) => this.nodesMap.has(id)));
+    this.pathNodeIds = new Set(snapshot.pathNodes.filter((id) => this.nodesMap.has(id)));
+    this.pathFactKeys = new Set(snapshot.pathFacts.filter((key) => this.factKeySet.has(key)));
+    for (const pin of snapshot.pinned) {
+      const node = this.nodesMap.get(pin.id);
+      if (!node) continue;
+      this.pinnedIds.add(pin.id);
+      node.x = pin.x;
+      node.y = pin.y;
+      node.fx = pin.x;
+      node.fy = pin.y;
+    }
+    for (const hidden of snapshot.hidden) {
+      if (this.nodesMap.has(hidden.node.id)) continue;
+      this.hiddenNodes.set(hidden.node.id, {
+        node: hidden.node,
+        pinned: hidden.pinned,
+        nodeOwners: new Set(),
+        links: hidden.links.map(({ link, owners }) => ({
+          link: { ...link },
+          owners: new Set(owners),
+        })),
+      });
+    }
+    this.rebuildSimulation();
+    this.reheat(0.25);
   }
 
   isExpanded(id: string): boolean {

@@ -679,4 +679,14 @@ export class HeaderBar extends Entity {
   ): boolean {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
   }
+
+  getActiveFilter(): string | null {
+    return this.activeFilter;
+  }
+
+  setActiveFilter(type: string | null): void {
+    this.activeFilter = type;
+    this.onFilterChangeCb(type);
+    this.scene?.markDirty();
+  }
 }
