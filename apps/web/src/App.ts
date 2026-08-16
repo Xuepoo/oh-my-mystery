@@ -19,6 +19,7 @@ import { RenderSettingsModal } from './ui/RenderSettingsModal';
 import { RelationshipFilterBar } from './ui/RelationshipFilterBar';
 import { GraphHistoryControls } from './ui/GraphHistoryControls';
 import { VisibilityManager } from './ui/VisibilityManager';
+import { GraphStatsPanel } from './ui/GraphStatsPanel';
 import { loadRenderSettings, measureDisplayRefresh, saveRenderSettings } from './render-settings';
 import type { RenderSettings } from './render-settings';
 
@@ -43,6 +44,7 @@ export class App {
   readonly relationshipFilterBar: RelationshipFilterBar;
   readonly graphHistoryControls: GraphHistoryControls;
   readonly visibilityManager: VisibilityManager;
+  readonly graphStatsPanel: GraphStatsPanel;
 
   private activeEntityDetails: EntityDetailResponse | null = null;
   private isPointerDown = false;
@@ -234,6 +236,9 @@ export class App {
     this.visibilityManager = new VisibilityManager(this.viewport);
     this.scene.add(this.visibilityManager);
 
+    this.graphStatsPanel = new GraphStatsPanel(this.source, this.viewport);
+    this.scene.add(this.graphStatsPanel);
+
     this.radialMenu = new NodeRadialMenu({
       isPinned: (id) => this.viewport.isNodePinned(id),
       isExpanded: (id) => this.viewport.isNodeExpanded(id),
@@ -280,6 +285,7 @@ export class App {
       this.relationshipFilterBar.isPointInside(x, y) ||
       this.graphHistoryControls.isPointInside(x, y) ||
       this.visibilityManager.isPointInside(x, y) ||
+      this.graphStatsPanel.isPointInside(x, y) ||
       this.minimap.isPointInside(x, y) ||
       this.controls.isPointInside(x, y) ||
       this.radialMenu.isPointInside(x, y)
@@ -329,6 +335,10 @@ export class App {
         this.visibilityManager.handleClick(x, y);
         return;
       }
+      if (this.graphStatsPanel.isPanelOpen()) {
+        this.graphStatsPanel.handleClick(x, y);
+        return;
+      }
       if (this.relationshipFilterBar.isPointInside(x, y)) {
         this.relationshipFilterBar.handleClick(x, y);
         return;
@@ -339,6 +349,10 @@ export class App {
       }
       if (this.visibilityManager.isPointInside(x, y)) {
         this.visibilityManager.handleClick(x, y);
+        return;
+      }
+      if (this.graphStatsPanel.isPointInside(x, y)) {
+        this.graphStatsPanel.handleClick(x, y);
         return;
       }
       if (this.helpModal.isPointInside(x, y)) {
@@ -449,6 +463,10 @@ export class App {
       }
       if (this.visibilityManager.isPanelOpen()) {
         this.visibilityManager.close();
+        return;
+      }
+      if (this.graphStatsPanel.isPanelOpen()) {
+        this.graphStatsPanel.close();
         return;
       }
       if (this.helpModal.isModalOpen()) {
