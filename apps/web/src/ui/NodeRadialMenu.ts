@@ -2,7 +2,7 @@ import { Entity } from '@vectojs/core';
 import type { GraphNode2D } from '../scene/types';
 import { getCanvasCtx, Theme } from './theme';
 
-type RadialAction = 'pin' | 'hide' | 'expand' | 'details' | 'layout';
+type RadialAction = 'pin' | 'hide' | 'expand' | 'details' | 'layout' | 'multihop';
 
 export interface NodeRadialMenuOptions {
   isPinned: (id: string) => boolean;
@@ -88,6 +88,7 @@ export class NodeRadialMenu extends Entity {
       },
       { action: 'hide', icon: '◌', label: '隐藏', angle: Math.PI },
       { action: 'layout', icon: '✣', label: '重排', angle: -Math.PI / 4 },
+      { action: 'multihop', icon: '↠', label: '两跳', angle: (-Math.PI * 3) / 4 },
     ];
 
     ctx.save();

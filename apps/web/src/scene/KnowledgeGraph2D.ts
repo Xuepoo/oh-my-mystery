@@ -61,6 +61,17 @@ export class KnowledgeGraph2D {
     return this.expandedSet.has(id);
   }
 
+  getAdjacentIds(id: string): string[] {
+    const adjacent = new Set<string>();
+    for (const link of this.linksList) {
+      const source = typeof link.source === 'object' ? link.source.id : link.source;
+      const target = typeof link.target === 'object' ? link.target.id : link.target;
+      if (source === id && this.nodesMap.has(target)) adjacent.add(target);
+      if (target === id && this.nodesMap.has(source)) adjacent.add(source);
+    }
+    return [...adjacent];
+  }
+
   async bootstrap(seedNodes: GraphNode2D[]): Promise<void> {
     this.nodesMap.clear();
     this.nodesList = [];
@@ -95,14 +106,14 @@ export class KnowledgeGraph2D {
     this.rebuildSimulation();
   }
 
-  async expand(nodeId: string): Promise<number> {
+  async expand(nodeId: string, neighborLimit?: number): Promise<number> {
     if (this.expandedSet.has(nodeId)) return 0;
     const centerNode = this.nodesMap.get(nodeId);
     if (!centerNode) return 0;
     const cx = centerNode.x ?? 0;
     const cy = centerNode.y ?? 0;
 
-    const neighborhood = await this.source.getNeighbors(nodeId);
+    const neighborhood = await this.source.getNeighbors(nodeId, { limit: neighborLimit });
     this.expandedSet.add(nodeId);
     let addedCount = 0;
     const ownedNodes = new Set<string>();

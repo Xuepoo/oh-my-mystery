@@ -79,21 +79,23 @@ export class D1DataSource {
 
   async getNeighbors(
     id: NodeId,
-    _options?: { limit?: number; direction?: 'out' | 'in' | 'both' },
+    options?: { limit?: number; direction?: 'out' | 'in' | 'both' },
   ): Promise<GraphNeighborhood2D> {
     const strId = String(id);
-    if (this.cache.has(strId)) {
-      const idx = this.cacheOrder.indexOf(strId);
+    const limit = Math.min(50, Math.max(1, options?.limit ?? 50));
+    const cacheKey = `${strId}:${limit}`;
+    if (this.cache.has(cacheKey)) {
+      const idx = this.cacheOrder.indexOf(cacheKey);
       if (idx !== -1) {
         this.cacheOrder.splice(idx, 1);
-        this.cacheOrder.push(strId);
+        this.cacheOrder.push(cacheKey);
       }
-      return this.cache.get(strId)!;
+      return this.cache.get(cacheKey)!;
     }
 
     try {
       const res = await fetch(
-        `${this.baseUrl}/api/entity/${encodeURIComponent(strId)}/neighbors?limit=50`,
+        `${this.baseUrl}/api/entity/${encodeURIComponent(strId)}/neighbors?limit=${limit}`,
         {
           headers: this.getHeaders(),
         },
@@ -145,7 +147,7 @@ export class D1DataSource {
         neighbors: rawNeighbors,
       };
 
-      this.cacheSet(strId, neighborhood);
+      this.cacheSet(cacheKey, neighborhood);
       return neighborhood;
     } catch (err) {
       console.error('Failed to get neighbors for', strId, err);

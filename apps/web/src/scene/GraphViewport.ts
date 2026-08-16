@@ -250,6 +250,34 @@ export class GraphViewport {
     return this.graph.isExpanded(id);
   }
 
+  async expandBounded(startId: string, maxDepth = 2, maxNewNodes = 80): Promise<number> {
+    let expanded = 0;
+    let frontier = [startId];
+    const visited = new Set<string>();
+    const initialCount = this.graph.nodeCount;
+
+    for (let depth = 0; depth < maxDepth && frontier.length; depth++) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        if (visited.has(id) || this.graph.isExpanded(id)) {
+          next.push(...this.graph.getAdjacentIds(id));
+          visited.add(id);
+          continue;
+        }
+        visited.add(id);
+        const remaining = maxNewNodes - (this.graph.nodeCount - initialCount);
+        await this.graph.expand(id, Math.max(1, Math.min(50, remaining)));
+        expanded++;
+        if (this.graph.nodeCount - initialCount >= maxNewNodes) break;
+        next.push(...this.graph.getAdjacentIds(id));
+      }
+      frontier = [...new Set(next)].filter((id) => !visited.has(id));
+      if (this.graph.nodeCount - initialCount >= maxNewNodes) break;
+    }
+    this.onChange();
+    return expanded;
+  }
+
   toggleNodePinned(id: string): boolean {
     const pinned = this.graph.togglePinned(id);
     this.onChange();
