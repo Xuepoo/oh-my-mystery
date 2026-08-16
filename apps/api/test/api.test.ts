@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { app } from '../src/index';
-
-const dbPath = join(import.meta.dir, '../../../data/omm-d1.sqlite');
-const sqlite = new Database(dbPath);
+import { app, SEED_AUTHOR_IDS } from '../src/index';
 
 // Create a D1Database mock wrapper around bun:sqlite
 function createMockD1(db: Database): D1Database {
@@ -62,6 +61,90 @@ function createMockD1(db: Database): D1Database {
   };
 }
 
+function names(zh: string, en = zh): string {
+  return JSON.stringify({ labels: { zh, en }, aliases: {} });
+}
+
+function buildTestDatabase(): Database {
+  const db = new Database(':memory:');
+  db.run(readFileSync(join(import.meta.dir, '../schema.sql'), 'utf8'));
+
+  const insertEntity = db.prepare(
+    'INSERT INTO entities (id, qid, type, names_json, source) VALUES (?, ?, ?, ?, ?)',
+  );
+  const seedNames: Record<string, string> = {
+    'wd:Q35610': '阿瑟·柯南·道尔',
+    'wd:Q35064': '阿加莎·克里斯蒂',
+    'wd:Q347412': '江户川乱步',
+    'wd:Q125970': '东野圭吾',
+  };
+  for (const [index, id] of SEED_AUTHOR_IDS.entries()) {
+    insertEntity.run(
+      id,
+      id.replace('wd:', ''),
+      'author',
+      names(seedNames[id] ?? `测试作家${index}`),
+      'test',
+    );
+  }
+  insertEntity.run('wd:Q710681', 'Q710681', 'work', names('白夜行'), 'test');
+  insertEntity.run('test:publisher', null, 'publisher', names('南海出版公司'), 'test');
+  insertEntity.run('test:award', null, 'award', names('测试推理奖'), 'test');
+  insertEntity.run('wd:Q586362', 'Q586362', 'author', names('埃勒里·奎因'), 'test');
+
+  const insertFact = db.prepare(
+    'INSERT INTO facts (subject_id, predicate, object_ref, qualifiers_json, source) VALUES (?, ?, ?, ?, ?)',
+  );
+  insertFact.run('wd:Q347412', 'influenced_by', 'wd:Q35064', null, 'test');
+  insertFact.run('wd:Q710681', 'publisher', 'test:publisher', null, 'test');
+  insertFact.run('wd:Q125970', 'award_received', 'test:award', null, 'test');
+
+  db.prepare(
+    'INSERT INTO recommendations (entity_id, target_id, score, reason, rank) VALUES (?, ?, ?, ?, ?)',
+  ).run('wd:Q125970', 'wd:Q710681', 1, '代表作品', 1);
+
+  const insertSearch = db.prepare(
+    'INSERT INTO search_index (id, type, name_zh, name_en, name_ja, aliases_text) VALUES (?, ?, ?, ?, ?, ?)',
+  );
+  const insertFts = db.prepare('INSERT INTO search_fts (id, content) VALUES (?, ?)');
+  const searches = [
+    ['wd:Q125970', 'author', '东野圭吾', 'Keigo Higashino', '東野圭吾', ''],
+    ['wd:Q347412', 'author', '江户川乱步', 'Edogawa Ranpo', '江戸川乱歩', '（日）江户川乱步'],
+    ['wd:Q586362', 'author', '埃勒里·奎因', 'Ellery Queen', '', '埃勒里奎因'],
+  ];
+  for (const row of searches) {
+    insertSearch.run(...row);
+    insertFts.run(row[0], row.slice(2).join(' '));
+  }
+
+  const steps = JSON.stringify(
+    Array.from({ length: 4 }, (_, index) => ({
+      year: 1920 + index,
+      summary: { zh: `步骤${index + 1}` },
+    })),
+  );
+  const insertChronicle = db.prepare(
+    'INSERT INTO chronicles (id, slug, title_json, description_json, steps_json) VALUES (?, ?, ?, ?, ?)',
+  );
+  insertChronicle.run(
+    'golden-age-trio',
+    'golden-age-trio',
+    '{"zh":"黄金时代三巨匠"}',
+    '{"zh":"测试"}',
+    steps,
+  );
+  insertChronicle.run(
+    'japanese-mystery',
+    'japanese-mystery',
+    '{"zh":"日本推理"}',
+    '{"zh":"测试"}',
+    '[]',
+  );
+  return db;
+}
+
+const sqlite = buildTestDatabase();
+
 const mockEnv = {
   DB: createMockD1(sqlite),
 };
@@ -98,11 +181,11 @@ describe('OMM Backend API Endpoints', () => {
     const res = await app.request('/api/stats', {}, mockEnv);
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
-    expect(body.total).toBeGreaterThan(1000);
-    expect(body.byType.work).toBeGreaterThan(1000);
-    expect(body.byType.author).toBeGreaterThan(100);
-    expect(body.byType.award).toBeGreaterThan(10);
-    expect(body.facts).toBeGreaterThan(1000);
+    expect(body.total).toBeGreaterThanOrEqual(20);
+    expect(body.byType.work).toBeGreaterThanOrEqual(1);
+    expect(body.byType.author).toBeGreaterThanOrEqual(15);
+    expect(body.byType.award).toBeGreaterThanOrEqual(1);
+    expect(body.facts).toBeGreaterThanOrEqual(3);
     expect(body.awards).toBeGreaterThan(0);
   });
 
@@ -260,10 +343,6 @@ describe('OMM Backend API Endpoints', () => {
     expect(authorHit.name).not.toContain('(');
   });
 });
-
-// --- Malformed data resilience ---
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 
 function buildCorruptEnv() {
   const dir = mkdtempSync(join(tmpdir(), 'omm-corrupt-'));
