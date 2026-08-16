@@ -468,6 +468,12 @@ export class GraphOverlayLayer extends Entity {
     if (hoveredData) {
       this.renderHoverCard(ctx, hoveredData.entity, hoveredData.sx, hoveredData.sy, w, h);
     }
+
+    // Self-sustain the render loop while physics or the camera are animating;
+    // when both settle the on-demand scene goes to sleep.
+    if (this.hasPendingAnimations()) {
+      this.scene.markDirty();
+    }
   }
 
   private renderHoverCard(

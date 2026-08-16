@@ -56,6 +56,7 @@ export class ChroniclePanel extends Entity {
   }
 
   private notifyStep(): void {
+    this.scene?.markDirty();
     const currentTrail = this.trails[this.currentTrailIndex];
     if (currentTrail && currentTrail.steps[this.currentStepIndex]) {
       this.onStepChangeCb(currentTrail.steps[this.currentStepIndex]!);

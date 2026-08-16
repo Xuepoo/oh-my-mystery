@@ -43,6 +43,19 @@ export class App {
   private pinchState: { prevDist: number; prevMidX: number; prevMidY: number } | null = null;
   private lastPanTime = 0;
   private panVelocity = { vx: 0, vy: 0 };
+  private lastActivityAt = performance.now();
+  private static readonly IDLE_AMBIENT_MS = 6000;
+
+  // The scene renders on demand; it stays awake while the user is interacting,
+  // the physics sim is running, or the camera is animating — plus a short
+  // ambient tail so the background animation fades out gracefully.
+  public isSceneAlive(): boolean {
+    return (
+      performance.now() - this.lastActivityAt < App.IDLE_AMBIENT_MS ||
+      this.viewport.isCameraAnimating() ||
+      this.viewport.isPhysicsActive()
+    );
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -56,6 +69,8 @@ export class App {
       pointBackend: 'canvas',
       particleBackend: 'auto',
       maxFPS: 60,
+      renderMode: 'onDemand',
+      contentProjection: false,
     });
     this.scene.resize(window.innerWidth, window.innerHeight);
 
@@ -79,7 +94,7 @@ export class App {
     this.viewport.resize(window.innerWidth, window.innerHeight);
 
     // 3. Mount Entities into Scene
-    this.background = new BackgroundLayer();
+    this.background = new BackgroundLayer({ isAlive: () => this.isSceneAlive() });
     this.scene.add(this.background);
 
     this.overlayLayer = new GraphOverlayLayer(this.viewport);
@@ -198,6 +213,7 @@ export class App {
       this.lastPointerPos = { x, y };
       this.isPointerDown = true;
       this.lastPanTime = performance.now();
+      this.lastActivityAt = this.lastPanTime;
       this.panVelocity = { vx: 0, vy: 0 };
       this.activePointers.set(e.pointerId, { x, y });
 
@@ -337,6 +353,12 @@ export class App {
   private onPointerMove = (e: PointerEvent): void => {
     const { x, y } = getEventCoords(e);
     this.activePointers.set(e.pointerId, { x, y });
+    const now = performance.now();
+    this.lastActivityAt = now;
+    // Wake the on-demand renderer when activity resumes after idle.
+    if (this.isSceneAlive()) {
+      this.scene.markDirty();
+    }
 
     if (this.pinchState && this.activePointers.size >= 2) {
       const pts = [...this.activePointers.values()];
@@ -351,7 +373,6 @@ export class App {
     }
 
     if (this.isPointerDown) {
-      const now = performance.now();
       const dt = now - this.lastPanTime;
       const dx = x - this.lastPointerPos.x;
       const dy = y - this.lastPointerPos.y;
@@ -449,6 +470,7 @@ export class App {
       'wheel',
       (e) => {
         const { x, y } = getEventCoords(e);
+        this.lastActivityAt = performance.now();
         if (this.drawer.isPointInside(x, y)) {
           e.preventDefault();
           this.drawer.handleWheel(e.deltaY);

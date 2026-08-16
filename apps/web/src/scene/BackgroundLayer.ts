@@ -19,11 +19,13 @@ export class BackgroundLayer extends Entity {
   private cachedCanvas: HTMLCanvasElement | null = null;
   private cachedW = 0;
   private cachedH = 0;
+  private isAlive: () => boolean;
 
-  constructor() {
+  constructor(options: { isAlive: () => boolean }) {
     super();
     this.id = 'background-layer';
     this.interactive = false;
+    this.isAlive = options.isAlive;
     this.initParticles(24);
 
     // Track mouse for particle interaction
@@ -160,6 +162,12 @@ export class BackgroundLayer extends Entity {
 
     // 3. Floating Golden Dust Embers
     this.renderParticles(ctx, w, h);
+
+    // Ambient loop: keep animating while the scene is alive, then let the
+    // on-demand renderer go to sleep.
+    if (this.isAlive()) {
+      this.scene.markDirty();
+    }
   }
 
   private drawCornerFiligree(
