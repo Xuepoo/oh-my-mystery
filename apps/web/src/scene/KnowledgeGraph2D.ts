@@ -28,6 +28,7 @@ export class KnowledgeGraph2D {
   private factKeySet = new Set<string>();
   private expandedSet = new Set<string>();
   private rootIds = new Set<string>();
+  private manualIds = new Set<string>();
   private expansionNodes = new Map<string, Set<string>>();
   private expansionFacts = new Map<string, Set<string>>();
   private nodeOwners = new Map<string, Set<string>>();
@@ -79,6 +80,7 @@ export class KnowledgeGraph2D {
     this.factKeySet.clear();
     this.expandedSet.clear();
     this.rootIds.clear();
+    this.manualIds.clear();
     this.expansionNodes.clear();
     this.expansionFacts.clear();
     this.nodeOwners.clear();
@@ -176,6 +178,23 @@ export class KnowledgeGraph2D {
     return addedCount;
   }
 
+  addManualNode(node: GraphNode2D, x: number, y: number): boolean {
+    this.manualIds.add(node.id);
+    const existing = this.nodesMap.get(node.id);
+    if (existing) return false;
+    node.x = x;
+    node.y = y;
+    node.vx = 0;
+    node.vy = 0;
+    node.degree = 0;
+    node.radius = node.type === 'author' ? 12 : 8;
+    this.nodesMap.set(node.id, node);
+    this.nodesList.push(node);
+    this.rebuildSimulation();
+    this.reheat(0.35);
+    return true;
+  }
+
   async toggleExpansion(nodeId: string): Promise<number> {
     if (this.expandedSet.has(nodeId)) {
       this.collapse(nodeId);
@@ -194,7 +213,9 @@ export class KnowledgeGraph2D {
       owners?.delete(nodeId);
       if (!owners?.size) {
         this.nodeOwners.delete(id);
-        if (!this.rootIds.has(id) && !this.expandedSet.has(id)) this.nodesMap.delete(id);
+        if (!this.rootIds.has(id) && !this.manualIds.has(id) && !this.expandedSet.has(id)) {
+          this.nodesMap.delete(id);
+        }
       }
     }
     for (const key of ownedFacts) {

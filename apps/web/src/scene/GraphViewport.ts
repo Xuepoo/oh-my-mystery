@@ -178,6 +178,23 @@ export class GraphViewport {
     this.animateCameraTo(targetPanX, targetPanY, targetZoom, 450);
   }
 
+  addManualNode(node: GraphNode2D): boolean {
+    const world = this.screenToWorld(this.width / 2, this.height / 2);
+    const hash = [...node.id].reduce(
+      (value, char) => (value * 33 + char.charCodeAt(0)) >>> 0,
+      5381,
+    );
+    const angle = (hash % 360) * (Math.PI / 180);
+    const distance = 24 + (hash % 28);
+    const added = this.graph.addManualNode(
+      node,
+      world.x + Math.cos(angle) * distance,
+      world.y + Math.sin(angle) * distance,
+    );
+    if (added) this.onChange();
+    return added;
+  }
+
   // Fling gesture: keep panning after the pointer is released with
   // exponential velocity decay (v = v0 * e^(-t/tau)). The ease-out cubic
   // animation is matched so its initial velocity equals v0.

@@ -19,6 +19,9 @@ export class CasefileDrawer extends Entity {
   private onStartPathfinderCb: (id: string, name: string) => void;
   private onExpandNodeCb: (id: string) => void;
   private anchor = { x: 0, y: 0 };
+  private manualPosition: { x: number; y: number } | null = null;
+  private dragging = false;
+  private dragOffset = { x: 0, y: 0 };
   private cardRect = { x: -1000, y: -1000, w: 0, h: 0 };
 
   private closeBtnRect = { x: 0, y: 0, w: 32, h: 32 };
@@ -70,6 +73,39 @@ export class CasefileDrawer extends Entity {
     return this.isOpen;
   }
 
+  isDragging(): boolean {
+    return this.dragging;
+  }
+
+  handlePointerDown(x: number, y: number): boolean {
+    if (!this.isOpen || !this.isInRect(x, y, this.cardRect)) return false;
+    if (this.isInRect(x, y, this.closeBtnRect)) return false;
+    const headerBottom = this.cardRect.y + 72;
+    if (y > headerBottom) return false;
+    this.dragging = true;
+    this.dragOffset = { x: x - this.cardRect.x, y: y - this.cardRect.y };
+    return true;
+  }
+
+  handlePointerMove(x: number, y: number): boolean {
+    if (!this.dragging) return false;
+    const margin = 12;
+    const maxX = Math.max(margin, this.scene.width - this.cardRect.w - margin);
+    const maxY = Math.max(margin, this.scene.height - this.cardRect.h - margin);
+    this.manualPosition = {
+      x: Math.max(margin, Math.min(maxX, x - this.dragOffset.x)),
+      y: Math.max(margin, Math.min(maxY, y - this.dragOffset.y)),
+    };
+    this.scene.markDirty();
+    return true;
+  }
+
+  handlePointerUp(): boolean {
+    if (!this.dragging) return false;
+    this.dragging = false;
+    return true;
+  }
+
   render(r: any): void {
     if (!this.isOpen || !this.details) return;
 
@@ -83,9 +119,19 @@ export class CasefileDrawer extends Entity {
       startX = this.anchor.x - drawerWidth - 28;
     }
     startX = Math.max(margin, Math.min(this.scene.width - drawerWidth - margin, startX));
-    const startY = isMobile
+    let startY = isMobile
       ? 72
       : Math.max(72, Math.min(this.scene.height - drawerHeight - margin, this.anchor.y - 88));
+    if (this.manualPosition) {
+      startX = Math.max(
+        margin,
+        Math.min(this.scene.width - drawerWidth - margin, this.manualPosition.x),
+      );
+      startY = Math.max(
+        margin,
+        Math.min(this.scene.height - drawerHeight - margin, this.manualPosition.y),
+      );
+    }
     this.cardRect = { x: startX, y: startY, w: drawerWidth, h: drawerHeight };
 
     // 1. Floating card background & shadow

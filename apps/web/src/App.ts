@@ -141,7 +141,7 @@ export class App {
         this.helpModal.open();
       },
       onSelectSearchResult: (id) => {
-        void this.handleSelectNode(id);
+        void this.addAndFocusSearchNode(id);
       },
       onFilterChange: (type) => {
         this.overlayLayer.setActiveFilter(type);
@@ -390,6 +390,7 @@ export class App {
         return;
       }
       if (this.drawer.isPointInside(x, y)) {
+        if (this.drawer.handlePointerDown(x, y)) return;
         this.drawer.handleClick(x, y);
         return;
       }
@@ -554,6 +555,10 @@ export class App {
       this.activePointers.set(e.pointerId, { x, y });
     }
     const now = performance.now();
+    if (this.drawer.handlePointerMove(x, y)) {
+      this.lastActivityAt = now;
+      return;
+    }
     if (Math.hypot(x - this.pointerDownPos.x, y - this.pointerDownPos.y) > 8) {
       this.cancelLongPress();
     }
@@ -611,6 +616,13 @@ export class App {
     const { x, y } = getEventCoords(e);
     this.cancelLongPress();
     this.activePointers.delete(e.pointerId);
+
+    if (this.drawer.handlePointerUp()) {
+      this.isPointerDown = false;
+      this.isPanning = false;
+      this.panVelocity = { vx: 0, vy: 0 };
+      return;
+    }
 
     if (this.activePointers.size === 1) {
       // Pinch ended, one finger remains: resume panning from that finger
@@ -792,6 +804,19 @@ export class App {
       this.drawer.open(details, cardAnchor);
       this.controls.setVisible(false);
     }
+  }
+
+  private async addAndFocusSearchNode(id: string): Promise<void> {
+    if (this.viewport.getHiddenNodes().some((node) => node.id === id)) {
+      this.viewport.restoreNode(id);
+    }
+    if (!this.viewport.graph.getNode(id)) {
+      const [node] = await this.source.getNodes([id]);
+      if (!node) return;
+      this.viewport.addManualNode(node);
+    }
+    this.drawer.close();
+    this.viewport.focusNode(id);
   }
 
   private async toggleNodeExpansion(id: string): Promise<void> {
