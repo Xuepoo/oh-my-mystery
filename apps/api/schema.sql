@@ -32,7 +32,26 @@ CREATE INDEX IF NOT EXISTS idx_facts_sub ON facts(subject_id, predicate, object_
 CREATE INDEX IF NOT EXISTS idx_facts_obj ON facts(object_ref, predicate, subject_id);
 CREATE INDEX IF NOT EXISTS idx_facts_pred ON facts(predicate);
 
--- 3. Top-N Precomputed Recommendations
+-- 3. Normalized publication events / work editions
+CREATE TABLE IF NOT EXISTS publication_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  work_id TEXT NOT NULL,
+  publisher_id TEXT,
+  translator_ids_json TEXT NOT NULL DEFAULT '[]',
+  publication_date TEXT,
+  isbn TEXT,
+  language TEXT,
+  region TEXT,
+  edition_type TEXT,
+  source TEXT,
+  provenance_json TEXT NOT NULL DEFAULT '{}',
+  fingerprint TEXT NOT NULL UNIQUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_publication_events_work ON publication_events(work_id);
+CREATE INDEX IF NOT EXISTS idx_publication_events_publisher ON publication_events(publisher_id);
+
+-- 4. Top-N Precomputed Recommendations
 CREATE TABLE IF NOT EXISTS recommendations (
   entity_id TEXT NOT NULL,
   target_id TEXT NOT NULL,

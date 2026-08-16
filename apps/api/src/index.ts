@@ -13,6 +13,8 @@ import type {
   EntityNames,
   OmmEntity,
   OmmFact,
+  PublicationEvent,
+  PublicationSummary,
   PathfinderResult,
   RecommendationItem,
   SearchResponse,
@@ -407,13 +409,54 @@ app.get('/api/entity/:id/details', async (c) => {
     };
   });
 
+  const publicationSummaryRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS count,
+            GROUP_CONCAT(DISTINCT publisher_id) AS publisher_ids
+       FROM publication_events
+      WHERE work_id = ?`,
+  )
+    .bind(id)
+    .first();
+  const publications: PublicationSummary = {
+    count: Number((publicationSummaryRow as any)?.count ?? 0),
+    publisher_ids: String((publicationSummaryRow as any)?.publisher_ids ?? '')
+      .split(',')
+      .filter(Boolean),
+  };
+
   const response: EntityDetailResponse = {
     entity,
     facts,
     recommendations,
+    publications,
   };
 
   return c.json(response);
+});
+
+app.get('/api/entity/:id/publications', async (c) => {
+  const id = c.req.param('id');
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM publication_events
+      WHERE work_id = ?
+      ORDER BY publication_date ASC, id ASC`,
+  )
+    .bind(id)
+    .all();
+  const publications: PublicationEvent[] = (rows.results || []).map((row: any) => ({
+    id: Number(row.id),
+    work_id: row.work_id,
+    publisher_id: row.publisher_id || null,
+    translator_ids: safeParseJson<string[]>(row.translator_ids_json, []),
+    publication_date: row.publication_date || null,
+    isbn: row.isbn || null,
+    language: row.language || null,
+    region: row.region || null,
+    edition_type: row.edition_type || null,
+    source: row.source || null,
+    provenance: safeParseJson<Record<string, unknown>>(row.provenance_json, {}),
+  }));
+  return c.json({ work_id: id, publications });
 });
 
 function normalizeSearchName(name: string): string {

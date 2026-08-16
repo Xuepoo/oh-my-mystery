@@ -92,6 +92,25 @@ function buildTestDatabase(): Database {
   insertEntity.run('test:award', null, 'award', names('测试推理奖'), 'test');
   insertEntity.run('wd:Q586362', 'Q586362', 'author', names('埃勒里·奎因'), 'test');
 
+  const insertPublication = db.prepare(
+    `INSERT INTO publication_events
+      (work_id, publisher_id, translator_ids_json, publication_date, isbn, language, region, edition_type, source, provenance_json, fingerprint)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insertPublication.run(
+    'wd:Q710681',
+    'test:publisher',
+    JSON.stringify(['test:translator']),
+    '1999-01-01',
+    '9780000000001',
+    'zh',
+    'CN',
+    'reprint',
+    'test',
+    JSON.stringify({ source: 'test' }),
+    'edition-1',
+  );
+
   const insertFact = db.prepare(
     'INSERT INTO facts (subject_id, predicate, object_ref, qualifiers_json, source) VALUES (?, ?, ?, ?, ?)',
   );
@@ -226,6 +245,23 @@ describe('OMM Backend API Endpoints', () => {
     expect(body.entity.id).toBe('wd:Q125970');
     expect(body.recommendations.length).toBeGreaterThan(0);
     expect(body.recommendations[0].reason).toBeDefined();
+  });
+
+  it('GET /api/entity/:id/details returns publication summary', async () => {
+    const res = await app.request('/api/entity/wd:Q710681/details', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.publications).toEqual({ count: 1, publisher_ids: ['test:publisher'] });
+  });
+
+  it('GET /api/entity/:id/publications returns detailed publication events', async () => {
+    const res = await app.request('/api/entity/wd:Q710681/publications', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.work_id).toBe('wd:Q710681');
+    expect(body.publications).toHaveLength(1);
+    expect(body.publications[0].isbn).toBe('9780000000001');
+    expect(body.publications[0].translator_ids).toEqual(['test:translator']);
   });
 
   it('GET /api/search finds authors by Chinese / English name', async () => {

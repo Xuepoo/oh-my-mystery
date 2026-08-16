@@ -427,7 +427,102 @@ console.log(
   `✓ Inserted ${validFacts.length} connected facts (publisher entity-ized: ${publisherMatched} matched, ${publisherUnmatched} unmatched)`,
 );
 
-// 4. Compute Top-N Recommendations
+// 4. Normalize bibliographic facts into deduplicated publication events.
+// Source-level grouping preserves separate publishers/reprints while the
+// fingerprint prevents exact duplicate facts from creating duplicate events.
+console.log('📚 Building publication events...');
+const publicationPredicates = new Set([
+  'publisher',
+  'translator',
+  'publication_date',
+  'isbn',
+  'language',
+  'region',
+  'edition_type',
+]);
+const publicationGroups = new Map<string, { subject: string; source: string; facts: any[] }>();
+for (const fact of validFacts) {
+  if (!publicationPredicates.has(fact.predicate)) continue;
+  const source = String(fact.source || 'unknown');
+  const key = `${fact.subject_id}\u0000${source}`;
+  const group = publicationGroups.get(key) || { subject: fact.subject_id, source, facts: [] };
+  group.facts.push(fact);
+  publicationGroups.set(key, group);
+}
+
+const insertPublication = db.prepare(`
+  INSERT OR IGNORE INTO publication_events
+    (work_id, publisher_id, translator_ids_json, publication_date, isbn, language, region, edition_type, source, provenance_json, fingerprint)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+let publicationCount = 0;
+db.transaction(() => {
+  for (const group of publicationGroups.values()) {
+    const values = (predicate: string): string[] =>
+      group.facts
+        .filter((fact) => fact.predicate === predicate)
+        .map((fact) => String(fact.object_value || fact.object_ref || '').trim())
+        .filter(Boolean);
+    const publishers = [
+      ...new Set(
+        group.facts
+          .filter((f) => f.predicate === 'publisher')
+          .map((f) => f.object_ref)
+          .filter(Boolean),
+      ),
+    ];
+    const translators = [
+      ...new Set(
+        group.facts
+          .filter((f) => f.predicate === 'translator')
+          .map((f) => f.object_ref)
+          .filter(Boolean),
+      ),
+    ];
+    const dates = values('publication_date');
+    const isbns = values('isbn');
+    const languages = values('language');
+    const regions = values('region');
+    const editionTypes = values('edition_type');
+    const eventCount = Math.min(100, Math.max(publishers.length, dates.length, isbns.length, 1));
+    for (let index = 0; index < eventCount; index++) {
+      const publisher = publishers[index] || publishers[0] || null;
+      const date = dates[index] || dates[0] || null;
+      const isbn = isbns[index] || isbns[0] || null;
+      const language = languages[0] || null;
+      const region = regions[0] || null;
+      const editionType = editionTypes[0] || null;
+      const fingerprint = JSON.stringify([
+        group.subject,
+        group.source,
+        publisher,
+        translators,
+        date,
+        isbn,
+        language,
+        region,
+        editionType,
+      ]);
+      insertPublication.run(
+        group.subject,
+        publisher,
+        JSON.stringify(translators),
+        date,
+        isbn,
+        language,
+        region,
+        editionType,
+        group.source,
+        JSON.stringify({ source: group.source, fact_count: group.facts.length }),
+        fingerprint,
+      );
+      publicationCount += 1;
+    }
+  }
+})();
+console.log(`✓ Inserted ${publicationCount} deduplicated publication events`);
+
+// 5. Compute Top-N Recommendations
 console.log('🧠 Computing Graph-based Recommendations...');
 const insertRec = db.prepare(`
   INSERT OR REPLACE INTO recommendations (entity_id, target_id, score, reason, rank)
