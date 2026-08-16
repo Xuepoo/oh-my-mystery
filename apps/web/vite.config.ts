@@ -16,8 +16,14 @@ export default defineConfig({
     chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
-        manualChunks: {
-          vectojs: ['@vectojs/core', '@vectojs/ui', '@vectojs/styles'],
+        manualChunks(id) {
+          if (
+            id.includes('/@vectojs/core/') ||
+            id.includes('/@vectojs/ui/') ||
+            id.includes('/@vectojs/styles/')
+          ) {
+            return 'vectojs';
+          }
         },
       },
     },

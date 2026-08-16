@@ -41,6 +41,23 @@ This project standardizes on the Rust/Go-based toolchain aligned with VectoJS:
 
 All feature work, bugfixes, and refactors **must** be isolated in Git worktrees and tracked via `carryctx`:
 
+### Required delivery lifecycle
+
+Use this lifecycle for all planned engineering work:
+
+```text
+Issue -> Branch -> Commit -> PR -> Review -> Merge
+```
+
+- **Issue**: Create or identify a GitHub Issue describing the problem, scope, acceptance criteria, and validation plan. Link the issue to the corresponding CarryCtx task.
+- **Branch**: Claim and start the CarryCtx task, then create a dedicated Git branch and CarryCtx worktree. Do not develop planned changes directly on `main`.
+- **Commit**: Make focused commits in the worktree using Conventional Commits. Run the applicable formatters, linters, tests, and builds before committing.
+- **PR**: Push the task branch and open a pull request that links the Issue and summarizes validation results. Do not push feature work directly to `main`.
+- **Review**: Wait for CI, review the diff and deployment impact, address review comments, and re-run all affected quality gates.
+- **Merge**: Merge only after required CI checks and review are successful. Update CarryCtx with the final commit/PR, verification results, remaining risks, and task completion before cleaning up the worktree.
+
+Direct changes on `main` are reserved for explicitly approved emergency fixes or repository administration. Even emergency changes must be recorded in CarryCtx and followed by a retrospective Issue/PR when practical.
+
 ```bash
 # 1. Check current status & resume context
 carryctx resume --agent <you>
@@ -53,6 +70,9 @@ carryctx task start CTX-0001 --agent <you>
 # 3. Create an isolated Git worktree for the task
 carryctx worktree create CTX-0001
 # (or use the Just recipe: just wt-create CTX-0001)
+
+# 3b. Create and use the task branch/worktree; never edit planned work on main
+cd .worktrees/ctx-0001
 
 # 4. Work in the worktree, track progress
 carryctx progress todo "Add API adapter for D1 endpoint" --agent <you>
