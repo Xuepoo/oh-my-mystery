@@ -38,6 +38,25 @@ export interface OmmFact {
   source?: string;
 }
 
+export interface PublicationEvent {
+  id: number;
+  work_id: string;
+  publisher_id?: string | null;
+  translator_ids: string[];
+  publication_date?: string | null;
+  isbn?: string | null;
+  language?: string | null;
+  region?: string | null;
+  edition_type?: string | null;
+  source?: string | null;
+  provenance: Record<string, unknown>;
+}
+
+export interface PublicationSummary {
+  count: number;
+  publisher_ids: string[];
+}
+
 export interface RecommendationItem {
   target_id: string;
   target_name: string;
@@ -51,6 +70,7 @@ export interface EntityDetailResponse {
   entity: OmmEntity;
   facts: OmmFact[];
   recommendations: RecommendationItem[];
+  publications?: PublicationSummary;
 }
 
 export interface ChronicleStep {
