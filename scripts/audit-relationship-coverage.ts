@@ -5,6 +5,7 @@ const sourcePath = join(import.meta.dir, '../../mystery-clawer/data/mystery.db')
 const d1Path = join(import.meta.dir, '../data/omm-d1.sqlite');
 const source = new Database(sourcePath, { readonly: true });
 const d1 = new Database(d1Path, { readonly: true });
+const sourceLinks = source;
 
 const predicates = [
   'author',
@@ -62,7 +63,10 @@ const publisherWorks = (db: Database): number => {
     .query(
       `SELECT COUNT(DISTINCT subject_id) AS count
        FROM facts
-       WHERE predicate = 'publisher' AND object_ref = ?`,
+       WHERE (
+         (predicate = 'publisher' AND object_ref = ?)
+         OR (predicate = 'publisher_name' AND object_value = '新星出版社')
+       )`,
     )
     .get(publisher) as { count: number };
   return Number(row.count);
@@ -85,8 +89,23 @@ const authorWorks = (db: Database): number => {
 };
 console.log('\n## Author fixture');
 console.log(
-  `| ${author} 早坂吝 | ${authorWorks(source)} source works | ${authorWorks(d1)} d1 works |`,
+  `| ${author} 早坂吝 | ${authorWorks(source)} direct source works | ${authorWorks(d1)} d1 works |`,
 );
+const linkedAuthorSources = sourceLinks
+  .query('SELECT source_id FROM entity_links WHERE target_id = ?')
+  .all(author) as { source_id: string }[];
+const linkedAuthorWorks = linkedAuthorSources.length
+  ? Number(
+      source
+        .query(
+          `SELECT COUNT(DISTINCT subject_id) AS count
+           FROM facts
+           WHERE predicate IN ('author', 'aozora_role') AND object_ref IN (${linkedAuthorSources.map(() => '?').join(',')})`,
+        )
+        .get(...linkedAuthorSources.map((row) => row.source_id)).count,
+    )
+  : 0;
+console.log(`linked source works=${linkedAuthorWorks}`);
 
 const characterStats = (db: Database): { total: number; isolated: number } => {
   const total = entityCount(db, 'character');

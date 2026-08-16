@@ -87,7 +87,8 @@ function matchPublisher(value: string): string | null {
   return null;
 }
 
-// Filter entities to mystery/detective core domain (Wikidata + MWJ + Edgar + CWA + Aozora + Douban core)
+// Filter entities to mystery/detective core domain, including NDL catalog
+// records whose bibliographic facts provide the broadest publisher coverage.
 const entityRows = srcDb
   .query(
     `
@@ -139,6 +140,7 @@ const entityRows = srcDb
       OR id LIKE 'cwa:%'
       OR id LIKE 'aozora:%'
       OR id LIKE 'douban:%'
+      OR id LIKE 'ndl:%'
       OR id LIKE 'tuiliz:%'
       OR id LIKE 'gutenberg:%'
     )
@@ -246,7 +248,13 @@ db.transaction(() => {
     );
     insertSearchFts.run(
       e.id,
-      [nameZh, labels['en'], labels['ja'], ...allAliases].filter(Boolean).join(' '),
+      (() => {
+        const parts = [nameZh, labels['en'], labels['ja'], ...allAliases].filter(
+          Boolean,
+        ) as string[];
+        const variants = [...new Set(parts.map(normalizeForFts))].filter(Boolean);
+        return [...parts, ...variants].join(' ');
+      })(),
     );
   }
 
@@ -257,33 +265,23 @@ db.transaction(() => {
     for (const ex of extras) {
       if (!existing.includes(ex)) existing.push(ex);
     }
-    db.run('UPDATE search_index SET aliases_text = ? WHERE id = ?', [existing.join(' | '), target]);
+    const aliasesText = existing.join(' | ');
+    db.run('UPDATE search_index SET aliases_text = ? WHERE id = ?', [aliasesText, target]);
+    const names = db
+      .query('SELECT name_zh, name_en, name_ja FROM search_index WHERE id = ?')
+      .get(target) as { name_zh: string | null; name_en: string | null; name_ja: string | null };
+    const parts = [names.name_zh, names.name_en, names.name_ja, aliasesText].filter(
+      Boolean,
+    ) as string[];
+    const variants = [...new Set(parts.map(normalizeForFts))].filter(Boolean);
+    db.run('UPDATE search_fts SET content = ? WHERE id = ?', [
+      [...parts, ...variants].join(' '),
+      target,
+    ]);
   }
 })();
 
 console.log(`✓ Merged ${mergedEntityCount} linked source entities into canonical nodes`);
-
-// 2b. Rebuild FTS content with separator-stripped variants for CJK queries
-console.log('🔎 Rebuilding search_fts with normalized variants...');
-const rebuildFts = db.prepare('UPDATE search_fts SET content = ? WHERE id = ?');
-const ftsRows = db
-  .query('SELECT id, name_zh, name_en, name_ja, aliases_text FROM search_index')
-  .all() as {
-  id: string;
-  name_zh: string | null;
-  name_en: string | null;
-  name_ja: string | null;
-  aliases_text: string | null;
-}[];
-db.transaction(() => {
-  for (const row of ftsRows) {
-    const parts = [row.name_zh, row.name_en, row.name_ja, row.aliases_text].filter(
-      Boolean,
-    ) as string[];
-    const variants = [...new Set(parts.map(normalizeForFts))].filter(Boolean);
-    rebuildFts.run([...parts, ...variants].join(' '), row.id);
-  }
-})();
 
 // 3. Load and Insert Facts
 console.log('💾 Loading and inserting facts into D1 SQLite...');

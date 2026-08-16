@@ -10,11 +10,51 @@ if (!existsSync(tmpDir)) {
 }
 
 const sqlite = new Database(dbPath);
+const resumeIndex = process.argv.indexOf('--resume');
+const resumeArg =
+  process.argv.find((arg) => arg.startsWith('--resume=')) ??
+  (resumeIndex >= 0 ? process.argv[resumeIndex + 1] : undefined);
+const resumeValue = resumeArg?.startsWith('--resume=')
+  ? resumeArg.slice('--resume='.length)
+  : resumeArg;
+const [resumeTable, resumeOffsetText] = resumeValue?.split(':') ?? [];
+const resumeOffset = resumeOffsetText ? Number(resumeOffsetText) : 0;
+const skipClear = process.argv.includes('--skip-clear');
+
+function runRemote(command: string): void {
+  execSync(
+    `wrangler d1 execute omm-db --remote --command="${command.replaceAll('"', '\\\"')}" -y`,
+    {
+      encoding: 'utf-8',
+      env: process.env,
+      maxBuffer: 50 * 1024 * 1024,
+    },
+  );
+}
 
 function escapeSql(val: any): string {
   if (val === null || val === undefined) return 'NULL';
   if (typeof val === 'number') return String(val);
   return `'${String(val).replace(/'/g, "''")}'`;
+}
+
+function importChunk(tableName: string, chunkFile: string): void {
+  const maxAttempts = 5;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      execSync(`wrangler d1 execute omm-db --remote --file="${chunkFile}" -y`, {
+        encoding: 'utf-8',
+        env: process.env,
+        maxBuffer: 50 * 1024 * 1024,
+      });
+      return;
+    } catch (err: any) {
+      if (attempt === maxAttempts) throw err;
+      const delayMs = attempt * 5000;
+      console.warn(`  ⚠️ ${tableName} import attempt ${attempt} failed; retrying in ${delayMs}ms.`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+    }
+  }
 }
 
 function chunkAndImport(tableName: string, cols: string[], batchSize = 10000): void {
@@ -23,8 +63,10 @@ function chunkAndImport(tableName: string, cols: string[], batchSize = 10000): v
   const total = countRow.total;
   console.log(`  Total rows: ${total}`);
 
-  let offset = 0;
-  let batchIndex = 0;
+  const startOffset = resumeTable === tableName ? resumeOffset : 0;
+  let offset = startOffset;
+  let batchIndex = Math.floor(startOffset / batchSize);
+  if (startOffset > 0) console.log(`  Resuming at offset ${startOffset}.`);
 
   while (offset < total) {
     batchIndex++;
@@ -45,11 +87,7 @@ function chunkAndImport(tableName: string, cols: string[], batchSize = 10000): v
 
     console.log(`  ⏳ Ingesting part ${batchIndex} into remote D1...`);
     try {
-      execSync(`wrangler d1 execute omm-db --remote --file="${chunkFile}" -y`, {
-        encoding: 'utf-8',
-        env: process.env,
-        maxBuffer: 50 * 1024 * 1024,
-      });
+      importChunk(tableName, chunkFile);
       console.log(`  ✓ Part ${batchIndex} succeeded.`);
     } catch (err: any) {
       console.error(`  ❌ Failed to import part ${batchIndex}:`, err.message);
@@ -60,6 +98,17 @@ function chunkAndImport(tableName: string, cols: string[], batchSize = 10000): v
 
     offset += rows.length;
   }
+}
+
+// Clear mutable tables before the replacement import. Time Travel protects the
+// previous remote state; this prevents stale facts from surviving a full sync.
+if (!skipClear) {
+  console.log('\n🧹 Clearing remote mutable tables...');
+  runRemote(
+    'DELETE FROM facts; DELETE FROM recommendations; DELETE FROM search_fts; DELETE FROM search_index; DELETE FROM entities;',
+  );
+} else {
+  console.log('\n♻️ Resuming without clearing remote tables.');
 }
 
 // 1. Entities
