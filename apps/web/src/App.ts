@@ -15,6 +15,9 @@ import { PathfinderModal } from './ui/PathfinderModal';
 import { getEventCoords } from './ui/theme';
 import { ViewportControls } from './ui/ViewportControls';
 import { WelcomeLayer } from './ui/WelcomeLayer';
+import { RenderSettingsModal } from './ui/RenderSettingsModal';
+import { loadRenderSettings, measureDisplayRefresh, saveRenderSettings } from './render-settings';
+import type { RenderSettings } from './render-settings';
 
 export class App {
   readonly scene: Scene;
@@ -33,6 +36,7 @@ export class App {
   readonly minimap: Minimap;
   readonly controls: ViewportControls;
   readonly radialMenu: NodeRadialMenu;
+  readonly renderSettingsModal: RenderSettingsModal;
 
   private activeEntityDetails: EntityDetailResponse | null = null;
   private isPointerDown = false;
@@ -48,6 +52,8 @@ export class App {
   private lastActivityAt = performance.now();
   private static readonly IDLE_AMBIENT_MS = 6000;
   private pendingNodeClick: ReturnType<typeof setTimeout> | null = null;
+  private renderSettings: RenderSettings;
+  private displayHz = 60;
 
   // The scene renders on demand; it stays awake while the user is interacting,
   // the physics sim is running, or the camera is animating — plus a short
@@ -66,12 +72,13 @@ export class App {
     // gestures (page pinch-zoom / scroll) so pointer events stay ours.
     this.canvas.style.touchAction = 'none';
     this.source = new D1DataSource(import.meta.env.VITE_API_URL || '');
+    this.renderSettings = loadRenderSettings();
 
     // 1. Initialize Single VectoJS Scene
     this.scene = new Scene(this.canvas, {
-      pointBackend: 'canvas',
-      particleBackend: 'auto',
-      maxFPS: 60,
+      pointBackend: this.renderSettings.pointBackend,
+      particleBackend: this.renderSettings.particleBackend,
+      maxFPS: this.renderSettings.fps === 120 ? 120 : 60,
       renderMode: 'onDemand',
       contentProjection: false,
     });
@@ -129,6 +136,9 @@ export class App {
       },
       onToggleFullscreen: () => {
         this.toggleFullscreen();
+      },
+      onOpenSettings: () => {
+        this.renderSettingsModal.open(this.displayHz);
       },
     });
     this.scene.add(this.headerBar);
@@ -192,6 +202,20 @@ export class App {
     this.controls = new ViewportControls(this.viewport);
     this.scene.add(this.controls);
 
+    this.renderSettingsModal = new RenderSettingsModal(
+      this.renderSettings,
+      (settings, backendChanged) => {
+        this.renderSettings = settings;
+        saveRenderSettings(settings);
+        if (backendChanged) {
+          window.location.reload();
+          return;
+        }
+        this.scene.maxFPS = settings.fps === 'max' ? this.displayHz : settings.fps;
+      },
+    );
+    this.scene.add(this.renderSettingsModal);
+
     this.radialMenu = new NodeRadialMenu({
       isPinned: (id) => this.viewport.isNodePinned(id),
       isExpanded: (id) => this.viewport.isNodeExpanded(id),
@@ -227,6 +251,7 @@ export class App {
       this.drawer.isPointInside(x, y) ||
       this.chroniclePanel.isPointInside(x, y) ||
       this.pathfinderModal.isPointInside(x, y) ||
+      this.renderSettingsModal.isPointInside(x, y) ||
       this.minimap.isPointInside(x, y) ||
       this.controls.isPointInside(x, y) ||
       this.radialMenu.isPointInside(x, y)
@@ -266,6 +291,10 @@ export class App {
       // 1. Dispatch to UI Panels (Highest overlay priority first)
       if (this.radialMenu.isMenuOpen()) {
         if (!this.radialMenu.handleClick(x, y)) this.radialMenu.close();
+        return;
+      }
+      if (this.renderSettingsModal.isModalOpen()) {
+        this.renderSettingsModal.handleClick(x, y);
         return;
       }
       if (this.helpModal.isPointInside(x, y)) {
@@ -376,6 +405,10 @@ export class App {
       }
       if (this.helpModal.isModalOpen()) {
         this.helpModal.close();
+        return;
+      }
+      if (this.renderSettingsModal.isModalOpen()) {
+        this.renderSettingsModal.close();
         return;
       }
       if (this.pathfinderModal.isModalOpen()) {
@@ -568,6 +601,9 @@ export class App {
   }
 
   async start(): Promise<void> {
+    this.displayHz = await measureDisplayRefresh();
+    this.scene.maxFPS =
+      this.renderSettings.fps === 'max' ? this.displayHz : this.renderSettings.fps;
     this.scene.start();
     await this.viewport.init();
   }

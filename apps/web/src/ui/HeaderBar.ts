@@ -11,6 +11,7 @@ export interface HeaderBarOptions {
   onSelectSearchResult: (id: string) => void;
   onFilterChange: (type: string | null) => void;
   onToggleFullscreen: () => void;
+  onOpenSettings: () => void;
 }
 
 export class HeaderBar extends Entity {
@@ -21,6 +22,7 @@ export class HeaderBar extends Entity {
   private onSelectSearchResultCb: (id: string) => void;
   private onFilterChangeCb: (type: string | null) => void;
   private onToggleFullscreenCb: () => void;
+  private onOpenSettingsCb: () => void;
 
   private searchQuery = '';
   private searchResults: SearchResultItem[] = [];
@@ -33,6 +35,7 @@ export class HeaderBar extends Entity {
   private searchInputRect = { x: 0, y: 0, w: 0, h: 0 };
   private fullscreenBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private helpBtnRect = { x: 0, y: 0, w: 0, h: 0 };
+  private settingsBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private pathfinderBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private chroniclesBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private filterPillRects: {
@@ -75,6 +78,7 @@ export class HeaderBar extends Entity {
     this.onSelectSearchResultCb = options.onSelectSearchResult;
     this.onFilterChangeCb = options.onFilterChange;
     this.onToggleFullscreenCb = options.onToggleFullscreen;
+    this.onOpenSettingsCb = options.onOpenSettings;
 
     this.initDomInput();
 
@@ -213,6 +217,7 @@ export class HeaderBar extends Entity {
     const w = this.scene.width;
     const isMobile = w < 768;
     const isTablet = w >= 768 && w < 1080;
+    const isCompactMobile = w < 420;
 
     // 1. Header Bar Container Background & Luminous Border
     ctx.save();
@@ -242,7 +247,7 @@ export class HeaderBar extends Entity {
     // 2. Position DOM Search Input
     const searchX = isMobile ? 68 : isTablet ? 245 : 290;
     const searchW = isMobile
-      ? Math.min(Math.max(80, w - 68 - 188), w - 76)
+      ? Math.min(Math.max(44, w - 68 - (isCompactMobile ? 160 : 208)), w - 76)
       : Math.min(260, w * 0.22);
     this.searchInputRect = { x: searchX, y: 14, w: searchW, h: 36 };
 
@@ -331,9 +336,20 @@ export class HeaderBar extends Entity {
       ctx.font = `700 15px ${Theme.fonts.sans}`;
       ctx.fillText('?', this.helpBtnRect.x + 20, 32);
 
+      this.settingsBtnRect = { x: this.helpBtnRect.x - 48, y: 14, w: 40, h: 36 };
+      ctx.fillStyle = Theme.colors.bgCard;
+      ctx.beginPath();
+      ctx.roundRect(this.settingsBtnRect.x, 14, 40, 36, 6);
+      ctx.fill();
+      ctx.strokeStyle = Theme.colors.border;
+      ctx.stroke();
+      ctx.fillStyle = Theme.colors.textMid;
+      ctx.font = `600 15px ${Theme.fonts.sans}`;
+      ctx.fillText('⚙', this.settingsBtnRect.x + 20, 32);
+
       // Pathfinder Btn
       this.pathfinderBtnRect = {
-        x: this.helpBtnRect.x - 8 - 106,
+        x: this.settingsBtnRect.x - 8 - 106,
         y: 14,
         w: 106,
         h: 36,
@@ -379,8 +395,19 @@ export class HeaderBar extends Entity {
       ctx.font = `600 14px ${Theme.fonts.sans}`;
       ctx.fillText('🔗', this.pathfinderBtnRect.x + 20, 32);
 
+      this.settingsBtnRect = { x: this.pathfinderBtnRect.x - 48, y: 14, w: 40, h: 36 };
+      ctx.fillStyle = Theme.colors.bgCard;
+      ctx.beginPath();
+      ctx.roundRect(this.settingsBtnRect.x, 14, 40, 36, 6);
+      ctx.fill();
+      ctx.strokeStyle = Theme.colors.border;
+      ctx.stroke();
+      ctx.fillStyle = Theme.colors.textMid;
+      ctx.font = `600 15px ${Theme.fonts.sans}`;
+      ctx.fillText('⚙', this.settingsBtnRect.x + 20, 32);
+
       this.chroniclesBtnRect = {
-        x: this.pathfinderBtnRect.x - 48,
+        x: this.settingsBtnRect.x - 48,
         y: 14,
         w: 42,
         h: 36,
@@ -393,21 +420,25 @@ export class HeaderBar extends Entity {
       ctx.font = `700 14px ${Theme.fonts.sans}`;
       ctx.fillText('📖', this.chroniclesBtnRect.x + 21, 32);
 
-      this.helpBtnRect = {
-        x: this.chroniclesBtnRect.x - 48,
-        y: 14,
-        w: 42,
-        h: 36,
-      };
-      ctx.fillStyle = Theme.colors.bgCard;
-      ctx.beginPath();
-      ctx.roundRect(this.helpBtnRect.x, 14, 42, 36, 6);
-      ctx.fill();
-      ctx.strokeStyle = Theme.colors.border;
-      ctx.stroke();
-      ctx.fillStyle = Theme.colors.textMid;
-      ctx.font = `700 15px ${Theme.fonts.sans}`;
-      ctx.fillText('?', this.helpBtnRect.x + 21, 32);
+      if (isCompactMobile) {
+        this.helpBtnRect = { x: -100, y: -100, w: 0, h: 0 };
+      } else {
+        this.helpBtnRect = {
+          x: this.chroniclesBtnRect.x - 48,
+          y: 14,
+          w: 42,
+          h: 36,
+        };
+        ctx.fillStyle = Theme.colors.bgCard;
+        ctx.beginPath();
+        ctx.roundRect(this.helpBtnRect.x, 14, 42, 36, 6);
+        ctx.fill();
+        ctx.strokeStyle = Theme.colors.border;
+        ctx.stroke();
+        ctx.fillStyle = Theme.colors.textMid;
+        ctx.font = `700 15px ${Theme.fonts.sans}`;
+        ctx.fillText('?', this.helpBtnRect.x + 21, 32);
+      }
     }
 
     // 5. Search Results / Hot Queries Dropdown
@@ -591,6 +622,12 @@ export class HeaderBar extends Entity {
     if (this.isInRect(clientX, clientY, this.helpBtnRect)) {
       this.hideDropdown();
       this.onOpenHelpCb();
+      return true;
+    }
+
+    if (this.isInRect(clientX, clientY, this.settingsBtnRect)) {
+      this.hideDropdown();
+      this.onOpenSettingsCb();
       return true;
     }
 
