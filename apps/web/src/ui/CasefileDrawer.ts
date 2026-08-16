@@ -2,6 +2,67 @@ import { Entity } from '@vectojs/core';
 import type { EntityDetailResponse } from '@omm/shared';
 import { getCanvasCtx, Theme } from './theme';
 
+const ENTITY_TYPE_LABELS: Record<string, string> = {
+  author: '作者',
+  work: '作品',
+  award: '奖项',
+  character: '角色',
+  series: '系列',
+  publisher: '出版社',
+  genre: '类型',
+  person: '人物',
+  other: '其他',
+};
+
+const PREDICATE_LABELS: Record<string, string> = {
+  author: '作者',
+  aozora_role: '创作',
+  publisher: '出版社',
+  publisher_name: '出版社',
+  award: '奖项',
+  award_received: '奖项',
+  character: '角色',
+  characters: '角色',
+  series: '系列',
+  translator: '译者',
+  genre: '类型',
+};
+
+function formatCopyYear(value?: string | null): string {
+  if (!value) return '';
+  const match = value.match(/^[+-]?(\d{4})/);
+  return match?.[1] || value;
+}
+
+export function formatEntityDetailsText(details: EntityDetailResponse): string {
+  const { entity } = details;
+  const labels = entity.names?.labels || {};
+  const primaryName = labels.zh || labels['zh-cn'] || labels.en || labels.ja || entity.id;
+  const lines = [`名称：${primaryName}`, `类型：${ENTITY_TYPE_LABELS[entity.type] || entity.type}`];
+
+  if (labels.en && labels.en !== primaryName) lines.push(`英文名：${labels.en}`);
+  if (entity.bio) lines.push(`简介：${entity.bio.trim()}`);
+  if (entity.birth || entity.death) {
+    lines.push(
+      `生卒：${formatCopyYear(entity.birth) || '?'} ~ ${formatCopyYear(entity.death) || '至今'}`,
+    );
+  }
+  if ((entity.type === 'author' || entity.type === 'person') && entity.country) {
+    lines.push(`国籍：${entity.country}`);
+  }
+
+  const relationLines = new Set<string>();
+  for (const fact of details.facts) {
+    const value = (fact.object_value || fact.object_ref || '').trim();
+    const predicate = PREDICATE_LABELS[fact.predicate.trim()] || fact.predicate.trim();
+    if (!predicate || !value || value === entity.id) continue;
+    relationLines.add(`${predicate}：${value}`);
+  }
+  if (relationLines.size > 0) lines.push('', '关系：', ...relationLines);
+  lines.push(`来源 ID：${entity.id}`);
+  return lines.join('\n');
+}
+
 export interface CasefileDrawerOptions {
   onClose: () => void;
   onSelectEntity: (id: string) => void;
@@ -25,10 +86,12 @@ export class CasefileDrawer extends Entity {
   private cardRect = { x: -1000, y: -1000, w: 0, h: 0 };
 
   private closeBtnRect = { x: 0, y: 0, w: 32, h: 32 };
+  private copyBtnRect = { x: 0, y: 0, w: 32, h: 32 };
   private pathfinderBtnRect = { x: 0, y: 0, w: 140, h: 36 };
   private expandBtnRect = { x: 0, y: 0, w: 140, h: 36 };
   private recItemRects: { id: string; name: string; x: number; y: number; w: number; h: number }[] =
     [];
+  private copyState: 'idle' | 'success' | 'error' = 'idle';
 
   constructor(options: CasefileDrawerOptions) {
     super();
@@ -58,6 +121,7 @@ export class CasefileDrawer extends Entity {
     this.isOpen = true;
     if (anchor) this.anchor = anchor;
     this.scrollY = 0;
+    this.copyState = 'idle';
     this.scene.markDirty();
   }
 
@@ -65,6 +129,7 @@ export class CasefileDrawer extends Entity {
     this.isOpen = false;
     this.details = null;
     this.cardRect = { x: -1000, y: -1000, w: 0, h: 0 };
+    this.copyState = 'idle';
     this.onCloseCb();
     this.scene.markDirty();
   }
@@ -79,7 +144,8 @@ export class CasefileDrawer extends Entity {
 
   handlePointerDown(x: number, y: number): boolean {
     if (!this.isOpen || !this.isInRect(x, y, this.cardRect)) return false;
-    if (this.isInRect(x, y, this.closeBtnRect)) return false;
+    if (this.isInRect(x, y, this.closeBtnRect) || this.isInRect(x, y, this.copyBtnRect))
+      return false;
     const headerBottom = this.cardRect.y + 72;
     if (y > headerBottom) return false;
     this.dragging = true;
@@ -169,6 +235,7 @@ export class CasefileDrawer extends Entity {
     // Header Bar
     // (close button is drawn last so scrolling content never overlaps it)
     this.closeBtnRect = { x: startX + drawerWidth - 44, y: startY + 16, w: 32, h: 32 };
+    this.copyBtnRect = { x: startX + drawerWidth - 84, y: startY + 16, w: 32, h: 32 };
 
     // Entity Type Badge
     const typeLabel = Theme.getNodeTypeLabel(entity.type);
@@ -393,6 +460,28 @@ export class CasefileDrawer extends Entity {
     ctx.restore();
 
     // Sticky close button drawn on top of scrolled content
+    ctx.fillStyle = this.copyState === 'success' ? 'rgba(70, 130, 90, 0.35)' : Theme.colors.bgCard;
+    ctx.beginPath();
+    ctx.roundRect(
+      this.copyBtnRect.x,
+      this.copyBtnRect.y,
+      this.copyBtnRect.w,
+      this.copyBtnRect.h,
+      6,
+    );
+    ctx.fill();
+    ctx.strokeStyle = this.copyState === 'error' ? '#c66' : Theme.colors.border;
+    ctx.stroke();
+    ctx.fillStyle = this.copyState === 'error' ? '#e88' : Theme.colors.textHigh;
+    ctx.font = `600 12px ${Theme.fonts.sans}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      this.copyState === 'success' ? '✓' : this.copyState === 'error' ? '!' : '⧉',
+      this.copyBtnRect.x + 16,
+      this.copyBtnRect.y + 16,
+    );
+
     ctx.fillStyle = Theme.colors.bgCard;
     ctx.beginPath();
     ctx.roundRect(
@@ -418,6 +507,11 @@ export class CasefileDrawer extends Entity {
     // Check Close button
     if (this.isInRect(clientX, clientY, this.closeBtnRect)) {
       this.close();
+      return true;
+    }
+
+    if (this.isInRect(clientX, clientY, this.copyBtnRect)) {
+      void this.copyDetailsText();
       return true;
     }
 
@@ -457,6 +551,27 @@ export class CasefileDrawer extends Entity {
     if (!iso) return '';
     const match = iso.match(/([+-]?\d{1,4})/);
     return match ? match[1]!.replace('+', '') : iso;
+  }
+
+  private async copyDetailsText(): Promise<void> {
+    if (!this.details || !navigator.clipboard) {
+      this.copyState = 'error';
+      this.scene.markDirty();
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(formatEntityDetailsText(this.details));
+      this.copyState = 'success';
+    } catch {
+      this.copyState = 'error';
+    }
+    this.scene.markDirty();
+    window.setTimeout(() => {
+      if (this.isOpen) {
+        this.copyState = 'idle';
+        this.scene.markDirty();
+      }
+    }, 1500);
   }
 
   private formatCountry(c?: string | null): string {
