@@ -31,13 +31,24 @@ export interface GraphNeighborhood2D {
   neighbors: GraphNode2D[];
 }
 
-export function pickNodeLabel(labels: Record<string, string> | undefined, lang = 'zh'): string {
-  if (!labels) return '';
-  if (labels[lang]) return labels[lang];
-  if (lang === 'zh' && labels['zh-cn']) return labels['zh-cn'];
-  if (labels.zh) return labels.zh;
-  if (labels.en) return labels.en;
-  if (labels.ja) return labels.ja;
-  const first = Object.values(labels)[0];
-  return first || '';
+export function pickNodeLabel(
+  labels: Record<string, string> | undefined,
+  lang = 'zh',
+  aliases?: Record<string, string[]>,
+): string {
+  if (!labels && !aliases) return '';
+  const candidates = [
+    labels?.[lang],
+    lang === 'zh' ? labels?.['zh-cn'] : undefined,
+    labels?.zh,
+    labels?.en,
+    labels?.ja,
+    ...Object.values(labels || {}),
+    ...(aliases ? Object.values(aliases).flat() : []),
+  ].filter((value): value is string => Boolean(value?.trim()));
+  return candidates.find((value) => !isEntityIdLabel(value)) || candidates[0] || '';
+}
+
+export function isEntityIdLabel(value: string): boolean {
+  return /^(?:wd:Q\d+|(?:douban|ndl|aozora|club|gutenberg|cwa|edgar|tuiliz):)/i.test(value.trim());
 }
