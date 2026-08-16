@@ -17,6 +17,7 @@ import { ViewportControls } from './ui/ViewportControls';
 import { WelcomeLayer } from './ui/WelcomeLayer';
 import { RenderSettingsModal } from './ui/RenderSettingsModal';
 import { RelationshipFilterBar } from './ui/RelationshipFilterBar';
+import { GraphHistoryControls } from './ui/GraphHistoryControls';
 import { loadRenderSettings, measureDisplayRefresh, saveRenderSettings } from './render-settings';
 import type { RenderSettings } from './render-settings';
 
@@ -39,6 +40,7 @@ export class App {
   readonly radialMenu: NodeRadialMenu;
   readonly renderSettingsModal: RenderSettingsModal;
   readonly relationshipFilterBar: RelationshipFilterBar;
+  readonly graphHistoryControls: GraphHistoryControls;
 
   private activeEntityDetails: EntityDetailResponse | null = null;
   private isPointerDown = false;
@@ -56,6 +58,7 @@ export class App {
   private pendingNodeClick: ReturnType<typeof setTimeout> | null = null;
   private renderSettings: RenderSettings;
   private displayHz = 60;
+  private expansionHistory: string[] = [];
 
   // The scene renders on demand; it stays awake while the user is interacting,
   // the physics sim is running, or the camera is animating — plus a short
@@ -158,7 +161,7 @@ export class App {
         this.pathfinderModal.open({ id, name });
       },
       onExpandNode: (id) => {
-        void this.viewport.toggleNodeExpansion(id);
+        void this.toggleNodeExpansion(id);
       },
     });
     this.scene.add(this.drawer);
@@ -223,6 +226,9 @@ export class App {
     });
     this.scene.add(this.relationshipFilterBar);
 
+    this.graphHistoryControls = new GraphHistoryControls(() => this.undoLastExpansion());
+    this.scene.add(this.graphHistoryControls);
+
     this.radialMenu = new NodeRadialMenu({
       isPinned: (id) => this.viewport.isNodePinned(id),
       isExpanded: (id) => this.viewport.isNodeExpanded(id),
@@ -234,7 +240,7 @@ export class App {
           this.overlayLayer.setHoveredEntity(null);
           this.viewport.hideNode(node.id);
         } else if (action === 'expand') {
-          void this.viewport.toggleNodeExpansion(node.id);
+          void this.toggleNodeExpansion(node.id);
         } else {
           void this.handleSelectNode(node.id, {
             x: node.sx ?? node.x ?? 0,
@@ -260,6 +266,7 @@ export class App {
       this.pathfinderModal.isPointInside(x, y) ||
       this.renderSettingsModal.isPointInside(x, y) ||
       this.relationshipFilterBar.isPointInside(x, y) ||
+      this.graphHistoryControls.isPointInside(x, y) ||
       this.minimap.isPointInside(x, y) ||
       this.controls.isPointInside(x, y) ||
       this.radialMenu.isPointInside(x, y)
@@ -307,6 +314,10 @@ export class App {
       }
       if (this.relationshipFilterBar.isPointInside(x, y)) {
         this.relationshipFilterBar.handleClick(x, y);
+        return;
+      }
+      if (this.graphHistoryControls.isPointInside(x, y)) {
+        this.graphHistoryControls.handleClick(x, y);
         return;
       }
       if (this.helpModal.isPointInside(x, y)) {
@@ -387,7 +398,7 @@ export class App {
     }
     this.drawer.close();
     this.radialMenu.close();
-    void this.viewport.toggleNodeExpansion(node.id);
+    void this.toggleNodeExpansion(node.id);
   };
 
   // Block browser shortcuts that only make sense for document pages
@@ -637,6 +648,27 @@ export class App {
       this.drawer.open(details, cardAnchor);
       this.controls.setVisible(false);
     }
+  }
+
+  private async toggleNodeExpansion(id: string): Promise<void> {
+    const wasExpanded = this.viewport.isNodeExpanded(id);
+    await this.viewport.toggleNodeExpansion(id);
+    if (!wasExpanded && this.viewport.isNodeExpanded(id)) {
+      this.expansionHistory.push(id);
+    } else if (wasExpanded) {
+      this.expansionHistory = this.expansionHistory.filter((entry) => entry !== id);
+    }
+    this.graphHistoryControls.setCount(this.expansionHistory.length);
+  }
+
+  private undoLastExpansion(): void {
+    while (this.expansionHistory.length > 0) {
+      const id = this.expansionHistory.pop()!;
+      if (!this.viewport.isNodeExpanded(id)) continue;
+      void this.viewport.toggleNodeExpansion(id);
+      break;
+    }
+    this.graphHistoryControls.setCount(this.expansionHistory.length);
   }
 
   public async handleOpenChronicles(): Promise<void> {
