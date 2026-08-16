@@ -21,6 +21,7 @@
     "format": "oxfmt --write",
     "lint": "oxlint --deny-warnings",
     "test": "bun test",
+    "test:e2e": "bun run scripts/graph-regression-e2e.ts",
     "prepare": "lefthook install",
     "deploy": "scripts/deploy-pages.sh apps/web/dist omm main"
   },

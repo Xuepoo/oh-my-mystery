@@ -29,6 +29,10 @@ verify: check test
 audit:
     @bun run scripts/audit-e2e.ts
 
+# Run deterministic Playwright graph interaction regressions.
+e2e:
+    @bun run test:e2e
+
 # --- Development & Build --------------------------------------------------
 
 # Start web app development server.
