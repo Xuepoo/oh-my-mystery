@@ -17,17 +17,21 @@ export class RenderSettingsModal extends Entity {
   private displayHz = 60;
   private optionRects: OptionRect[] = [];
   private closeRect = { x: 0, y: 0, w: 32, h: 32 };
+  private appearanceRect = { x: 0, y: 0, w: 120, h: 40 };
   private onChangeCb: (settings: RenderSettings, backendChanged: boolean) => void;
+  private onOpenAppearanceCb?: () => void;
 
   constructor(
     settings: RenderSettings,
     onChange: (settings: RenderSettings, backendChanged: boolean) => void,
+    onOpenAppearance?: () => void,
   ) {
     super();
     this.id = 'render-settings-modal';
     this.interactive = true;
     this.settings = { ...settings };
     this.onChangeCb = onChange;
+    this.onOpenAppearanceCb = onOpenAppearance;
   }
 
   open(displayHz: number): void {
@@ -54,6 +58,11 @@ export class RenderSettingsModal extends Entity {
     if (!this.openState) return false;
     if (this.inRect(x, y, this.closeRect)) {
       this.close();
+      return true;
+    }
+    if (this.onOpenAppearanceCb && this.inRect(x, y, this.appearanceRect)) {
+      this.close();
+      this.onOpenAppearanceCb();
       return true;
     }
     for (const rect of this.optionRects) {
@@ -148,6 +157,26 @@ export class RenderSettingsModal extends Entity {
       ],
       this.settings.particleBackend,
     );
+    if (this.onOpenAppearanceCb) {
+      this.appearanceRect = { x: x + 24, y: y + h - 58, w: 120, h: 40 };
+      ctx.fillStyle = Theme.colors.bgCard;
+      ctx.beginPath();
+      ctx.roundRect(
+        this.appearanceRect.x,
+        this.appearanceRect.y,
+        this.appearanceRect.w,
+        this.appearanceRect.h,
+        7,
+      );
+      ctx.fill();
+      ctx.strokeStyle = Theme.colors.borderHighlight;
+      ctx.stroke();
+      ctx.fillStyle = Theme.colors.textMid;
+      ctx.font = `600 11px ${Theme.fonts.sans}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('节点外观', this.appearanceRect.x + 60, this.appearanceRect.y + 20);
+    }
   }
 
   private drawGroup(

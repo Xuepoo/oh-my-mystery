@@ -24,6 +24,9 @@ import { GraphStatsPanel } from './ui/GraphStatsPanel';
 import { GraphClearControl } from './ui/GraphClearControl';
 import { loadRenderSettings, measureDisplayRefresh, saveRenderSettings } from './render-settings';
 import type { RenderSettings } from './render-settings';
+import { loadNodeStyleSettings, saveNodeStyleSettings } from './node-style-settings';
+import type { NodeStyleSettings } from './node-style-settings';
+import { NodeAppearanceModal } from './ui/NodeAppearanceModal';
 
 export class App {
   readonly scene: Scene;
@@ -47,6 +50,7 @@ export class App {
   readonly graphHistoryControls: GraphHistoryControls;
   readonly visibilityManager: VisibilityManager;
   readonly graphStatsPanel: GraphStatsPanel;
+  readonly nodeAppearanceModal: NodeAppearanceModal;
   readonly graphClearControl: GraphClearControl;
 
   private activeEntityDetails: EntityDetailResponse | null = null;
@@ -74,6 +78,7 @@ export class App {
   private endpointEpoch = 0;
   private modifiedPointerDown = false;
   private pathStatus: 'idle' | 'source' | 'loading' | 'success' | 'noPath' | 'failure' = 'idle';
+  private nodeStyleSettings: NodeStyleSettings;
 
   // The scene renders on demand; it stays awake while the user is interacting,
   // the physics sim is running, or the camera is animating — plus a short
@@ -93,6 +98,7 @@ export class App {
     this.canvas.style.touchAction = 'none';
     this.source = new D1DataSource(import.meta.env.VITE_API_URL || '');
     this.renderSettings = loadRenderSettings();
+    this.nodeStyleSettings = loadNodeStyleSettings();
 
     // 1. Initialize Single VectoJS Scene
     this.scene = new Scene(this.canvas, {
@@ -107,6 +113,7 @@ export class App {
     // 2. Initialize 2D Knowledge Graph Viewport
     this.viewport = new GraphViewport({
       source: this.source,
+      styleSettings: this.nodeStyleSettings,
       onChange: () => {
         this.scene.markDirty();
       },
@@ -237,8 +244,16 @@ export class App {
         }
         this.scene.maxFPS = settings.fps === 'max' ? this.displayHz : settings.fps;
       },
+      () => this.nodeAppearanceModal.open(),
     );
     this.scene.add(this.renderSettingsModal);
+
+    this.nodeAppearanceModal = new NodeAppearanceModal(this.nodeStyleSettings, (settings) => {
+      this.nodeStyleSettings = settings;
+      saveNodeStyleSettings(settings);
+      this.viewport.applyStyleSettings(settings);
+    });
+    this.scene.add(this.nodeAppearanceModal);
 
     this.relationshipFilterBar = new RelationshipFilterBar(this.viewport, (predicates) => {
       this.overlayLayer.setActivePredicates(predicates);
@@ -301,6 +316,7 @@ export class App {
       this.chroniclePanel.isPointInside(x, y) ||
       this.pathfinderModal.isPointInside(x, y) ||
       this.renderSettingsModal.isPointInside(x, y) ||
+      this.nodeAppearanceModal.isPointInside(x, y) ||
       this.relationshipFilterBar.isPointInside(x, y) ||
       this.graphHistoryControls.isPointInside(x, y) ||
       this.visibilityManager.isPointInside(x, y) ||
@@ -385,6 +401,10 @@ export class App {
       }
       if (this.renderSettingsModal.isModalOpen()) {
         this.renderSettingsModal.handleClick(x, y);
+        return;
+      }
+      if (this.nodeAppearanceModal.isModalOpen()) {
+        this.nodeAppearanceModal.handleClick(x, y);
         return;
       }
       if (this.visibilityManager.isPanelOpen()) {
@@ -553,6 +573,10 @@ export class App {
       }
       if (this.renderSettingsModal.isModalOpen()) {
         this.renderSettingsModal.close();
+        return;
+      }
+      if (this.nodeAppearanceModal.isModalOpen()) {
+        this.nodeAppearanceModal.close();
         return;
       }
       if (this.pathfinderModal.isModalOpen()) {
@@ -797,6 +821,7 @@ export class App {
     this.cancelLongPress();
     this.headerBar.dispose();
     this.pathfinderModal.dispose();
+    this.nodeAppearanceModal.dispose();
     this.background.dispose();
     this.scene.stop();
   }

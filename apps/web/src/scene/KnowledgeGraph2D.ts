@@ -7,10 +7,17 @@ import {
   type Simulation,
 } from 'd3-force';
 import type { D1DataSource } from '../api/D1DataSource';
+import {
+  type DistributionMode,
+  type NodeStyleSettings,
+  NodeStyleRegistry,
+  normalizeNodeType,
+} from '../node-style-settings';
 import type { GraphLink2D, GraphNode2D } from './types';
 
 export interface KnowledgeGraph2DOptions {
   source: D1DataSource;
+  styleSettings?: NodeStyleSettings;
 }
 
 interface HiddenNodeSnapshot {
@@ -22,6 +29,8 @@ interface HiddenNodeSnapshot {
 
 export class KnowledgeGraph2D {
   private source: D1DataSource;
+  private styleRegistry: NodeStyleRegistry;
+  private distribution: DistributionMode;
   private nodesMap = new Map<string, GraphNode2D>();
   private nodesList: GraphNode2D[] = [];
   private linksList: GraphLink2D[] = [];
@@ -43,6 +52,16 @@ export class KnowledgeGraph2D {
 
   constructor(options: KnowledgeGraph2DOptions) {
     this.source = options.source;
+    const settings = options.styleSettings;
+    this.styleRegistry = new NodeStyleRegistry(settings);
+    this.distribution = settings?.distribution || 'balanced';
+  }
+
+  applyStyleSettings(settings: NodeStyleSettings): void {
+    this.styleRegistry = new NodeStyleRegistry(settings);
+    this.distribution = settings.distribution;
+    this.rebuildSimulation();
+    this.reheat(0.4);
   }
 
   get nodes(): readonly GraphNode2D[] {
@@ -110,7 +129,8 @@ export class KnowledgeGraph2D {
       node.vx = 0;
       node.vy = 0;
       node.degree = 0;
-      node.radius = node.type === 'author' ? 12 : 8;
+      node.color = this.styleRegistry.getColor(node.type);
+      node.radius = this.baseRadius(node.type);
       this.nodesMap.set(node.id, node);
       this.nodesList.push(node);
       this.rootIds.add(node.id);
@@ -148,14 +168,18 @@ export class KnowledgeGraph2D {
       }
       owners.add(nodeId);
       if (!this.nodesMap.has(neighbor.id)) {
-        const angle = (i / Math.max(1, nLen)) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
-        const dist = 45 + Math.random() * 35;
+        const hash = this.hash(nodeId + ':' + neighbor.id);
+        const angle = (i / Math.max(1, nLen)) * Math.PI * 2 + ((hash % 1000) / 1000 - 0.5) * 0.4;
+        const distanceScale =
+          this.distribution === 'compact' ? 0.8 : this.distribution === 'dispersed' ? 1.25 : 1;
+        const dist = (45 + (hash % 36)) * distanceScale;
         neighbor.x = cx + Math.cos(angle) * dist;
         neighbor.y = cy + Math.sin(angle) * dist;
-        neighbor.vx = (Math.random() - 0.5) * 1.5;
-        neighbor.vy = (Math.random() - 0.5) * 1.5;
+        neighbor.vx = (((hash >>> 8) % 1000) / 1000 - 0.5) * 1.5;
+        neighbor.vy = (((hash >>> 18) % 1000) / 1000 - 0.5) * 1.5;
         neighbor.degree = 0;
-        neighbor.radius = neighbor.type === 'author' ? 10 : 7;
+        neighbor.color = this.styleRegistry.getColor(neighbor.type);
+        neighbor.radius = this.baseRadius(neighbor.type);
 
         this.nodesMap.set(neighbor.id, neighbor);
         this.nodesList.push(neighbor);
@@ -200,7 +224,8 @@ export class KnowledgeGraph2D {
     node.vx = 0;
     node.vy = 0;
     node.degree = 0;
-    node.radius = node.type === 'author' ? 12 : 8;
+    node.color = this.styleRegistry.getColor(node.type);
+    node.radius = this.baseRadius(node.type);
     this.nodesMap.set(node.id, node);
     this.nodesList.push(node);
     this.rebuildSimulation();
@@ -255,7 +280,8 @@ export class KnowledgeGraph2D {
       node.y = cy + Math.sin(angle) * 120;
       node.vx = 0;
       node.vy = 0;
-      node.radius = node.type === 'author' ? 12 : 8;
+      node.color = this.styleRegistry.getColor(node.type);
+      node.radius = this.baseRadius(node.type);
       this.nodesMap.set(node.id, node);
       this.nodesList.push(node);
     }
@@ -354,18 +380,11 @@ export class KnowledgeGraph2D {
     for (const node of this.nodesList) {
       const deg = degreeMap.get(node.id) || 0;
       node.degree = deg;
+      const normalizedType = normalizeNodeType(node.type);
       const boost = Math.min(Math.sqrt(deg) * 3.5, 14);
-      if (node.type === 'author') {
-        node.radius = Math.round(9 + boost);
-      } else if (node.type === 'work') {
-        node.radius = Math.round(5.5 + boost * 0.7);
-      } else if (node.type === 'award') {
-        node.radius = Math.round(7.5 + boost * 0.8);
-      } else if (node.type === 'character') {
-        node.radius = Math.round(6.5 + boost * 0.75);
-      } else {
-        node.radius = Math.round(5 + boost * 0.6);
-      }
+      const base = this.baseRadius(normalizedType);
+      node.color = this.styleRegistry.getColor(normalizedType);
+      node.radius = Math.round(base + boost * this.degreeBoost(normalizedType));
     }
 
     // 2. Map links to node objects or string IDs
@@ -385,28 +404,73 @@ export class KnowledgeGraph2D {
             const src = d.source as GraphNode2D;
             const tgt = d.target as GraphNode2D;
             const rSum = (src.radius || 8) + (tgt.radius || 8);
-            if (src.type === 'author' && tgt.type === 'work') return 30 + rSum * 1.3;
-            if (src.type === 'author' && tgt.type === 'character') return 34 + rSum * 1.4;
-            return 40 + rSum * 1.5;
+            const modeScale =
+              this.distribution === 'compact' ? 0.82 : this.distribution === 'dispersed' ? 1.25 : 1;
+            if (src.type === 'author' && tgt.type === 'work') return (30 + rSum * 1.3) * modeScale;
+            if (src.type === 'author' && tgt.type === 'character')
+              return (34 + rSum * 1.4) * modeScale;
+            return (40 + rSum * 1.5) * modeScale;
           })
           .strength(0.42),
       )
       .force(
         'charge',
         forceManyBody()
-          .strength((d: any) => -((d.radius || 8) * 11 + 95))
-          .distanceMax(450),
+          .strength(
+            (d: any) => -((d.radius || 8) * 11 + (this.distribution === 'dispersed' ? 135 : 95)),
+          )
+          .distanceMax(
+            this.distribution === 'compact' ? 360 : this.distribution === 'dispersed' ? 560 : 450,
+          ),
       )
       .force('gravity', forceRadial(0, 0, 0).strength(0.016))
       .force(
         'collide',
         forceCollide()
-          .radius((d: any) => (d.radius || 8) + 14)
+          .radius(
+            (d: any) =>
+              (d.radius || 8) +
+              (this.distribution === 'compact' ? 10 : this.distribution === 'dispersed' ? 20 : 14),
+          )
           .strength(0.7),
       )
       .alphaDecay(0.024)
       .velocityDecay(0.36)
       .stop();
+  }
+
+  private baseRadius(type: unknown): number {
+    const normalized = normalizeNodeType(type);
+    const base =
+      normalized === 'author'
+        ? 9
+        : normalized === 'work'
+          ? 5.5
+          : normalized === 'award'
+            ? 7.5
+            : normalized === 'character'
+              ? 6.5
+              : 5;
+    return base * this.styleRegistry.getSizeMultiplier(normalized);
+  }
+
+  private degreeBoost(type: unknown): number {
+    const normalized = normalizeNodeType(type);
+    return normalized === 'author'
+      ? 1
+      : normalized === 'work'
+        ? 0.7
+        : normalized === 'award'
+          ? 0.8
+          : normalized === 'character'
+            ? 0.75
+            : 0.6;
+  }
+
+  private hash(value: string): number {
+    let hash = 2166136261;
+    for (const char of value) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+    return hash >>> 0;
   }
 
   step(): void {

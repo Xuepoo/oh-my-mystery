@@ -1,12 +1,14 @@
 import type { D1DataSource } from '../api/D1DataSource';
 import { KnowledgeGraph2D } from './KnowledgeGraph2D';
 import type { GraphLink2D, GraphNode2D } from './types';
+import type { NodeStyleSettings } from '../node-style-settings';
 
 export interface GraphViewportOptions {
   source: D1DataSource;
   onChange: () => void;
   onSelectNode: (node: GraphNode2D | null) => void;
   onHoverNode: (node: GraphNode2D | null) => void;
+  styleSettings?: NodeStyleSettings;
 }
 
 export class GraphViewport {
@@ -44,7 +46,13 @@ export class GraphViewport {
 
     this.graph = new KnowledgeGraph2D({
       source: options.source,
+      styleSettings: options.styleSettings,
     });
+  }
+
+  applyStyleSettings(settings: NodeStyleSettings): void {
+    this.graph.applyStyleSettings(settings);
+    this.onChange();
   }
 
   async init(seedIds?: string[]): Promise<void> {
