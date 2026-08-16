@@ -87,11 +87,18 @@ export class D1DataSource {
 
   async getNeighbors(
     id: NodeId,
-    options?: { limit?: number; direction?: 'out' | 'in' | 'both' },
+    options?: {
+      limit?: number;
+      cursor?: string;
+      direction?: 'out' | 'in' | 'both';
+      predicates?: readonly string[];
+    },
   ): Promise<GraphNeighborhood2D> {
     const strId = String(id);
     const limit = Math.min(50, Math.max(1, options?.limit ?? 50));
-    const cacheKey = `${strId}:${limit}`;
+    const direction = options?.direction ?? 'both';
+    const predicates = [...(options?.predicates ?? [])].sort();
+    const cacheKey = `${strId}:${limit}:${options?.cursor ?? ''}:${direction}:${predicates.join(',')}`;
     if (this.cache.has(cacheKey)) {
       const idx = this.cacheOrder.indexOf(cacheKey);
       if (idx !== -1) {
@@ -102,8 +109,11 @@ export class D1DataSource {
     }
 
     try {
+      const params = new URLSearchParams({ limit: String(limit), direction });
+      if (options?.cursor) params.set('cursor', options.cursor);
+      if (predicates.length) params.set('predicates', predicates.join(','));
       const res = await fetch(
-        `${this.baseUrl}/api/entity/${encodeURIComponent(strId)}/neighbors?limit=${limit}`,
+        `${this.baseUrl}/api/entity/${encodeURIComponent(strId)}/neighbors?${params}`,
         { headers: await this.getProtectedHeaders() },
       );
       if (!res.ok) {
@@ -118,6 +128,8 @@ export class D1DataSource {
           },
           facts: [],
           neighbors: [],
+          hasMore: false,
+          failed: true,
         };
       }
 
@@ -125,6 +137,8 @@ export class D1DataSource {
         entity: any;
         facts: any[];
         neighbors: any[];
+        nextCursor?: string;
+        hasMore?: boolean;
       };
 
       const rawNeighbors: GraphNode2D[] = (data.neighbors || []).map((n) => this.formatNode(n));
@@ -151,6 +165,8 @@ export class D1DataSource {
         entity: this.formatNode(data.entity),
         facts,
         neighbors: rawNeighbors,
+        nextCursor: data.nextCursor,
+        hasMore: Boolean(data.hasMore && data.nextCursor),
       };
 
       this.cacheSet(cacheKey, neighborhood);
@@ -168,6 +184,8 @@ export class D1DataSource {
         },
         facts: [],
         neighbors: [],
+        hasMore: false,
+        failed: true,
       };
     } finally {
       this.turnstileToken = null;

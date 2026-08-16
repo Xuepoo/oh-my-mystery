@@ -33,6 +33,13 @@ export interface KnowledgeGraphSnapshot {
   roots: string[];
   manual: string[];
   expanded: string[];
+  expansionState?: {
+    id: string;
+    cursor?: string;
+    filter: string;
+    nodes: string[];
+    facts: string[];
+  }[];
   pinned: { id: string; x: number; y: number }[];
   hidden: {
     node: GraphNode2D;
@@ -43,6 +50,8 @@ export interface KnowledgeGraphSnapshot {
   pathFacts: string[];
 }
 
+type ExpansionSnapshot = NonNullable<KnowledgeGraphSnapshot['expansionState']>[number];
+
 export class KnowledgeGraph2D {
   private source: D1DataSource;
   private styleRegistry: NodeStyleRegistry;
@@ -52,6 +61,9 @@ export class KnowledgeGraph2D {
   private linksList: GraphLink2D[] = [];
   private factKeySet = new Set<string>();
   private expandedSet = new Set<string>();
+  private expansionCursors = new Map<string, string>();
+  private expansionFilters = new Map<string, string>();
+  private expansionRequests = new Map<string, number>();
   private rootIds = new Set<string>();
   private manualIds = new Set<string>();
   private expansionNodes = new Map<string, Set<string>>();
@@ -107,6 +119,13 @@ export class KnowledgeGraph2D {
       roots: [...this.rootIds],
       manual: [...this.manualIds],
       expanded: [...this.expandedSet],
+      expansionState: [...this.expandedSet].map((id) => ({
+        id,
+        cursor: this.expansionCursors.get(id),
+        filter: this.expansionFilters.get(id) ?? '',
+        nodes: [...(this.expansionNodes.get(id) ?? [])],
+        facts: [...(this.expansionFacts.get(id) ?? [])],
+      })),
       pinned: [...this.pinnedIds]
         .map((id) => this.nodesMap.get(id))
         .filter((node): node is GraphNode2D => Boolean(node))
@@ -152,6 +171,39 @@ export class KnowledgeGraph2D {
     this.expandedSet = new Set(snapshot.expanded.filter((id) => this.nodesMap.has(id)));
     this.pathNodeIds = new Set(snapshot.pathNodes.filter((id) => this.nodesMap.has(id)));
     this.pathFactKeys = new Set(snapshot.pathFacts.filter((key) => this.factKeySet.has(key)));
+    const expansionState: ExpansionSnapshot[] = snapshot.expansionState?.length
+      ? snapshot.expansionState
+      : [...this.expandedSet].map((id) => ({
+          id,
+          filter: '',
+          nodes: this.getAdjacentIds(id),
+          facts: this.linksList
+            .filter((link) => {
+              const source = typeof link.source === 'object' ? link.source.id : link.source;
+              const target = typeof link.target === 'object' ? link.target.id : link.target;
+              return source === id || target === id;
+            })
+            .map((link) => {
+              const source = typeof link.source === 'object' ? link.source.id : link.source;
+              const target = typeof link.target === 'object' ? link.target.id : link.target;
+              return `${source}|${link.predicate}|${target}`;
+            }),
+        }));
+    for (const state of expansionState) {
+      if (!this.expandedSet.has(state.id)) continue;
+      if (state.cursor) this.expansionCursors.set(state.id, state.cursor);
+      this.expansionFilters.set(state.id, state.filter);
+      const ownedNodes = new Set(state.nodes.filter((id) => this.nodesMap.has(id)));
+      const ownedFacts = new Set(state.facts.filter((key) => this.factKeySet.has(key)));
+      this.expansionNodes.set(state.id, ownedNodes);
+      this.expansionFacts.set(state.id, ownedFacts);
+      for (const id of ownedNodes) {
+        const owners = this.nodeOwners.get(id) ?? new Set<string>();
+        owners.add(state.id);
+        this.nodeOwners.set(id, owners);
+      }
+      for (const key of ownedFacts) this.factOwners.get(key)?.add(state.id);
+    }
     for (const pin of snapshot.pinned) {
       const node = this.nodesMap.get(pin.id);
       if (!node) continue;
@@ -181,6 +233,10 @@ export class KnowledgeGraph2D {
     return this.expandedSet.has(id);
   }
 
+  canLoadMore(id: string): boolean {
+    return this.expansionCursors.has(id);
+  }
+
   getAdjacentIds(id: string): string[] {
     const adjacent = new Set<string>();
     for (const link of this.linksList) {
@@ -200,6 +256,9 @@ export class KnowledgeGraph2D {
     this.linksList = [];
     this.factKeySet.clear();
     this.expandedSet.clear();
+    this.expansionCursors.clear();
+    this.expansionFilters.clear();
+    this.expansionRequests.clear();
     this.rootIds.clear();
     this.manualIds.clear();
     this.expansionNodes.clear();
@@ -232,27 +291,69 @@ export class KnowledgeGraph2D {
     this.rebuildSimulation();
   }
 
-  async expand(nodeId: string, neighborLimit?: number): Promise<number> {
+  async expand(
+    nodeId: string,
+    neighborLimit?: number,
+    predicates?: readonly string[],
+  ): Promise<number> {
     const generation = this.generation;
-    if (this.expandedSet.has(nodeId)) return 0;
     const centerNode = this.nodesMap.get(nodeId);
     if (!centerNode) return 0;
+    const filterKey = [...(predicates ?? [])].sort().join(',');
+    const filterChanged =
+      this.expandedSet.has(nodeId) && this.expansionFilters.get(nodeId) !== filterKey;
+    if (this.expandedSet.has(nodeId) && !filterChanged && !this.expansionCursors.has(nodeId)) {
+      return 0;
+    }
     const cx = centerNode.x ?? 0;
     const cy = centerNode.y ?? 0;
+    const request = (this.expansionRequests.get(nodeId) ?? 0) + 1;
+    this.expansionRequests.set(nodeId, request);
 
-    const neighborhood = await this.source.getNeighbors(nodeId, { limit: neighborLimit });
-    if (generation !== this.generation || !this.nodesMap.has(nodeId)) return 0;
+    const neighborhood = await this.source.getNeighbors(nodeId, {
+      limit: neighborLimit,
+      cursor: filterChanged ? undefined : this.expansionCursors.get(nodeId),
+      predicates,
+    });
+    if (
+      generation !== this.generation ||
+      !this.nodesMap.has(nodeId) ||
+      this.expansionRequests.get(nodeId) !== request ||
+      neighborhood.failed
+    ) {
+      return 0;
+    }
+    if (filterChanged) this.collapse(nodeId);
+    const firstPage = !this.expandedSet.has(nodeId);
     this.expandedSet.add(nodeId);
+    this.expansionFilters.set(nodeId, filterKey);
+    if (neighborhood.nextCursor) this.expansionCursors.set(nodeId, neighborhood.nextCursor);
+    else this.expansionCursors.delete(nodeId);
     let addedCount = 0;
-    const ownedNodes = new Set<string>();
-    const ownedFacts = new Set<string>();
-    this.expansionNodes.set(nodeId, ownedNodes);
-    this.expansionFacts.set(nodeId, ownedFacts);
+    const ownedNodes = this.expansionNodes.get(nodeId) ?? new Set<string>();
+    const ownedFacts = this.expansionFacts.get(nodeId) ?? new Set<string>();
+    if (firstPage) {
+      this.expansionNodes.set(nodeId, ownedNodes);
+      this.expansionFacts.set(nodeId, ownedFacts);
+    }
 
     // 1. Ingest Neighbors
     const nLen = neighborhood.neighbors.length;
+    const canonicalIds = new Map<string, string>();
+    const identities = new Map<string, string>();
+    for (const id of ownedNodes) {
+      const existing = this.nodesMap.get(id);
+      if (existing) identities.set(this.nodeIdentity(existing), id);
+    }
     for (let i = 0; i < nLen; i++) {
       const neighbor = neighborhood.neighbors[i]!;
+      const identity = this.nodeIdentity(neighbor);
+      const canonicalId = identities.get(identity);
+      if (canonicalId && canonicalId !== neighbor.id) {
+        canonicalIds.set(neighbor.id, canonicalId);
+        continue;
+      }
+      identities.set(identity, neighbor.id);
       ownedNodes.add(neighbor.id);
       let owners = this.nodeOwners.get(neighbor.id);
       if (!owners) {
@@ -282,8 +383,10 @@ export class KnowledgeGraph2D {
 
     // 2. Ingest Relational Facts
     for (const f of neighborhood.facts) {
-      const srcId = typeof f.source === 'object' ? f.source.id : f.source;
-      const tgtId = typeof f.target === 'object' ? f.target.id : f.target;
+      const rawSrcId = typeof f.source === 'object' ? f.source.id : f.source;
+      const rawTgtId = typeof f.target === 'object' ? f.target.id : f.target;
+      const srcId = canonicalIds.get(rawSrcId) ?? rawSrcId;
+      const tgtId = canonicalIds.get(rawTgtId) ?? rawTgtId;
       const key = `${srcId}|${f.predicate}|${tgtId}`;
       if (!this.factKeySet.has(key)) {
         this.factKeySet.add(key);
@@ -402,6 +505,9 @@ export class KnowledgeGraph2D {
     this.linksList = [];
     this.factKeySet.clear();
     this.expandedSet.clear();
+    this.expansionCursors.clear();
+    this.expansionFilters.clear();
+    this.expansionRequests.clear();
     this.rootIds.clear();
     this.manualIds.clear();
     this.expansionNodes.clear();
@@ -414,16 +520,23 @@ export class KnowledgeGraph2D {
     this.pathFactKeys.clear();
   }
 
-  async toggleExpansion(nodeId: string): Promise<number> {
+  async toggleExpansion(nodeId: string, predicates?: readonly string[]): Promise<number> {
     if (this.expandedSet.has(nodeId)) {
+      const filterKey = [...(predicates ?? [])].sort().join(',');
+      if (this.expansionFilters.get(nodeId) !== filterKey || this.expansionCursors.has(nodeId)) {
+        return this.expand(nodeId, undefined, predicates);
+      }
       this.collapse(nodeId);
       return 0;
     }
-    return this.expand(nodeId);
+    return this.expand(nodeId, undefined, predicates);
   }
 
   collapse(nodeId: string): void {
+    this.expansionRequests.set(nodeId, (this.expansionRequests.get(nodeId) ?? 0) + 1);
     this.expandedSet.delete(nodeId);
+    this.expansionCursors.delete(nodeId);
+    this.expansionFilters.delete(nodeId);
     const ownedNodes = this.expansionNodes.get(nodeId) || new Set<string>();
     const ownedFacts = this.expansionFacts.get(nodeId) || new Set<string>();
 
@@ -545,6 +658,37 @@ export class KnowledgeGraph2D {
               ? 6.5
               : 5;
     return base * this.styleRegistry.getSizeMultiplier(normalized);
+  }
+
+  private nodeIdentity(node: GraphNode2D): string {
+    const name = node.name
+      .replace(/^[（([【][日中美英法德俄韩港台欧日\w\s]+[）)\]】][、，,\s·.]*/g, '')
+      .replace(/^(原作|作畫|作画|著|编|譯|译|繪|絵|画|イラスト)[：:\s]+/g, '')
+      .replace(/[\u529b]イウ/g, 'カイウ')
+      .replace(/^[（([【()\]】、，,·.\s]+|[（([【()\]】、，,·.\s]+$/g, '')
+      .replace(
+        /[戶亂東島莊綾賞獎獲館筆書國會]/g,
+        (value) =>
+          ({
+            戶: '户',
+            亂: '乱',
+            東: '东',
+            島: '岛',
+            莊: '庄',
+            綾: '绫',
+            賞: '奖',
+            獎: '奖',
+            獲: '获',
+            館: '馆',
+            筆: '笔',
+            書: '书',
+            國: '国',
+            會: '会',
+          })[value]!,
+      )
+      .toLowerCase()
+      .replace(/[\s\-_·.]+/g, '');
+    return `${node.type}|${name}`;
   }
 
   private degreeBoost(type: unknown): number {

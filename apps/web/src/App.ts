@@ -284,6 +284,7 @@ export class App {
     this.radialMenu = new NodeRadialMenu({
       isPinned: (id) => this.viewport.isNodePinned(id),
       isExpanded: (id) => this.viewport.isNodeExpanded(id),
+      canLoadMore: (id) => this.viewport.canLoadMore(id),
       onAction: (action, node) => {
         if (action === 'pin') {
           this.viewport.toggleNodePinned(node.id);
@@ -1046,10 +1047,11 @@ export class App {
 
   private async toggleNodeExpansion(id: string): Promise<void> {
     const wasExpanded = this.viewport.isNodeExpanded(id);
-    await this.viewport.toggleNodeExpansion(id);
-    if (!wasExpanded && this.viewport.isNodeExpanded(id)) {
+    const wasLoadMore = this.viewport.canLoadMore(id);
+    await this.viewport.toggleNodeExpansion(id, this.relationshipFilterBar.getActivePredicates());
+    if (!wasExpanded && this.viewport.isNodeExpanded(id) && !this.expansionHistory.includes(id)) {
       this.expansionHistory.push(id);
-    } else if (wasExpanded) {
+    } else if (wasExpanded && !wasLoadMore && !this.viewport.isNodeExpanded(id)) {
       this.expansionHistory = this.expansionHistory.filter((entry) => entry !== id);
     }
     this.graphHistoryControls.setCount(this.expansionHistory.length);
@@ -1059,7 +1061,7 @@ export class App {
     while (this.expansionHistory.length > 0) {
       const id = this.expansionHistory.pop()!;
       if (!this.viewport.isNodeExpanded(id)) continue;
-      void this.viewport.toggleNodeExpansion(id);
+      this.viewport.collapseNode(id);
       break;
     }
     this.graphHistoryControls.setCount(this.expansionHistory.length);

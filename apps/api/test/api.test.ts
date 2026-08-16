@@ -91,6 +91,7 @@ function buildTestDatabase(): Database {
   insertEntity.run('test:publisher', null, 'publisher', names('南海出版公司'), 'test');
   insertEntity.run('test:award', null, 'award', names('测试推理奖'), 'test');
   insertEntity.run('wd:Q586362', 'Q586362', 'author', names('埃勒里·奎因'), 'test');
+  insertEntity.run('test:work-2', null, 'work', names('第二部作品'), 'test');
 
   const insertPublication = db.prepare(
     `INSERT INTO publication_events
@@ -116,6 +117,8 @@ function buildTestDatabase(): Database {
   );
   insertFact.run('wd:Q347412', 'influenced_by', 'wd:Q35064', null, 'test');
   insertFact.run('wd:Q710681', 'publisher', 'test:publisher', null, 'test');
+  insertFact.run('test:work-2', 'publisher', 'test:publisher', null, 'test');
+  insertFact.run('test:publisher', 'related_to', 'test:award', null, 'test');
   insertFact.run('wd:Q125970', 'award_received', 'test:award', null, 'test');
 
   db.prepare(
@@ -185,6 +188,18 @@ describe('OMM Backend API Endpoints', () => {
     expect(res.status).toBe(403);
     const invalidLimit = await app.request('/api/entity/wd:Q347412/neighbors?limit=0', {}, mockEnv);
     expect(invalidLimit.status).toBe(400);
+    const invalidCursor = await app.request(
+      '/api/entity/wd:Q347412/neighbors?cursor=1:9223372036854775808',
+      {},
+      mockEnv,
+    );
+    expect(invalidCursor.status).toBe(400);
+    const malformedCursor = await app.request(
+      '/api/entity/wd:Q347412/neighbors?cursor=1:not-a-number',
+      {},
+      mockEnv,
+    );
+    expect(malformedCursor.status).toBe(400);
     const invalidSearch = await app.request('/api/search?limit=not-a-number', {}, mockEnv);
     expect(invalidSearch.status).toBe(400);
   });
@@ -236,6 +251,47 @@ describe('OMM Backend API Endpoints', () => {
     expect(publishers[0].names.labels.zh).toContain('南海出版公司');
     const publisherFacts = (body.facts as any[]).filter((f) => f.predicate === 'publisher');
     expect(publisherFacts.length).toBeGreaterThan(0);
+  });
+
+  it('paginates neighbors with stable non-overlapping cursors and publisher edges first', async () => {
+    const first = await app.request('/api/entity/test:publisher/neighbors?limit=1', {}, mockEnv);
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as any;
+    expect(firstBody.facts).toHaveLength(1);
+    expect(firstBody.facts[0].predicate).toBe('publisher');
+    expect(firstBody.hasMore).toBe(true);
+    expect(firstBody.nextCursor).toBeString();
+
+    const second = await app.request(
+      `/api/entity/test:publisher/neighbors?limit=1&cursor=${encodeURIComponent(firstBody.nextCursor)}`,
+      {},
+      mockEnv,
+    );
+    expect(second.status).toBe(200);
+    const secondBody = (await second.json()) as any;
+    expect(secondBody.facts).toHaveLength(1);
+    expect(secondBody.facts[0].subject_id).not.toBe(firstBody.facts[0].subject_id);
+    expect(secondBody.facts[0].predicate).toBe('publisher');
+  });
+
+  it('filters neighbor pages by direction and predicate', async () => {
+    const incoming = await app.request(
+      '/api/entity/test:publisher/neighbors?direction=in&predicates=publisher',
+      {},
+      mockEnv,
+    );
+    expect(incoming.status).toBe(200);
+    const incomingBody = (await incoming.json()) as any;
+    expect(incomingBody.facts).toHaveLength(2);
+    expect(incomingBody.facts.every((fact: any) => fact.predicate === 'publisher')).toBe(true);
+
+    const outgoing = await app.request(
+      '/api/entity/test:publisher/neighbors?direction=out&predicates=publisher',
+      {},
+      mockEnv,
+    );
+    expect(outgoing.status).toBe(200);
+    expect(((await outgoing.json()) as any).facts).toHaveLength(0);
   });
 
   it('GET /api/entity/:id/details returns recommendations and metadata', async () => {
