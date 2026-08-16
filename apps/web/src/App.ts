@@ -12,6 +12,7 @@ import { HelpModal } from './ui/HelpModal';
 import { Minimap } from './ui/Minimap';
 import { NodeRadialMenu } from './ui/NodeRadialMenu';
 import { PathfinderModal } from './ui/PathfinderModal';
+import { pickNodeLabel } from './scene/types';
 import { getEventCoords } from './ui/theme';
 import { Theme } from './ui/theme';
 import { ViewportControls } from './ui/ViewportControls';
@@ -1001,7 +1002,7 @@ export class App {
 
   private entityToGraphNode(entity: OmmEntity): GraphNode2D {
     const labels = entity.names?.labels || {};
-    const name = labels.zh || labels['zh-cn'] || labels.en || labels.ja || entity.id;
+    const name = pickNodeLabel(labels, 'zh', entity.names?.aliases) || entity.id;
     return {
       id: entity.id,
       type: entity.type,

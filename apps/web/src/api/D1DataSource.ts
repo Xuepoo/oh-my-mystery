@@ -52,9 +52,10 @@ export class D1DataSource {
 
   private formatNode(e: any): GraphNode2D {
     const type = e.type || 'other';
+    const names = e.names || {};
     const labels =
       e.names?.labels || (typeof e.labels === 'object' ? e.labels : { zh: String(e.id) });
-    const name = pickNodeLabel(labels, 'zh') || String(e.id);
+    const name = pickNodeLabel(labels, 'zh', names.aliases) || String(e.id);
 
     return {
       id: String(e.id),

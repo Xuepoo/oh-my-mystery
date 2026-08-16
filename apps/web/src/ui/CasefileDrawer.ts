@@ -1,6 +1,8 @@
 import { Entity } from '@vectojs/core';
 import type { EntityDetailResponse } from '@omm/shared';
+import { pickNodeLabel } from '../scene/types';
 import { getCanvasCtx, Theme } from './theme';
+import { truncateText } from './text-layout';
 
 const ENTITY_TYPE_LABELS: Record<string, string> = {
   author: '作者',
@@ -37,7 +39,7 @@ function formatCopyYear(value?: string | null): string {
 export function formatEntityDetailsText(details: EntityDetailResponse): string {
   const { entity } = details;
   const labels = entity.names?.labels || {};
-  const primaryName = labels.zh || labels['zh-cn'] || labels.en || labels.ja || entity.id;
+  const primaryName = pickNodeLabel(labels, 'zh', entity.names?.aliases) || entity.id;
   const lines = [`名称：${primaryName}`, `类型：${ENTITY_TYPE_LABELS[entity.type] || entity.type}`];
 
   if (labels.en && labels.en !== primaryName) lines.push(`英文名：${labels.en}`);
@@ -227,7 +229,7 @@ export class CasefileDrawer extends Entity {
     // 2. Header Content
     const entity = this.details.entity;
     const labels = entity.names?.labels || {};
-    const primaryName = labels.zh || labels['zh-cn'] || labels.en || labels.ja || entity.id;
+    const primaryName = pickNodeLabel(labels, 'zh', entity.names?.aliases) || entity.id;
     const subtitle = labels.en !== primaryName ? labels.en : labels.ja || '';
 
     let curY = startY + 24 - this.scrollY;
@@ -258,7 +260,7 @@ export class CasefileDrawer extends Entity {
     ctx.font = `700 22px ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(primaryName, startX + 24, curY);
+    ctx.fillText(truncateText(ctx, primaryName, drawerWidth - 160), startX + 24, curY);
     curY += 28;
 
     // Subtitle & Country/Dates
@@ -357,8 +359,8 @@ export class CasefileDrawer extends Entity {
     ctx.fillStyle = Theme.colors.borderHighlight;
     ctx.font = `700 15px ${Theme.fonts.serif}`;
     // Wax Seal Stamp (Procedural Antique Gold / Crimson Archive Seal)
-    const sealX = startX + drawerWidth - 75;
-    const sealY = startY + 60;
+    const sealX = startX + drawerWidth - 48;
+    const sealY = startY + 112;
     ctx.save();
     ctx.strokeStyle = Theme.colors.borderHighlight;
     ctx.lineWidth = 1.5;

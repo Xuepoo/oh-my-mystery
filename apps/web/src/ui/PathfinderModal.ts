@@ -1,6 +1,7 @@
 import { Entity } from '@vectojs/core';
 import type { EntityType, PathfinderResult, SearchResultItem } from '@omm/shared';
 import type { D1DataSource } from '../api/D1DataSource';
+import { pickNodeLabel } from '../scene/types';
 import { getCanvasCtx, Theme } from './theme';
 import { truncateText } from './text-layout';
 
@@ -59,15 +60,6 @@ export class PathfinderModal extends Entity {
   private inputContainer: HTMLElement | null = null;
   private closeEpoch = 0;
   private statusMessage = '';
-  private suggestionRects: {
-    endpoint: 'source' | 'target';
-    index: number;
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  }[] = [];
-
   private presets: PresetPair[] = [
     {
       label: '道尔 ⟷ 乱步',
@@ -382,16 +374,12 @@ export class PathfinderModal extends Entity {
     id: string;
     name?: string;
     labels?: Record<string, string>;
-    names?: { labels?: Record<string, string> };
+    names?: { labels?: Record<string, string>; aliases?: Record<string, string[]> };
   }): string {
     return (
       entity.name ||
-      entity.labels?.zh ||
-      entity.labels?.['zh-cn'] ||
-      entity.labels?.en ||
-      entity.names?.labels?.zh ||
-      entity.names?.labels?.['zh-cn'] ||
-      entity.names?.labels?.en ||
+      pickNodeLabel(entity.labels) ||
+      pickNodeLabel(entity.names?.labels, 'zh', entity.names?.aliases) ||
       entity.id
     );
   }
@@ -508,10 +496,6 @@ export class PathfinderModal extends Entity {
     ctx.textBaseline = 'top';
     ctx.fillText('起点线索 (SOURCE)', modalX + 36, boxY + 7);
 
-    ctx.fillStyle = Theme.colors.textHigh;
-    ctx.font = `600 13px ${Theme.fonts.serif}`;
-    ctx.fillText(this.sourceName, modalX + 36, boxY + 23);
-
     // Arrow Indicator
     ctx.fillStyle = Theme.colors.borderHighlight;
     ctx.font = `700 16px ${Theme.fonts.sans}`;
@@ -532,10 +516,6 @@ export class PathfinderModal extends Entity {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText('目标线索 (TARGET)', targetX + 12, boxY + 7);
-
-    ctx.fillStyle = Theme.colors.textHigh;
-    ctx.font = `600 13px ${Theme.fonts.serif}`;
-    ctx.fillText(this.targetName, targetX + 12, boxY + 23);
 
     // Action Trigger Button
     const triggerY = modalY + 148;
@@ -593,7 +573,7 @@ export class PathfinderModal extends Entity {
         for (let i = 0; i < nodes.length; i++) {
           const n = nodes[i]!;
           const labels = n.names?.labels || {};
-          const name = labels.zh || labels['zh-cn'] || labels.en || n.id;
+          const name = pickNodeLabel(labels, 'zh', n.names?.aliases) || n.id;
           const typeColor = Theme.getNodeColor(n.type);
 
           // Node pill
@@ -682,23 +662,10 @@ export class PathfinderModal extends Entity {
         modalY + modalHeight - 18,
       );
     }
-    this.suggestionRects = [];
-    this.renderSuggestions(ctx, 'source', modalX + 24, boxY + boxH + 4, boxW);
-    this.renderSuggestions(ctx, 'target', targetX, boxY + boxH + 4, boxW);
   }
 
   public handleClick(clientX: number, clientY: number): boolean {
     if (!this.isOpen) return false;
-
-    const suggestionRect = this.suggestionRects.find((rect) =>
-      this.isInRect(clientX, clientY, rect),
-    );
-    if (suggestionRect) {
-      const state = suggestionRect.endpoint === 'source' ? this.sourceState : this.targetState;
-      const suggestion = state.suggestions[suggestionRect.index];
-      if (suggestion) this.confirmEndpoint(suggestionRect.endpoint, suggestion);
-      return true;
-    }
 
     if (this.isInRect(clientX, clientY, this.closeBtnRect)) {
       this.close();
@@ -744,47 +711,6 @@ export class PathfinderModal extends Entity {
     input.style.width = `${Math.max(0, rect.w)}px`;
     input.style.height = `${rect.h}px`;
     input.style.display = this.isOpen ? 'block' : 'none';
-  }
-
-  private renderSuggestions(
-    ctx: CanvasRenderingContext2D,
-    endpoint: 'source' | 'target',
-    x: number,
-    y: number,
-    w: number,
-  ): void {
-    const state = endpoint === 'source' ? this.sourceState : this.targetState;
-    if (!state.suggestions.length) return;
-    const rowH = 28;
-    const maxRows = Math.min(5, state.suggestions.length);
-    const rowsH = maxRows * rowH;
-    ctx.save();
-    ctx.fillStyle = Theme.colors.bgCard;
-    ctx.strokeStyle = Theme.colors.border;
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, rowsH, 6);
-    ctx.fill();
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.rect(x, y, w, rowsH);
-    ctx.clip();
-    ctx.font = `500 11px ${Theme.fonts.sans}`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    for (let i = 0; i < maxRows; i++) {
-      const item = state.suggestions[i]!;
-      const rowY = y + i * rowH;
-      this.suggestionRects.push({ endpoint, index: i, x, y: rowY, w, h: rowH });
-      if (i === state.selectedIndex) {
-        ctx.fillStyle = Theme.colors.bgCardHover;
-        ctx.fillRect(x, rowY, w, rowH);
-      }
-      ctx.fillStyle = Theme.getNodeColor(item.type);
-      ctx.fillText(Theme.getNodeTypeLabel(item.type).split(' / ')[0]!, x + 8, rowY + rowH / 2);
-      ctx.fillStyle = Theme.colors.textHigh;
-      ctx.fillText(truncateText(ctx, `${item.name} · ${item.id}`, w - 84), x + 70, rowY + rowH / 2);
-    }
-    ctx.restore();
   }
 
   private isInRect(
