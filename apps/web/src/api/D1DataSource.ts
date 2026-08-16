@@ -8,10 +8,12 @@ import type {
 import type { GraphLink2D, GraphNeighborhood2D, GraphNode2D, NodeId } from '../scene/types';
 import { pickNodeLabel } from '../scene/types';
 import { Theme } from '../ui/theme';
+import { getTurnstileToken } from '../security/turnstile';
 
 export class D1DataSource {
   private baseUrl: string;
   private turnstileToken: string | null = null;
+  private readonly turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined;
   private cache = new Map<string, GraphNeighborhood2D>();
   private cacheOrder: string[] = [];
   private cacheMax = 200;
@@ -41,6 +43,11 @@ export class D1DataSource {
       headers['X-Turnstile-Token'] = this.turnstileToken;
     }
     return headers;
+  }
+
+  private async getProtectedHeaders(): Promise<HeadersInit> {
+    this.turnstileToken = await getTurnstileToken(this.turnstileSiteKey);
+    return this.getHeaders();
   }
 
   private formatNode(e: any): GraphNode2D {
@@ -96,9 +103,7 @@ export class D1DataSource {
     try {
       const res = await fetch(
         `${this.baseUrl}/api/entity/${encodeURIComponent(strId)}/neighbors?limit=${limit}`,
-        {
-          headers: this.getHeaders(),
-        },
+        { headers: await this.getProtectedHeaders() },
       );
       if (!res.ok) {
         return {
@@ -163,6 +168,8 @@ export class D1DataSource {
         facts: [],
         neighbors: [],
       };
+    } finally {
+      this.turnstileToken = null;
     }
   }
 
@@ -214,13 +221,15 @@ export class D1DataSource {
     try {
       const res = await fetch(
         `${this.baseUrl}/api/path?source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`,
-        { headers: this.getHeaders() },
+        { headers: await this.getProtectedHeaders() },
       );
       if (!res.ok) return null;
       return (await res.json()) as PathfinderResult;
     } catch (err) {
       console.error('Find path failed', err);
       return null;
+    } finally {
+      this.turnstileToken = null;
     }
   }
 

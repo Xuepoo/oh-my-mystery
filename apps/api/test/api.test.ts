@@ -66,7 +66,27 @@ const mockEnv = {
   DB: createMockD1(sqlite),
 };
 
+const protectedEnv = {
+  ...mockEnv,
+  TURNSTILE_SECRET: 'test-secret',
+};
+
 describe('OMM Backend API Endpoints', () => {
+  it('rejects protected requests without a Turnstile token', async () => {
+    const res = await app.request('/api/path?source=wd:Q347412&target=wd:Q35064', {}, protectedEnv);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'Missing challenge token' });
+  });
+
+  it('rejects invalid protected query parameters before database work', async () => {
+    const res = await app.request('/api/path?source=wd:Q1&target=wd:Q2', {}, protectedEnv);
+    expect(res.status).toBe(403);
+    const invalidLimit = await app.request('/api/entity/wd:Q347412/neighbors?limit=0', {}, mockEnv);
+    expect(invalidLimit.status).toBe(400);
+    const invalidSearch = await app.request('/api/search?limit=not-a-number', {}, mockEnv);
+    expect(invalidSearch.status).toBe(400);
+  });
+
   it('GET /api/health returns ok', async () => {
     const res = await app.request('/api/health', {}, mockEnv);
     expect(res.status).toBe(200);
