@@ -917,6 +917,12 @@ async function activatePoint(page: Page, point: Point, mobile: boolean, count = 
 
 async function activateTarget(page: Page, id: string, mobile: boolean): Promise<void> {
   await activatePoint(page, await targetCenter(page, id), mobile);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
 }
 
 async function drag(page: Page, from: Point, dx: number, dy: number): Promise<void> {
