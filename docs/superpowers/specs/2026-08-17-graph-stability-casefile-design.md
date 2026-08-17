@@ -40,6 +40,9 @@ interface PendingNodeGesture {
   startScreenY: number;
   grabOffsetWorldX: number;
   grabOffsetWorldY: number;
+  originalNodeX: number;
+  originalNodeY: number;
+  wasPermanentlyPinned: boolean;
   dragging: boolean;
 }
 ```
@@ -104,7 +107,6 @@ interface ProfileField {
   label: string;
   value: string;
   copyValue: string;
-  targetId?: string;
 }
 
 interface EntityRelationsResponse {
@@ -144,7 +146,7 @@ Source prefixes are mapped to readable provenance names such as Wikidata, 豆瓣
 
 For an outgoing fact (`subject_id` equals the selected entity), an entity relation uses `object_ref` as `targetId`; its resolved label is both `value` and `copyValue`. For an incoming fact (`object_ref` equals the selected entity), `subject_id` is `targetId`; its resolved label is the value. A self-referential fact is returned once as outgoing. A fact is scalar when `object_ref` does not resolve to an entity and `object_value` is non-empty; it has no `targetId` and uses `object_value` as its value. Rows with neither a resolved counterpart nor a scalar value are omitted. Direction is always retained in the response. `factId` is the stable row identity used when appending relation pages.
 
-Relations sort by `predicate ASC, direction ASC, value ASC, fact id ASC`. The opaque cursor encodes the complete final sort tuple; the next request uses strict tuple comparison, preventing duplicates across pages. A malformed cursor returns 400. Recommendations sort by `rank ASC, target_id ASC`, are bounded to ten items, and set `copyValue` to the resolved recommendation name. These endpoints are requested independently.
+Relations sort by `predicate COLLATE BINARY ASC, direction ASC, value COLLATE BINARY ASC, fact id ASC`, matching SQLite and D1 bytewise text ordering. The opaque cursor encodes the complete final sort tuple; the next request uses strict tuple comparison with the same collation, preventing duplicates across pages. A malformed cursor returns 400. Recommendations sort by `rank ASC, target_id COLLATE BINARY ASC`, are bounded to ten items, and set `copyValue` to the resolved recommendation name. These endpoints are requested independently.
 
 ## 6. Casefile Tabs and Request State
 
@@ -176,7 +178,7 @@ A row press is a pending activation. Euclidean movement beyond 6 logical pixels 
 
 The card's top copy button copies all profile fields in display order as `标签：值`, one field per line, omitting empty fields and placing no blank trailing line. It never triggers relations or recommendations and behaves the same regardless of the active tab.
 
-Relation and recommendation text uses the same click/tap-to-copy behavior. A separate right-side arrow with at least a 44 by 44 logical-pixel touch target opens the target entity. Clicking the arrow never copies. Rows without a resolvable target omit or disable the arrow.
+Profile rows are always copy-only, including resolved author and publisher fields. Relation and recommendation text uses the same click/tap-to-copy behavior. A separate right-side arrow with at least a 44 by 44 logical-pixel touch target opens the target entity. Clicking the arrow never copies. Rows without a resolvable target omit or disable the arrow.
 
 The card's lower-right hint reads `点击字段即可复制`. The hint itself is not interactive.
 
@@ -217,6 +219,8 @@ Unit and API tests will cover:
 - statistics terminology, alignment state, clipping, and responsive geometry
 - desktop-right and mobile-grid relationship filter geometry and hit testing
 - profile ID resolution and readable source names
+- relation limit validation, bytewise cursor ordering, multi-page duplicate prevention, outgoing/incoming direction, self-reference deduplication, and stable `factId`
+- recommendation rank/target ordering and name-based `copyValue`
 - profile-only initial request
 - one request per lazy tab, caching, stale-response rejection, retry, and per-tab scroll
 - centered loading state and empty states
