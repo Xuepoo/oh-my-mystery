@@ -48,6 +48,7 @@ export class GraphViewport {
     this.graph = new KnowledgeGraph2D({
       source: options.source,
       styleSettings: options.styleSettings,
+      onChange: () => this.onChange(),
     });
   }
 
@@ -329,6 +330,26 @@ export class GraphViewport {
 
   canLoadMore(id: string): boolean {
     return this.graph.canLoadMore(id);
+  }
+
+  isNodeLoading(id: string): boolean {
+    return this.graph.isNodeLoading(id);
+  }
+
+  getExpansionProgress(id: string): { loaded: number; total?: number } {
+    return this.graph.getExpansionProgress(id);
+  }
+
+  whenExpansionIdle(id: string): Promise<void> {
+    return this.graph.whenExpansionIdle(id);
+  }
+
+  setHoverPinned(id: string | null): void {
+    this.graph.setHoverPinned(id);
+  }
+
+  clearHoverPin(): void {
+    this.graph.clearHoverPin();
   }
 
   collapseNode(id: string): void {

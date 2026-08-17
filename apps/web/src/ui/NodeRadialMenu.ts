@@ -19,6 +19,8 @@ export interface NodeRadialMenuOptions {
   isPinned: (id: string) => boolean;
   isExpanded: (id: string) => boolean;
   canLoadMore: (id: string) => boolean;
+  isNodeLoading: (id: string) => boolean;
+  getExpansionProgress: (id: string) => { loaded: number; total?: number };
   onAction: (action: RadialAction, node: GraphNode2D) => void;
 }
 
@@ -29,6 +31,8 @@ export class NodeRadialMenu extends Entity {
   private isPinnedCb: (id: string) => boolean;
   private isExpandedCb: (id: string) => boolean;
   private canLoadMoreCb: (id: string) => boolean;
+  private isNodeLoadingCb: (id: string) => boolean;
+  private getProgressCb: (id: string) => { loaded: number; total?: number };
   private onActionCb: (action: RadialAction, node: GraphNode2D) => void;
 
   constructor(options: NodeRadialMenuOptions) {
@@ -38,6 +42,8 @@ export class NodeRadialMenu extends Entity {
     this.isPinnedCb = options.isPinned;
     this.isExpandedCb = options.isExpanded;
     this.canLoadMoreCb = options.canLoadMore;
+    this.isNodeLoadingCb = options.isNodeLoading;
+    this.getProgressCb = options.getExpansionProgress;
     this.onActionCb = options.onAction;
   }
 
@@ -104,6 +110,14 @@ export class NodeRadialMenu extends Entity {
     const pinned = this.isPinnedCb(this.node.id);
     const expanded = this.isExpandedCb(this.node.id);
     const canLoadMore = this.canLoadMoreCb(this.node.id);
+    const loading = this.isNodeLoadingCb(this.node.id);
+    const progress = this.getProgressCb(this.node.id);
+    const progressLabel =
+      progress.total !== undefined
+        ? ` ${progress.loaded}/${progress.total}`
+        : progress.loaded
+          ? ` ${progress.loaded}`
+          : '';
     const items: RadialSector[] = [
       {
         action: 'pin',
@@ -120,8 +134,14 @@ export class NodeRadialMenu extends Entity {
       },
       {
         action: 'expand',
-        icon: canLoadMore ? '+' : expanded ? '↩' : '✦',
-        label: canLoadMore ? '更多' : expanded ? '收起' : '展开',
+        icon: loading ? '✕' : canLoadMore ? '+' : expanded ? '↩' : '✦',
+        label: loading
+          ? `取消${progressLabel}`
+          : canLoadMore
+            ? `更多${progressLabel}`
+            : expanded
+              ? '收起'
+              : '展开',
         centerAngle: -Math.PI / 2 + SECTOR_ANGLE * 3,
       },
       {

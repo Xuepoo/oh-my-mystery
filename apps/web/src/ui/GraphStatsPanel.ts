@@ -185,11 +185,18 @@ export class GraphStatsPanel extends Entity {
       ctx.beginPath();
       ctx.roundRect(x, y, w, 60, 8);
       ctx.fill();
+      // Text state may be inherited from the close button (center/middle),
+      // which pushed the label and value out of the clipped card. Reset
+      // explicitly so labels stay readable and inside the card.
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
       ctx.fillStyle = Theme.colors.textMuted;
       ctx.font = `600 10px ${Theme.fonts.sans}`;
       ctx.fillText(truncateText(ctx, data[0]!, w - 24), x + 12, y + 18);
       ctx.fillStyle = Theme.colors.textHigh;
       fitFontSize(ctx, data[1]!, w - 24, 18, 12, (size) => `700 ${size}px ${Theme.fonts.serif}`);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
       ctx.fillText(truncateText(ctx, data[1]!, w - 24), x + 12, y + 42);
     });
   }

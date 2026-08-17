@@ -97,7 +97,9 @@ export class RenderSettingsModal extends Entity {
     if (!this.openState) return;
     const ctx = getCanvasCtx(r);
     const w = Math.min(560, this.scene.width - 32);
-    const h = 390;
+    // Footer buttons start at y + h - 58; the last option row ends at y + 338.
+    // Keep a 14px gap between them and a comfortable bottom margin.
+    const h = 410;
     const x = (this.scene.width - w) / 2;
     const y = Math.max(76, (this.scene.height - h) / 2);
     ctx.fillStyle = 'rgba(0,0,0,0.58)';
