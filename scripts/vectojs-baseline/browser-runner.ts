@@ -774,9 +774,9 @@ export async function executeScenarioStep(
       return;
     case 'clear-graph':
     case 'clear-rendered-graph':
-      await activateTarget(page, 'tool.clear', context.viewport.mobile);
+      await activateCanvasTarget(page, 'tool.clear');
       await assertClearArmed(page);
-      await activateTarget(page, 'tool.clear', context.viewport.mobile);
+      await activateCanvasTarget(page, 'tool.clear');
       await assertPageState(
         page,
         () =>
@@ -921,6 +921,35 @@ async function activatePoint(page: Page, point: Point, mobile: boolean, count = 
 
 async function activateTarget(page: Page, id: string, mobile: boolean): Promise<void> {
   await activatePoint(page, await targetCenter(page, id), mobile);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+}
+
+async function activateCanvasTarget(page: Page, id: string): Promise<void> {
+  const point = await targetCenter(page, id);
+  await page.evaluate(({ x, y }) => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) throw new Error('Canvas is unavailable');
+    const event = (type: string) =>
+      canvas.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          pointerId: 77,
+          pointerType: 'mouse',
+          isPrimary: true,
+          button: 0,
+          buttons: type === 'pointerup' ? 0 : 1,
+          clientX: x,
+          clientY: y,
+        }),
+      );
+    event('pointerdown');
+    event('pointerup');
+  }, point);
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
