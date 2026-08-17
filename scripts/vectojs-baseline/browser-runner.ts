@@ -674,6 +674,7 @@ export async function executeScenarioStep(
       await assertDrawer(page, 'profileStatus', 'ready');
       return;
     case 'activate-relations':
+    case 'activate-relations-before-navigation':
       await activateTarget(page, 'casefile.tab.relations', context.viewport.mobile);
       await assertDrawer(page, 'relationsStatus', 'ready');
       return;

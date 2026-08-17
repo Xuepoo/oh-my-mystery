@@ -44,6 +44,7 @@ const scenarios: Record<ScenarioId, readonly string[]> = {
     'load-relation-page',
     'copy-first-field',
     'scroll-casefile',
+    'activate-relations-before-navigation',
     'follow-related-author',
     'close-casefile',
     'assert-fixture-requests-and-copy',
