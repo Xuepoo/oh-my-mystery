@@ -92,6 +92,8 @@ function buildTestDatabase(): Database {
   insertEntity.run('test:award', null, 'award', names('测试推理奖'), 'test');
   insertEntity.run('wd:Q586362', 'Q586362', 'author', names('埃勒里·奎因'), 'test');
   insertEntity.run('test:work-2', null, 'work', names('第二部作品'), 'test');
+  insertEntity.run('test:A', null, 'work', names('A作品'), 'test');
+  insertEntity.run('test:a', null, 'work', names('a作品'), 'test');
 
   const insertPublication = db.prepare(
     `INSERT INTO publication_events
@@ -120,10 +122,20 @@ function buildTestDatabase(): Database {
   insertFact.run('test:work-2', 'publisher', 'test:publisher', null, 'test');
   insertFact.run('test:publisher', 'related_to', 'test:award', null, 'test');
   insertFact.run('wd:Q125970', 'award_received', 'test:award', null, 'test');
+  insertFact.run('wd:Q125970', 'author', 'test:a', null, 'wikidata');
+  insertFact.run('wd:Q125970', 'author', 'test:A', null, 'wikidata');
+  insertFact.run('test:work-2', 'author', 'wd:Q125970', null, 'douban');
+  insertFact.run('wd:Q125970', 'related_to', 'wd:Q125970', null, 'omm');
+  db.prepare(
+    'INSERT INTO facts (subject_id, predicate, object_ref, object_value, source) VALUES (?, ?, ?, ?, ?)',
+  ).run('wd:Q125970', 'isbn', 'missing:isbn', '9780000000002', 'ndl');
 
   db.prepare(
     'INSERT INTO recommendations (entity_id, target_id, score, reason, rank) VALUES (?, ?, ?, ?, ?)',
   ).run('wd:Q125970', 'wd:Q710681', 1, '代表作品', 1);
+  db.prepare(
+    'INSERT INTO recommendations (entity_id, target_id, score, reason, rank) VALUES (?, ?, ?, ?, ?)',
+  ).run('wd:Q125970', 'test:A', 0.9, '同类作品', 1);
 
   const insertSearch = db.prepare(
     'INSERT INTO search_index (id, type, name_zh, name_en, name_ja, aliases_text) VALUES (?, ?, ?, ?, ?, ?)',
@@ -312,6 +324,108 @@ describe('OMM Backend API Endpoints', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.publications).toEqual({ count: 1, publisher_ids: ['test:publisher'] });
+  });
+
+  it('GET /api/entity/:id/profile resolves readable fields and provenance', async () => {
+    const res = await app.request('/api/entity/wd:Q125970/profile', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.entity.id).toBe('wd:Q125970');
+    expect(body.fields[0]).toEqual({
+      key: 'name',
+      label: '名称',
+      value: '东野圭吾',
+      copyValue: '东野圭吾',
+    });
+    expect(body.fields[1]).toEqual({
+      key: 'type',
+      label: '类型',
+      value: '作者',
+      copyValue: '作者',
+    });
+    expect(body.fields).toContainEqual({
+      key: 'author:test:A',
+      label: '作者',
+      value: 'A作品',
+      copyValue: 'A作品',
+    });
+    expect(body.fields).toContainEqual({
+      key: 'isbn:missing:isbn',
+      label: 'ISBN',
+      value: '9780000000002',
+      copyValue: '9780000000002',
+    });
+    expect(body.fields).toContainEqual({
+      key: 'source',
+      label: '来源',
+      value: 'OMM',
+      copyValue: 'OMM',
+    });
+    expect(body.fields.some((field: any) => field.value.startsWith('missing:'))).toBe(false);
+  });
+
+  it('GET /api/entity/:id/relations paginates in BINARY tuple order without duplicates', async () => {
+    const seen = new Set<number>();
+    const ordered: any[] = [];
+    let cursor: string | undefined;
+    do {
+      const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+      const res = await app.request(
+        `/api/entity/wd:Q125970/relations?limit=2${suffix}`,
+        {},
+        mockEnv,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      for (const item of body.items) {
+        expect(seen.has(item.factId)).toBe(false);
+        seen.add(item.factId);
+        ordered.push(item);
+      }
+      cursor = body.nextCursor;
+    } while (cursor);
+
+    const authors = ordered.filter((item) => item.predicate === 'author');
+    expect(authors.map((item) => item.value)).toEqual(['第二部作品', 'A作品', 'a作品']);
+    expect(authors.map((item) => item.direction)).toEqual(['incoming', 'outgoing', 'outgoing']);
+    expect(ordered.filter((item) => item.predicate === 'related_to')).toHaveLength(1);
+    expect(ordered.find((item) => item.predicate === 'related_to').direction).toBe('outgoing');
+    expect(ordered.find((item) => item.predicate === 'isbn')).toMatchObject({
+      value: '9780000000002',
+      copyValue: '9780000000002',
+      direction: 'outgoing',
+    });
+    expect(ordered.every((item) => Number.isInteger(item.factId))).toBe(true);
+  });
+
+  it('validates relation limits and opaque cursors strictly', async () => {
+    for (const query of ['limit=0', 'limit=61', 'limit=1.5', 'limit=', 'cursor=not-a-cursor']) {
+      const res = await app.request(`/api/entity/wd:Q125970/relations?${query}`, {}, mockEnv);
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('GET /api/entity/:id/recommendations uses rank/target BINARY order and readable copy values', async () => {
+    const res = await app.request('/api/entity/wd:Q125970/recommendations', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.items.map((item: any) => item.targetId)).toEqual(['test:A', 'wd:Q710681']);
+    expect(body.items[0]).toEqual({
+      targetId: 'test:A',
+      name: 'A作品',
+      copyValue: 'A作品',
+      type: 'work',
+      score: 0.9,
+      reason: '同类作品',
+    });
+  });
+
+  it('new casefile endpoints return the entity-specific 404 contract', async () => {
+    for (const endpoint of ['profile', 'relations', 'recommendations']) {
+      const res = await app.request(`/api/entity/missing%3Aentity/${endpoint}`, {}, mockEnv);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: 'Entity not found' });
+    }
   });
 
   it('GET /api/entity/:id/publications returns detailed publication events', async () => {

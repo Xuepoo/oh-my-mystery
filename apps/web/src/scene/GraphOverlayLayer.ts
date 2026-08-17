@@ -138,6 +138,15 @@ export class GraphOverlayLayer extends Entity {
 
   render(r: any): void {
     const ctx = getCanvasCtx(r);
+    ctx.save();
+    try {
+      this.renderFrame(ctx);
+    } finally {
+      ctx.restore();
+    }
+  }
+
+  private renderFrame(ctx: CanvasRenderingContext2D): void {
     this.viewport.update();
 
     const nodes = this.viewport.getNodes();

@@ -367,12 +367,13 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     const graph = new KnowledgeGraph2D({ source });
     await graph.bootstrap([root]);
 
-    graph.pinNode('root', 120, -45);
+    expect(graph.beginNodeDrag('root')).toBe(true);
+    expect(graph.updateNodeDrag('root', 120, -45)).toBe(true);
     for (let tick = 0; tick < 8; tick++) graph.step();
     expect({ x: root.x, y: root.y }).toEqual({ x: 120, y: -45 });
 
     graph.togglePinned('root');
-    graph.unpinNode('root');
+    expect(graph.endNodeDrag('root')).toBe(true);
     graph.reheat(0.4);
     graph.step();
     expect({ x: root.x, y: root.y }).toEqual({ x: 120, y: -45 });
@@ -493,7 +494,7 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     graph.dispose();
   });
 
-  it('reheats a cooled layout when dragging starts', async () => {
+  it('separates hover, drag, and permanent pin ownership', async () => {
     const root = node('root');
     const child = node('child');
     const source = {
@@ -512,10 +513,96 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     for (let tick = 0; tick < 1000 && graph.isSimulating(); tick++) graph.step();
     expect(graph.isSimulating()).toBe(false);
 
-    graph.pinNode('root', 100, 100);
+    const layout = graph['layout']!;
+    const reheats: number[] = [];
+    const originalReheat = layout.reheat.bind(layout);
+    layout.reheat = (alpha?: number) => {
+      reheats.push(alpha ?? 0.3);
+      originalReheat(alpha);
+    };
+
+    graph.setHoverPinned('root');
+    expect(graph.isSimulating()).toBe(false);
+    expect(reheats).toEqual([]);
+
+    expect(graph.beginNodeDrag('root')).toBe(true);
     expect(graph.isSimulating()).toBe(true);
+    expect(graph.updateNodeDrag('root', 100, 100)).toBe(true);
+    expect(graph.togglePinned('root')).toBe(true);
+    reheats.length = 0;
+
+    expect(graph.endNodeDrag('root')).toBe(true);
+    expect(reheats).toEqual([0.08]);
+    expect(graph.isPinned('root')).toBe(true);
+    graph.clearHoverPin();
     graph.step();
-    expect(graph.isSimulating()).toBe(true);
+    expect({ x: root.x, y: root.y }).toEqual({ x: 100, y: 100 });
+    graph.dispose();
+  });
+
+  it('cancels a drag by restoring coordinates and permanent ownership', async () => {
+    const root = node('root');
+    const source = {
+      async getNeighbors() {
+        return { entity: root, neighbors: [], facts: [], hasMore: false };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+    graph.togglePinned('root');
+    const original = { x: root.x ?? 0, y: root.y ?? 0 };
+
+    expect(graph.beginNodeDrag('root')).toBe(true);
+    expect(graph.updateNodeDrag('root', 90, -30)).toBe(true);
+    expect(graph.cancelNodeDrag('root')).toBe(true);
+    graph.step();
+
+    expect(graph.isPinned('root')).toBe(true);
+    expect({ x: root.x, y: root.y }).toEqual(original);
+    graph.dispose();
+  });
+
+  it('clears transient pin ownership when a node is removed', async () => {
+    const root = node('root');
+    const transient = node('transient');
+    const source = {
+      async getNeighbors() {
+        return { entity: root, neighbors: [], facts: [], hasMore: false };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+    graph.addPath(
+      [root, transient],
+      [{ source: 'root', target: 'transient', predicate: 'related' }],
+    );
+    graph.setHoverPinned('transient');
+    expect(graph.beginNodeDrag('transient')).toBe(true);
+
+    graph.addPath([root], []);
+
+    expect(graph.getNode('transient')).toBeUndefined();
+    expect(graph.endNodeDrag('transient')).toBe(false);
+    graph.dispose();
+  });
+
+  it('clears transient ownership but preserves permanent pins on rebuild', async () => {
+    const root = node('root');
+    const source = {
+      async getNeighbors() {
+        return { entity: root, neighbors: [], facts: [], hasMore: false };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+    graph.togglePinned('root');
+    graph.setHoverPinned('root');
+    expect(graph.beginNodeDrag('root')).toBe(true);
+
+    graph.addPath([root], []);
+
+    expect(graph.isPinned('root')).toBe(true);
+    expect(graph.endNodeDrag('root')).toBe(false);
     graph.dispose();
   });
 });

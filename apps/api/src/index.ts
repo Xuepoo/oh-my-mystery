@@ -4,6 +4,7 @@ import {
   neighborQuerySchema,
   parseQuery,
   pathQuerySchema,
+  relationQuerySchema,
   searchQuerySchema,
   turnstileResponseSchema,
 } from './validation';
@@ -11,15 +12,46 @@ import type {
   ChronicleTrail,
   EntityDetailResponse,
   EntityNames,
+  EntityProfileResponse,
+  EntityRecommendationsResponse,
+  EntityRelationsResponse,
   OmmEntity,
   OmmFact,
   PublicationEvent,
   PublicationSummary,
   PathfinderResult,
   RecommendationItem,
+  RelationItem,
   SearchResponse,
   SearchResultItem,
 } from '@omm/shared';
+
+const PREDICATE_LABELS: Record<string, string> = {
+  author: '作者',
+  aozora_role: '创作',
+  publisher: '出版社',
+  publisher_name: '出版社',
+  award: '奖项',
+  award_received: '奖项',
+  character: '角色',
+  characters: '角色',
+  series: '系列',
+  translator: '译者',
+  genre: '类型',
+  isbn: 'ISBN',
+  publication_date: '出版日期',
+};
+
+const SOURCE_LABELS: Record<string, string> = {
+  wd: 'Wikidata',
+  wikidata: 'Wikidata',
+  douban: '豆瓣',
+  ndl: '日本国会图书馆',
+  aozora: '青空文库',
+  gutenberg: 'Project Gutenberg',
+  omm: 'OMM',
+  test: 'OMM',
+};
 
 export interface Env {
   DB: D1Database;
@@ -484,6 +516,170 @@ app.get('/api/entity/:id/details', async (c) => {
   return c.json(response);
 });
 
+app.get('/api/entity/:id/profile', async (c) => {
+  const id = c.req.param('id');
+  const entityRow = await c.env.DB.prepare('SELECT * FROM entities WHERE id = ?').bind(id).first();
+  if (!entityRow) return c.json({ error: 'Entity not found' }, 404);
+
+  const entity = formatEntityRow(entityRow);
+  const rows = await c.env.DB.prepare(
+    `SELECT f.id, f.predicate, f.object_ref, f.object_value, e.names_json
+       FROM facts f
+       LEFT JOIN entities e ON e.id = f.object_ref
+      WHERE f.subject_id = ?
+      ORDER BY f.id ASC
+      LIMIT 60`,
+  )
+    .bind(id)
+    .all();
+  const fields: EntityProfileResponse['fields'] = [];
+  const addField = (key: string, label: string, value?: string | null) => {
+    const cleanValue = value?.trim();
+    if (cleanValue) fields.push({ key, label, value: cleanValue, copyValue: cleanValue });
+  };
+
+  addField('name', '名称', getReadableName(entityRow.names_json));
+  addField('type', '类型', getEntityTypeLabel(entity.type));
+  addField('bio', '简介', entity.bio);
+  addField('birth', '出生', entity.birth);
+  addField('death', '逝世', entity.death);
+  addField('country', '国家/地区', getCountryLabel(entity.country));
+  for (const row of (rows.results || []) as any[]) {
+    const value = getReadableName(row.names_json) || String(row.object_value || '').trim();
+    if (!value) continue;
+    addField(
+      `${String(row.predicate)}:${String(row.object_ref || row.id)}`,
+      PREDICATE_LABELS[String(row.predicate)] || String(row.predicate),
+      value,
+    );
+  }
+  addField('source', '来源', getSourceLabel(entity.source));
+
+  const response: EntityProfileResponse = { entity, fields };
+  return c.json(response);
+});
+
+app.get('/api/entity/:id/relations', async (c) => {
+  const id = c.req.param('id');
+  const parsedQuery = parseQuery(relationQuerySchema, {
+    limit: c.req.query('limit'),
+    cursor: c.req.query('cursor'),
+  });
+  if ('error' in parsedQuery) return c.json({ error: parsedQuery.error }, 400);
+
+  let cursor: RelationCursor | undefined;
+  if (parsedQuery.data.cursor) {
+    cursor = decodeRelationCursor(parsedQuery.data.cursor);
+    if (!cursor) return c.json({ error: 'Invalid query parameters' }, 400);
+  }
+
+  const entity = await c.env.DB.prepare('SELECT id FROM entities WHERE id = ?').bind(id).first();
+  if (!entity) return c.json({ error: 'Entity not found' }, 404);
+
+  const bindings: unknown[] = [id, id, id, id];
+  let cursorClause = '';
+  if (cursor) {
+    cursorClause = `AND (predicate COLLATE BINARY, direction COLLATE BINARY,
+                         value COLLATE BINARY, fact_id) > (?, ?, ?, ?)`;
+    bindings.push(...cursor);
+  }
+  bindings.push(parsedQuery.data.limit + 1);
+
+  const rows = await c.env.DB.prepare(
+    `WITH connected AS (
+       SELECT f.id AS fact_id, f.predicate, f.object_value,
+              CASE WHEN f.subject_id = ? THEN 'outgoing' ELSE 'incoming' END AS direction,
+              CASE WHEN f.subject_id = ? THEN f.object_ref ELSE f.subject_id END AS target_id
+         FROM facts f
+        WHERE f.subject_id = ? OR (f.object_ref = ? AND f.subject_id <> f.object_ref)
+     ), resolved AS (
+       SELECT connected.*,
+              COALESCE(
+                json_extract(e.names_json, '$.labels.zh'),
+                json_extract(e.names_json, '$.labels.zh-cn'),
+                json_extract(e.names_json, '$.labels.en'),
+                json_extract(e.names_json, '$.labels.ja'),
+                json_extract(e.names_json, '$.labels.""'),
+                (SELECT value FROM json_each(e.names_json, '$.labels')
+                  WHERE typeof(value) = 'text' AND trim(value) <> '' ORDER BY key LIMIT 1),
+                CASE WHEN connected.direction = 'outgoing' AND trim(connected.object_value) <> ''
+                     THEN connected.object_value END
+              ) AS value,
+              e.id AS resolved_target_id
+         FROM connected
+         LEFT JOIN entities e ON e.id = connected.target_id
+     )
+     SELECT fact_id, predicate, direction, value, resolved_target_id AS target_id
+       FROM resolved
+      WHERE value IS NOT NULL AND trim(value) <> ''
+        ${cursorClause}
+      ORDER BY predicate COLLATE BINARY ASC, direction COLLATE BINARY ASC,
+               value COLLATE BINARY ASC, fact_id ASC
+      LIMIT ?`,
+  )
+    .bind(...bindings)
+    .all();
+  const pageRows = (rows.results || []).slice(0, parsedQuery.data.limit) as any[];
+  const items: RelationItem[] = pageRows.map((row) => ({
+    factId: Number(row.fact_id),
+    predicate: String(row.predicate),
+    label: PREDICATE_LABELS[String(row.predicate)] || String(row.predicate),
+    value: String(row.value),
+    copyValue: String(row.value),
+    ...(row.target_id ? { targetId: String(row.target_id) } : {}),
+    direction: row.direction,
+  }));
+  const last = pageRows.at(-1);
+  const response: EntityRelationsResponse = {
+    entityId: id,
+    items,
+    nextCursor:
+      (rows.results || []).length > parsedQuery.data.limit && last
+        ? encodeRelationCursor([
+            String(last.predicate),
+            last.direction,
+            String(last.value),
+            Number(last.fact_id),
+          ])
+        : undefined,
+  };
+  return c.json(response);
+});
+
+app.get('/api/entity/:id/recommendations', async (c) => {
+  const id = c.req.param('id');
+  const entity = await c.env.DB.prepare('SELECT id FROM entities WHERE id = ?').bind(id).first();
+  if (!entity) return c.json({ error: 'Entity not found' }, 404);
+
+  const rows = await c.env.DB.prepare(
+    `SELECT r.target_id, r.score, r.reason, e.type, e.names_json
+       FROM recommendations r
+       JOIN entities e ON e.id = r.target_id
+      WHERE r.entity_id = ?
+      ORDER BY r.rank ASC, r.target_id COLLATE BINARY ASC
+      LIMIT 10`,
+  )
+    .bind(id)
+    .all();
+  const items = (rows.results || []).flatMap((row: any) => {
+    const name = getReadableName(row.names_json);
+    return name
+      ? [
+          {
+            targetId: String(row.target_id),
+            name,
+            copyValue: name,
+            type: row.type || 'other',
+            score: Number(row.score),
+            reason: String(row.reason),
+          },
+        ]
+      : [];
+  });
+  const response: EntityRecommendationsResponse = { entityId: id, items };
+  return c.json(response);
+});
+
 app.get('/api/entity/:id/publications', async (c) => {
   const id = c.req.param('id');
   const rows = await c.env.DB.prepare(
@@ -881,6 +1077,88 @@ function safeParseJson<T>(raw: unknown, fallback: T): T {
     return JSON.parse(raw) as T;
   } catch {
     return fallback;
+  }
+}
+
+function getReadableName(rawNames: unknown): string | undefined {
+  const names = safeParseJson<{ labels?: Record<string, unknown> }>(rawNames, {});
+  const labels = names.labels || {};
+  for (const language of ['zh', 'zh-cn', 'en', 'ja', '']) {
+    const value = labels[language];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return Object.keys(labels)
+    .sort()
+    .map((key) => labels[key])
+    .find((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    ?.trim();
+}
+
+function getEntityTypeLabel(type: string): string {
+  return (
+    {
+      author: '作者',
+      work: '作品',
+      publisher: '出版社',
+      award: '奖项',
+      character: '角色',
+      series: '系列',
+      genre: '类型',
+      person: '人物',
+      other: '其他',
+    }[type] || '其他'
+  );
+}
+
+function getCountryLabel(country?: string | null): string | undefined {
+  if (!country) return undefined;
+  return (
+    {
+      CN: '中国',
+      DE: '德国',
+      FR: '法国',
+      GB: '英国',
+      JP: '日本',
+      KR: '韩国',
+      US: '美国',
+    }[country.toUpperCase()] || country
+  );
+}
+
+function getSourceLabel(source?: string): string | undefined {
+  if (!source) return undefined;
+  const prefix = source.split(':', 1)[0]!.toLowerCase();
+  return SOURCE_LABELS[source.toLowerCase()] || SOURCE_LABELS[prefix];
+}
+
+type RelationCursor = [string, 'incoming' | 'outgoing', string, number];
+
+function encodeRelationCursor(cursor: RelationCursor): string {
+  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(cursor))));
+  return encoded.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+}
+
+function decodeRelationCursor(value: string): RelationCursor | undefined {
+  try {
+    const padding = '='.repeat((4 - (value.length % 4)) % 4);
+    const json = decodeURIComponent(
+      escape(atob(value.replaceAll('-', '+').replaceAll('_', '/') + padding)),
+    );
+    const cursor: unknown = JSON.parse(json);
+    if (
+      !Array.isArray(cursor) ||
+      cursor.length !== 4 ||
+      typeof cursor[0] !== 'string' ||
+      (cursor[1] !== 'incoming' && cursor[1] !== 'outgoing') ||
+      typeof cursor[2] !== 'string' ||
+      !Number.isSafeInteger(cursor[3]) ||
+      cursor[3] < 1
+    ) {
+      return undefined;
+    }
+    return cursor as RelationCursor;
+  } catch {
+    return undefined;
   }
 }
 

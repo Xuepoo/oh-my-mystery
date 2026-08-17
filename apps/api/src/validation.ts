@@ -29,6 +29,16 @@ export const pathQuerySchema = z.object({
   target: z.string().trim().min(1).max(200),
 });
 
+export const relationQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(60).default(30),
+  cursor: z
+    .string()
+    .min(1)
+    .max(2048)
+    .regex(/^[A-Za-z0-9_-]+$/)
+    .optional(),
+});
+
 export const turnstileResponseSchema = z.object({
   success: z.boolean(),
   'error-codes': z.array(z.string()).optional(),

@@ -352,6 +352,30 @@ export class GraphViewport {
     this.graph.clearHoverPin();
   }
 
+  beginNodeDrag(id: string): boolean {
+    const started = this.graph.beginNodeDrag(id);
+    if (started) this.onChange();
+    return started;
+  }
+
+  updateNodeDrag(id: string, x: number, y: number): boolean {
+    const updated = this.graph.updateNodeDrag(id, x, y);
+    if (updated) this.onChange();
+    return updated;
+  }
+
+  endNodeDrag(id: string): boolean {
+    const ended = this.graph.endNodeDrag(id);
+    if (ended) this.onChange();
+    return ended;
+  }
+
+  cancelNodeDrag(id: string): boolean {
+    const cancelled = this.graph.cancelNodeDrag(id);
+    if (cancelled) this.onChange();
+    return cancelled;
+  }
+
   collapseNode(id: string): void {
     this.graph.collapse(id);
     this.onChange();
@@ -373,7 +397,9 @@ export class GraphViewport {
         }
         visited.add(id);
         const remaining = maxNewNodes - (this.graph.nodeCount - initialCount);
-        await this.graph.expand(id, Math.max(1, Math.min(50, remaining)));
+        await this.graph.expand(id, Math.max(1, Math.min(50, remaining)), undefined, {
+          chase: true,
+        });
         expanded++;
         if (this.graph.nodeCount - initialCount >= maxNewNodes) break;
         next.push(...this.graph.getAdjacentIds(id));

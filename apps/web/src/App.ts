@@ -1,5 +1,5 @@
 import { Scene } from '@vectojs/core';
-import type { ChronicleStep, EntityDetailResponse, OmmEntity, PathfinderResult } from '@omm/shared';
+import type { ChronicleStep, OmmEntity, PathfinderResult } from '@omm/shared';
 import { D1DataSource } from './api/D1DataSource';
 import { BackgroundLayer } from './scene/BackgroundLayer';
 import { GraphOverlayLayer } from './scene/GraphOverlayLayer';
@@ -30,6 +30,23 @@ import type { NodeStyleSettings } from './node-style-settings';
 import { NodeAppearanceModal } from './ui/NodeAppearanceModal';
 import { clearSession, loadSession, saveSession, type GraphSessionSnapshot } from './session';
 
+type AppPointerType = 'mouse' | 'pen' | 'touch';
+
+interface PendingNodeGesture {
+  pointerId: number;
+  pointerType: AppPointerType;
+  node: GraphNode2D;
+  startX: number;
+  startY: number;
+  grabOffsetX: number;
+  grabOffsetY: number;
+  originalX: number;
+  originalY: number;
+  wasPermanentlyPinned: boolean;
+  thresholdExceeded: boolean;
+  dragging: boolean;
+}
+
 export class App {
   readonly scene: Scene;
   readonly canvas: HTMLCanvasElement;
@@ -55,13 +72,12 @@ export class App {
   readonly nodeAppearanceModal: NodeAppearanceModal;
   readonly graphClearControl: GraphClearControl;
 
-  private activeEntityDetails: EntityDetailResponse | null = null;
   private isPointerDown = false;
   private isPanning = false;
-  private draggedNode: GraphNode2D | null = null;
+  private pendingNodeGesture: PendingNodeGesture | null = null;
+  private drawerPointerId: number | null = null;
   private pointerDownPos = { x: 0, y: 0 };
   private lastPointerPos = { x: 0, y: 0 };
-  private selectEpoch = 0;
   private activePointers = new Map<number, { x: number; y: number }>();
   private pinchState: { prevDist: number; prevMidX: number; prevMidY: number } | null = null;
   private lastPanTime = 0;
@@ -92,7 +108,8 @@ export class App {
     return (
       performance.now() - this.lastActivityAt < App.IDLE_AMBIENT_MS ||
       this.viewport.isCameraAnimating() ||
-      this.viewport.isPhysicsActive()
+      this.viewport.isPhysicsActive() ||
+      this.drawer?.hasPendingAnimations() === true
     );
   }
 
@@ -178,19 +195,12 @@ export class App {
     this.scene.add(this.headerBar);
 
     this.drawer = new CasefileDrawer({
+      source: this.source,
       onClose: () => {
-        this.activeEntityDetails = null;
         this.controls?.setVisible(true);
       },
       onSelectEntity: (id) => {
         void this.handleSelectNode(id);
-      },
-      onStartPathfinder: (id, name) => {
-        this.drawer.close();
-        this.pathfinderModal.open({ id, name });
-      },
-      onExpandNode: (id) => {
-        void this.toggleNodeExpansion(id);
       },
     });
     this.scene.add(this.drawer);
@@ -291,7 +301,7 @@ export class App {
         if (action === 'pin') {
           this.viewport.toggleNodePinned(node.id);
         } else if (action === 'hide') {
-          if (this.activeEntityDetails?.entity.id === node.id) this.drawer.close();
+          if (this.drawer.session.entityId === node.id) this.drawer.close();
           this.overlayLayer.setHoveredEntity(null);
           if (this.viewport.hideNode(node.id)) {
             this.expansionHistory = this.expansionHistory.filter((entry) => entry !== node.id);
@@ -358,7 +368,7 @@ export class App {
         this.activePointers.set(e.pointerId, { x, y });
         this.isPointerDown = false;
         this.isPanning = false;
-        this.draggedNode = null;
+        this.cancelPendingNodeGesture();
         void this.selectPathEndpoint(modifiedNode.id, modifiedNode.name);
         return;
       }
@@ -377,9 +387,11 @@ export class App {
         // Second finger lands: switch to pinch gesture
         this.cancelLongPress();
         this.touchGestureConsumed = true;
-        if (this.draggedNode) {
-          this.viewport.graph.unpinNode(this.draggedNode.id);
-          this.draggedNode = null;
+        this.cancelPendingNodeGesture();
+        if (this.drawerPointerId !== null) {
+          this.drawer.handlePointerCancel();
+          this.releasePointerCapture(this.drawerPointerId);
+          this.drawerPointerId = null;
         }
         this.isPanning = false;
         const pts = [...this.activePointers.values()];
@@ -460,8 +472,10 @@ export class App {
         return;
       }
       if (this.drawer.isPointInside(x, y)) {
-        if (this.drawer.handlePointerDown(x, y)) return;
-        this.drawer.handleClick(x, y);
+        if (this.drawer.handlePointerDown(x, y, this.pointerType(e))) {
+          this.drawerPointerId = e.pointerId;
+          this.capturePointer(e.pointerId);
+        }
         return;
       }
       if (this.headerBar.isPointInside(x, y)) {
@@ -484,23 +498,39 @@ export class App {
       // 2. Test Node Click / Drag on Graph
       const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
       if (hitNode) {
-        this.draggedNode = hitNode;
         this.viewport.clearHoverPin();
-        const worldPos = this.viewport.screenToWorld(x, y);
-        this.viewport.graph.pinNode(hitNode.id, worldPos.x, worldPos.y);
-        this.scene.markDirty();
+        const pointerWorld = this.viewport.screenToWorld(x, y);
+        const originalX = hitNode.x ?? 0;
+        const originalY = hitNode.y ?? 0;
+        this.pendingNodeGesture = {
+          pointerId: e.pointerId,
+          pointerType: this.pointerType(e),
+          node: hitNode,
+          startX: x,
+          startY: y,
+          grabOffsetX: originalX - pointerWorld.x,
+          grabOffsetY: originalY - pointerWorld.y,
+          originalX,
+          originalY,
+          wasPermanentlyPinned: this.viewport.isNodePinned(hitNode.id),
+          thresholdExceeded: false,
+          dragging: false,
+        };
+        this.capturePointer(e.pointerId);
         if (e.pointerType === 'touch') {
           this.longPressTimer = setTimeout(() => {
             this.longPressTimer = null;
-            if (!this.draggedNode || this.draggedNode.id !== hitNode.id || this.pinchState) return;
+            const gesture = this.pendingNodeGesture;
+            if (!gesture || gesture.node.id !== hitNode.id || gesture.dragging || this.pinchState)
+              return;
             this.touchGestureConsumed = true;
             this.lastTouchTap = null;
             if (this.pendingNodeClick) {
               clearTimeout(this.pendingNodeClick);
               this.pendingNodeClick = null;
             }
-            this.viewport.graph.unpinNode(hitNode.id);
-            this.draggedNode = null;
+            this.releasePointerCapture(gesture.pointerId);
+            this.pendingNodeGesture = null;
             this.radialMenu.open(hitNode, x, y);
           }, 550);
         }
@@ -519,6 +549,7 @@ export class App {
     // (save image/copy image) is meaningless here.
     this.canvas.addEventListener('contextmenu', this.onCanvasContextMenu);
     this.canvas.addEventListener('dblclick', this.onCanvasDoubleClick);
+    this.canvas.addEventListener('lostpointercapture', this.onLostPointerCapture);
   }
 
   private onCanvasContextMenu = (e: MouseEvent): void => {
@@ -547,6 +578,16 @@ export class App {
     // radial menu and the detail card.
     if (!this.viewport.isNodeExpanded(node.id)) {
       void this.toggleNodeExpansion(node.id);
+    }
+  };
+
+  private onLostPointerCapture = (e: PointerEvent): void => {
+    if (this.drawerPointerId === e.pointerId) {
+      this.drawer.handlePointerCancel();
+      this.drawerPointerId = null;
+    }
+    if (this.pendingNodeGesture?.pointerId === e.pointerId) {
+      this.cancelPendingNodeGesture();
     }
   };
 
@@ -633,7 +674,7 @@ export class App {
       this.activePointers.set(e.pointerId, { x, y });
     }
     const now = performance.now();
-    if (this.drawer.handlePointerMove(x, y)) {
+    if (this.drawerPointerId === e.pointerId && this.drawer.handlePointerMove(x, y)) {
       this.lastActivityAt = now;
       return;
     }
@@ -664,10 +705,24 @@ export class App {
       const dy = y - this.lastPointerPos.y;
       this.lastPointerPos = { x, y };
 
-      if (this.draggedNode) {
-        const worldPos = this.viewport.screenToWorld(x, y);
-        this.viewport.graph.pinNode(this.draggedNode.id, worldPos.x, worldPos.y);
-        this.scene.markDirty();
+      const gesture = this.pendingNodeGesture;
+      if (gesture?.pointerId === e.pointerId) {
+        const moveDist = Math.hypot(x - gesture.startX, y - gesture.startY);
+        const threshold = gesture.pointerType === 'touch' ? 10 : 6;
+        if (!gesture.dragging && moveDist > threshold) {
+          gesture.thresholdExceeded = true;
+          this.cancelLongPress();
+          gesture.dragging = this.viewport.beginNodeDrag(gesture.node.id);
+        }
+        if (gesture.dragging) {
+          const pointerWorld = this.viewport.screenToWorld(x, y);
+          this.viewport.updateNodeDrag(
+            gesture.node.id,
+            pointerWorld.x + gesture.grabOffsetX,
+            pointerWorld.y + gesture.grabOffsetY,
+          );
+          this.scene.markDirty();
+        }
       } else if (this.isPanning) {
         this.viewport.pan(dx, dy);
         if (dt >= 4) {
@@ -705,7 +760,10 @@ export class App {
       return;
     }
 
-    if (this.drawer.handlePointerUp()) {
+    if (this.drawerPointerId === e.pointerId) {
+      this.drawer.handlePointerUp(x, y);
+      this.releasePointerCapture(e.pointerId);
+      this.drawerPointerId = null;
       this.isPointerDown = false;
       this.isPanning = false;
       this.panVelocity = { vx: 0, vy: 0 };
@@ -718,7 +776,7 @@ export class App {
       this.pinchState = null;
       this.isPointerDown = true;
       this.isPanning = true;
-      this.draggedNode = null;
+      this.cancelPendingNodeGesture();
       this.pointerDownPos = { x: remaining.x, y: remaining.y };
       this.lastPointerPos = { x: remaining.x, y: remaining.y };
       this.lastPanTime = performance.now();
@@ -733,10 +791,19 @@ export class App {
 
     const moveDist = Math.hypot(x - this.pointerDownPos.x, y - this.pointerDownPos.y);
 
-    if (this.draggedNode) {
-      this.viewport.graph.unpinNode(this.draggedNode.id);
-      if (moveDist < (e.pointerType === 'touch' ? 10 : 6) && !this.touchGestureConsumed) {
-        const node = this.draggedNode;
+    const gesture = this.pendingNodeGesture;
+    if (gesture?.pointerId === e.pointerId) {
+      this.releasePointerCapture(e.pointerId);
+      if (gesture.dragging) {
+        if (!this.viewport.endNodeDrag(gesture.node.id)) {
+          gesture.node.x = gesture.originalX;
+          gesture.node.y = gesture.originalY;
+          if (this.viewport.isNodePinned(gesture.node.id) !== gesture.wasPermanentlyPinned) {
+            this.viewport.toggleNodePinned(gesture.node.id);
+          }
+        }
+      } else if (!gesture.thresholdExceeded && !this.touchGestureConsumed) {
+        const node = gesture.node;
         if (e.pointerType === 'touch') {
           const now = performance.now();
           const previous = this.lastTouchTap;
@@ -770,7 +837,7 @@ export class App {
           }, 240);
         }
       }
-      this.draggedNode = null;
+      this.pendingNodeGesture = null;
     } else if (this.isPanning) {
       if (moveDist < 6 && !this.isEventOverUI(x, y)) {
         // Clicked empty canvas space -> close drawer
@@ -791,12 +858,16 @@ export class App {
     this.touchGestureConsumed = true;
     this.modifiedPointerDown = false;
     this.activePointers.delete(e.pointerId);
+    if (this.drawerPointerId === e.pointerId) {
+      this.drawer.handlePointerCancel();
+      this.releasePointerCapture(e.pointerId);
+      this.drawerPointerId = null;
+    }
+    if (this.pendingNodeGesture?.pointerId === e.pointerId) {
+      this.cancelPendingNodeGesture();
+    }
     if (this.activePointers.size === 0) {
       this.pinchState = null;
-      if (this.draggedNode) {
-        this.viewport.graph.unpinNode(this.draggedNode.id);
-        this.draggedNode = null;
-      }
       this.isPointerDown = false;
       this.isPanning = false;
       this.panVelocity = { vx: 0, vy: 0 };
@@ -837,6 +908,13 @@ export class App {
     window.removeEventListener('keydown', this.onWindowKeydown);
     this.canvas.removeEventListener('contextmenu', this.onCanvasContextMenu);
     this.canvas.removeEventListener('dblclick', this.onCanvasDoubleClick);
+    this.canvas.removeEventListener('lostpointercapture', this.onLostPointerCapture);
+    this.cancelPendingNodeGesture();
+    if (this.drawerPointerId !== null) {
+      this.drawer.handlePointerCancel();
+      this.releasePointerCapture(this.drawerPointerId);
+      this.drawerPointerId = null;
+    }
     if (this.pendingNodeClick) clearTimeout(this.pendingNodeClick);
     if (this.sessionSaveTimer) clearTimeout(this.sessionSaveTimer);
     this.cancelLongPress();
@@ -853,6 +931,40 @@ export class App {
     this.longPressTimer = null;
   }
 
+  private pointerType(e: PointerEvent): AppPointerType {
+    return e.pointerType === 'touch' || e.pointerType === 'pen' ? e.pointerType : 'mouse';
+  }
+
+  private capturePointer(pointerId: number): void {
+    try {
+      this.canvas.setPointerCapture(pointerId);
+    } catch {
+      // Synthetic events and detached canvases may not have an active pointer.
+    }
+  }
+
+  private releasePointerCapture(pointerId: number): void {
+    try {
+      if (this.canvas.hasPointerCapture(pointerId)) this.canvas.releasePointerCapture(pointerId);
+    } catch {
+      // Capture may already have been released by the browser.
+    }
+  }
+
+  private cancelPendingNodeGesture(): void {
+    const gesture = this.pendingNodeGesture;
+    if (!gesture) return;
+    if (gesture.dragging && !this.viewport.cancelNodeDrag(gesture.node.id)) {
+      gesture.node.x = gesture.originalX;
+      gesture.node.y = gesture.originalY;
+      if (this.viewport.isNodePinned(gesture.node.id) !== gesture.wasPermanentlyPinned) {
+        this.viewport.toggleNodePinned(gesture.node.id);
+      }
+    }
+    this.releasePointerCapture(gesture.pointerId);
+    this.pendingNodeGesture = null;
+  }
+
   private syncWelcomeBarrier(): void {
     // Welcome is an informational card, not a modal barrier. Only its own
     // bounds own pointer events; the graph and all other tools remain usable.
@@ -863,7 +975,7 @@ export class App {
     this.graphStatsPanel.setEnabled(true);
     this.graphClearControl.setEnabled(true);
     this.minimap.setEnabled(true);
-    this.controls.setVisible(this.activeEntityDetails === null);
+    this.controls.setVisible(!this.drawer.isDrawerOpen());
     this.scene.markDirty();
   }
 
@@ -900,7 +1012,6 @@ export class App {
 
   private restoreSession(session: GraphSessionSnapshot): void {
     this.endpointEpoch++;
-    this.selectEpoch++;
     this.viewport.importSnapshot(session.graph);
     this.expansionHistory = [...session.expansionHistory].filter((id) =>
       this.viewport.isNodeExpanded(id),
@@ -931,22 +1042,15 @@ export class App {
   }
 
   public async handleSelectNode(id: string, anchor?: { x: number; y: number }): Promise<void> {
-    const epoch = ++this.selectEpoch;
     this.scene.markDirty();
     if (!anchor) this.viewport.focusNode(id);
-
-    const details = await this.source.fetchEntityDetails(id);
-    if (epoch !== this.selectEpoch) return;
-    if (details) {
-      this.activeEntityDetails = details;
-      const node = this.viewport.graph.getNode(id);
-      const cardAnchor = anchor || {
-        x: node?.sx ?? this.scene.width / 2,
-        y: node?.sy ?? this.scene.height / 2,
-      };
-      this.drawer.open(details, cardAnchor);
-      this.controls.setVisible(false);
-    }
+    const node = this.viewport.graph.getNode(id);
+    const cardAnchor = anchor || {
+      x: node?.sx ?? this.scene.width / 2,
+      y: node?.sy ?? this.scene.height / 2,
+    };
+    this.drawer.open(id, cardAnchor);
+    this.controls.setVisible(false);
   }
 
   private async addAndFocusSearchNode(id: string): Promise<void> {
@@ -1022,7 +1126,6 @@ export class App {
   }
 
   private clearCanvas(): void {
-    this.selectEpoch++;
     if (this.pendingNodeClick) {
       clearTimeout(this.pendingNodeClick);
       this.pendingNodeClick = null;
@@ -1030,7 +1133,12 @@ export class App {
     this.cancelLongPress();
     this.lastTouchTap = null;
     this.activePointers.clear();
-    this.draggedNode = null;
+    this.cancelPendingNodeGesture();
+    if (this.drawerPointerId !== null) {
+      this.drawer.handlePointerCancel();
+      this.releasePointerCapture(this.drawerPointerId);
+      this.drawerPointerId = null;
+    }
     this.isPointerDown = false;
     this.isPanning = false;
     this.expansionHistory = [];

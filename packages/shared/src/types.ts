@@ -73,6 +73,48 @@ export interface EntityDetailResponse {
   publications?: PublicationSummary;
 }
 
+export interface ProfileField {
+  key: string;
+  label: string;
+  value: string;
+  copyValue: string;
+}
+
+export interface EntityProfileResponse {
+  entity: OmmEntity;
+  fields: ProfileField[];
+}
+
+export interface RelationItem {
+  factId: number;
+  predicate: string;
+  label: string;
+  value: string;
+  copyValue: string;
+  targetId?: string;
+  direction: 'outgoing' | 'incoming';
+}
+
+export interface EntityRelationsResponse {
+  entityId: string;
+  items: RelationItem[];
+  nextCursor?: string;
+}
+
+export interface CasefileRecommendationItem {
+  targetId: string;
+  name: string;
+  copyValue: string;
+  type: EntityType;
+  score: number;
+  reason: string;
+}
+
+export interface EntityRecommendationsResponse {
+  entityId: string;
+  items: CasefileRecommendationItem[];
+}
+
 export interface ChronicleStep {
   id: string;
   title: Record<string, string>;
