@@ -5,12 +5,8 @@ import type { FixtureManifest } from './fixture';
 
 describe('browser runner integration', () => {
   test('selects only routes required by the scenario', () => {
-    expect(expectedRouteIds('desktop-search')).toEqual([
-      'seeds',
-      'nodes-root-related',
-      'search-root',
-    ]);
-    expect(expectedRouteIds('mobile-idle')).toEqual(['seeds', 'nodes-root-related']);
+    expect(expectedRouteIds('desktop-search')).toEqual(['seeds', 'stats', 'search-root']);
+    expect(expectedRouteIds('mobile-idle')).toEqual(['seeds', 'stats']);
   });
 
   test('dispatches graph dragging from the instrumented node center', async () => {

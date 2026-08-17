@@ -364,15 +364,15 @@ function captureRunId(
 }
 
 const scenarioRoutes: Partial<Record<ScenarioId, readonly string[]>> = {
-  'desktop-bootstrap': ['seeds', 'nodes-root-related'],
-  'mobile-bootstrap': ['seeds', 'nodes-root-related'],
-  'desktop-search': ['seeds', 'nodes-root-related', 'search-root'],
-  'mobile-header': ['seeds', 'nodes-root-related', 'search-root'],
-  'desktop-graph-input': ['seeds', 'nodes-root-related', 'neighbors-root'],
-  'mobile-graph-input': ['seeds', 'nodes-root-related', 'neighbors-root'],
+  'desktop-bootstrap': ['seeds', 'stats'],
+  'mobile-bootstrap': ['seeds', 'stats'],
+  'desktop-search': ['seeds', 'stats', 'search-root'],
+  'mobile-header': ['seeds', 'stats', 'search-root'],
+  'desktop-graph-input': ['seeds', 'stats', 'neighbors-root'],
+  'mobile-graph-input': ['seeds', 'stats', 'neighbors-root'],
   'desktop-casefile': [
     'seeds',
-    'nodes-root-related',
+    'stats',
     'profile-root',
     'relations-root-page-1',
     'relations-root-page-2',
@@ -381,15 +381,15 @@ const scenarioRoutes: Partial<Record<ScenarioId, readonly string[]>> = {
   ],
   'mobile-casefile': [
     'seeds',
-    'nodes-root-related',
+    'stats',
     'profile-root',
     'relations-root-page-1',
     'profile-related-author',
   ],
-  'desktop-tools': ['seeds', 'nodes-root-related'],
-  'mobile-tools': ['seeds', 'nodes-root-related'],
-  'desktop-idle': ['seeds', 'nodes-root-related'],
-  'mobile-idle': ['seeds', 'nodes-root-related'],
+  'desktop-tools': ['seeds', 'stats'],
+  'mobile-tools': ['seeds', 'stats'],
+  'desktop-idle': ['seeds', 'stats'],
+  'mobile-idle': ['seeds', 'stats'],
 };
 
 export function expectedRouteIds(scenarioId: ScenarioId): readonly string[] {
