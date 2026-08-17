@@ -35,14 +35,14 @@
     "casefile.tab.relations",
     "casefile.tab.recommendations",
     "casefile.row.profile.name",
-    "casefile.row.relation.101",
-    "casefile.row.relation.101.arrow",
-    "casefile.row.recommendation.wd:Q1002",
-    "casefile.row.recommendation.wd:Q1002.arrow"
+    "casefile.row.relation:101",
+    "casefile.row.relation:101.navigate",
+    "casefile.row.recommendation:wd:Q1002",
+    "casefile.row.recommendation:wd:Q1002.navigate"
   ],
   "allowedContainmentPairs": [
-    ["casefile.row.relation.101", "casefile.row.relation.101.arrow"],
-    ["casefile.row.recommendation.wd:Q1002", "casefile.row.recommendation.wd:Q1002.arrow"]
+    ["casefile.row.relation:101", "casefile.row.relation:101.navigate"],
+    ["casefile.row.recommendation:wd:Q1002", "casefile.row.recommendation:wd:Q1002.navigate"]
   ],
   "routes": [
     {
