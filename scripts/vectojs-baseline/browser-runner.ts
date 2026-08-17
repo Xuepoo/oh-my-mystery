@@ -775,15 +775,7 @@ export async function executeScenarioStep(
     case 'clear-graph':
     case 'clear-rendered-graph':
       await activateTarget(page, 'tool.clear', context.viewport.mobile);
-      await assertPageState(page, () =>
-        Boolean(
-          (
-            window as unknown as {
-              __OMM_APP__?: { instrumentation?: { tools: { clearArmed: boolean } } };
-            }
-          ).__OMM_APP__?.instrumentation?.tools.clearArmed,
-        ),
-      );
+      await assertClearArmed(page);
       await activateTarget(page, 'tool.clear', context.viewport.mobile);
       await assertPageState(
         page,
@@ -1041,6 +1033,43 @@ async function toggleTwice(page: Page, id: string, mobile: boolean): Promise<voi
   if (!(await hasTarget(page, id))) return;
   await activateTarget(page, id, mobile);
   await activateTarget(page, id, mobile);
+}
+
+async function assertClearArmed(page: Page): Promise<void> {
+  try {
+    await assertPageState(page, () =>
+      Boolean(
+        (
+          window as unknown as {
+            __OMM_APP__?: { instrumentation?: { tools: { clearArmed: boolean } } };
+          }
+        ).__OMM_APP__?.instrumentation?.tools.clearArmed,
+      ),
+    );
+  } catch (error) {
+    const state = await page.evaluate(() => {
+      const app = (
+        window as unknown as {
+          __OMM_APP__?: {
+            instrumentation?: {
+              graph: { nodeCount: number };
+              tools: { clearArmed: boolean; relationship: unknown };
+              targets: readonly { id: string; rect: unknown }[];
+            };
+          };
+        }
+      ).__OMM_APP__?.instrumentation;
+      return {
+        graph: app?.graph,
+        tools: app?.tools,
+        clearTarget: app?.targets.find(({ id }) => id === 'tool.clear'),
+      };
+    });
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; state=${JSON.stringify(state)}`,
+      { cause: error },
+    );
+  }
 }
 
 export function createBaselineCaptureDependencies(
