@@ -65,7 +65,11 @@ export class KnowledgeGraph2D {
   private expansionCancelled = new Set<string>();
   private expansionFailed = new Set<string>();
   private expansionChases = new Map<string, Promise<void>>();
-  private hoverPinState: { id: string; fx: number | null; fy: number | null } | null = null;
+  private hoverPinnedId: string | null = null;
+  private dragPins = new Map<
+    string,
+    { originalX: number; originalY: number; wasPermanentlyPinned: boolean }
+  >();
   private onChangeCb: (() => void) | undefined;
   private readonly AUTO_CHASE_LIMIT = 100;
   private rootIds = new Set<string>();
@@ -272,7 +276,8 @@ export class KnowledgeGraph2D {
     this.expansionCancelled.clear();
     this.expansionFailed.clear();
     this.expansionChases.clear();
-    this.hoverPinState = null;
+    this.hoverPinnedId = null;
+    this.dragPins.clear();
     this.rootIds.clear();
     this.manualIds.clear();
     this.expansionNodes.clear();
@@ -576,9 +581,9 @@ export class KnowledgeGraph2D {
       ) {
         continue;
       }
+      this.clearNodePinOwnership(id);
       this.nodesMap.delete(id);
       this.nodesList = this.nodesList.filter((node) => node.id !== id);
-      this.pinnedIds.delete(id);
     }
 
     const center = this.nodesList.length
@@ -634,7 +639,8 @@ export class KnowledgeGraph2D {
     this.expansionCancelled.clear();
     this.expansionFailed.clear();
     this.expansionChases.clear();
-    this.hoverPinState = null;
+    this.hoverPinnedId = null;
+    this.dragPins.clear();
     this.rootIds.clear();
     this.manualIds.clear();
     this.expansionNodes.clear();
@@ -675,7 +681,7 @@ export class KnowledgeGraph2D {
   collapse(nodeId: string): void {
     this.expansionRequests.set(nodeId, (this.expansionRequests.get(nodeId) ?? 0) + 1);
     this.expansionCancelled.add(nodeId);
-    if (this.hoverPinState?.id === nodeId) this.clearHoverPin();
+    if (this.hoverPinnedId === nodeId) this.clearHoverPin();
     this.expandedSet.delete(nodeId);
     this.expansionCursors.delete(nodeId);
     this.expansionFilters.delete(nodeId);
@@ -692,8 +698,8 @@ export class KnowledgeGraph2D {
       if (!owners?.size) {
         this.nodeOwners.delete(id);
         if (!this.rootIds.has(id) && !this.manualIds.has(id) && !this.expandedSet.has(id)) {
+          this.clearNodePinOwnership(id);
           this.nodesMap.delete(id);
-          this.pinnedIds.delete(id);
         }
       }
     }
@@ -717,6 +723,7 @@ export class KnowledgeGraph2D {
   }
 
   private rebuildSimulation(): void {
+    this.clearTransientPinOwnership();
     this.updateNodeMetrics();
     const layout = new ForceLayout2D({
       repulsion: (node) =>
@@ -895,61 +902,76 @@ export class KnowledgeGraph2D {
     this.layoutActive = this.nodesList.length > 0;
   }
 
-  pinNode(id: string, x: number, y: number): void {
+  beginNodeDrag(id: string): boolean {
     const node = this.nodesMap.get(id);
     const index = this.layout?.getNodeIndex(id);
-    if (node && index !== undefined) {
-      node.fx = x;
-      node.fy = y;
-      this.layout?.pinNode(index, x, y);
-      this.reheat(0.25);
-      this.syncNodePositions();
-    }
+    if (!node || index === undefined || this.dragPins.has(id)) return false;
+    this.dragPins.set(id, {
+      originalX: node.x ?? 0,
+      originalY: node.y ?? 0,
+      wasPermanentlyPinned: this.pinnedIds.has(id),
+    });
+    if (this.hoverPinnedId === id) this.hoverPinnedId = null;
+    this.applyPhysicalPin(id, node.x ?? 0, node.y ?? 0);
+    this.reheat(0.25);
+    return true;
+  }
+
+  updateNodeDrag(id: string, x: number, y: number): boolean {
+    if (!this.dragPins.has(id)) return false;
+    const node = this.nodesMap.get(id);
+    const index = this.layout?.getNodeIndex(id);
+    if (!node || index === undefined) return false;
+    this.applyPhysicalPin(id, x, y);
+    this.reheat(0.25);
+    return true;
+  }
+
+  endNodeDrag(id: string): boolean {
+    if (!this.dragPins.delete(id)) return false;
+    this.applyPinOwnership(id);
+    this.reheat(0.08);
+    return true;
+  }
+
+  cancelNodeDrag(id: string): boolean {
+    const drag = this.dragPins.get(id);
+    const node = this.nodesMap.get(id);
+    if (!drag || !node) return false;
+    this.dragPins.delete(id);
+    if (drag.wasPermanentlyPinned) this.pinnedIds.add(id);
+    else this.pinnedIds.delete(id);
+    node.x = drag.originalX;
+    node.y = drag.originalY;
+    this.applyPinOwnership(id, drag.originalX, drag.originalY);
+    this.reheat(0.08);
+    return true;
+  }
+
+  pinNode(id: string, x: number, y: number): void {
+    if (!this.dragPins.has(id) && !this.beginNodeDrag(id)) return;
+    this.updateNodeDrag(id, x, y);
   }
 
   unpinNode(id: string): void {
-    const node = this.nodesMap.get(id);
-    const index = this.layout?.getNodeIndex(id);
-    if (node && index !== undefined && !this.pinnedIds.has(id)) {
-      node.fx = null;
-      node.fy = null;
-      this.layout?.unpinNode(index);
-      this.reheat(0.25);
-    }
+    this.endNodeDrag(id);
   }
 
   setHoverPinned(id: string | null): void {
-    if (this.hoverPinState?.id === id) return;
+    if (this.hoverPinnedId === id) return;
     this.clearHoverPin();
     if (!id) return;
     const node = this.nodesMap.get(id);
-    if (!node || this.pinnedIds.has(id)) return;
-    this.hoverPinState = { id, fx: node.fx ?? null, fy: node.fy ?? null };
-    const index = this.layout?.getNodeIndex(id);
-    if (index !== undefined) this.layout?.pinNode(index, node.x ?? 0, node.y ?? 0);
-    node.fx = node.x ?? 0;
-    node.fy = node.y ?? 0;
+    if (!node || this.dragPins.has(id)) return;
+    this.hoverPinnedId = id;
+    this.applyPhysicalPin(id, node.x ?? 0, node.y ?? 0);
   }
 
   clearHoverPin(): void {
-    if (!this.hoverPinState) return;
-    const node = this.nodesMap.get(this.hoverPinState.id);
-    if (node && !this.pinnedIds.has(this.hoverPinState.id)) {
-      node.fx = this.hoverPinState.fx;
-      node.fy = this.hoverPinState.fy;
-      const index = this.layout?.getNodeIndex(this.hoverPinState.id);
-      if (index !== undefined) {
-        if (this.hoverPinState.fx === null && this.hoverPinState.fy === null) {
-          this.layout?.unpinNode(index);
-        } else {
-          if (this.hoverPinState.fx === null) this.layout?.clearNodePin(index, { x: true });
-          else this.layout?.setNodePin(index, { x: this.hoverPinState.fx });
-          if (this.hoverPinState.fy === null) this.layout?.clearNodePin(index, { y: true });
-          else this.layout?.setNodePin(index, { y: this.hoverPinState.fy });
-        }
-      }
-    }
-    this.hoverPinState = null;
+    if (!this.hoverPinnedId) return;
+    const id = this.hoverPinnedId;
+    this.hoverPinnedId = null;
+    this.applyPinOwnership(id);
   }
 
   togglePinned(id: string): boolean {
@@ -957,19 +979,57 @@ export class KnowledgeGraph2D {
     if (!node) return false;
     if (this.pinnedIds.has(id)) {
       this.pinnedIds.delete(id);
-      node.fx = null;
-      node.fy = null;
-      const index = this.layout?.getNodeIndex(id);
-      if (index !== undefined) this.layout?.unpinNode(index);
+      this.applyPinOwnership(id);
       this.reheat(0.25);
       return false;
     }
     this.pinnedIds.add(id);
-    node.fx = node.x ?? 0;
-    node.fy = node.y ?? 0;
-    const index = this.layout?.getNodeIndex(id);
-    if (index !== undefined) this.layout?.pinNode(index, node.fx ?? 0, node.fy ?? 0);
+    this.applyPhysicalPin(id, node.x ?? 0, node.y ?? 0);
     return true;
+  }
+
+  private applyPinOwnership(id: string, x?: number, y?: number): void {
+    const node = this.nodesMap.get(id);
+    const index = this.layout?.getNodeIndex(id);
+    if (!node || index === undefined) return;
+    if (this.pinnedIds.has(id) || this.hoverPinnedId === id || this.dragPins.has(id)) {
+      this.applyPhysicalPin(id, x ?? node.x ?? 0, y ?? node.y ?? 0);
+      return;
+    }
+    node.fx = null;
+    node.fy = null;
+    this.layout?.unpinNode(index);
+  }
+
+  private applyPhysicalPin(id: string, x: number, y: number): void {
+    const node = this.nodesMap.get(id);
+    const index = this.layout?.getNodeIndex(id);
+    if (!node || index === undefined) return;
+    node.x = x;
+    node.y = y;
+    node.fx = x;
+    node.fy = y;
+    this.layout?.pinNode(index, x, y);
+    this.syncNodePositions();
+  }
+
+  private clearNodePinOwnership(id: string): void {
+    if (this.hoverPinnedId === id) this.hoverPinnedId = null;
+    this.dragPins.delete(id);
+    this.pinnedIds.delete(id);
+  }
+
+  private clearTransientPinOwnership(): void {
+    const transientIds = new Set(this.dragPins.keys());
+    if (this.hoverPinnedId) transientIds.add(this.hoverPinnedId);
+    this.hoverPinnedId = null;
+    this.dragPins.clear();
+    for (const id of transientIds) {
+      const node = this.nodesMap.get(id);
+      if (!node || this.pinnedIds.has(id)) continue;
+      node.fx = null;
+      node.fy = null;
+    }
   }
 
   isPinned(id: string): boolean {
@@ -1036,9 +1096,9 @@ export class KnowledgeGraph2D {
       links: incidentLinks,
     });
 
+    this.clearNodePinOwnership(id);
     this.nodesMap.delete(id);
     this.nodesList = this.nodesList.filter((node) => node.id !== id);
-    this.pinnedIds.delete(id);
 
     this.linksList = this.linksList.filter((link) => {
       const source = typeof link.source === 'object' ? link.source.id : link.source;

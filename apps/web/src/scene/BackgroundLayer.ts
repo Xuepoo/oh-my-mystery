@@ -147,6 +147,32 @@ export class BackgroundLayer extends Entity {
 
   render(renderer: any) {
     const ctx = getCanvasCtx(renderer);
+    ctx.save();
+    try {
+      if (typeof ctx.resetTransform === 'function') ctx.resetTransform();
+      else ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+      const canvas = ctx.canvas;
+      const backingWidth = canvas?.width ?? this.scene.width;
+      const backingHeight = canvas?.height ?? this.scene.height;
+      ctx.fillStyle = '#1C140F';
+      ctx.fillRect(0, 0, backingWidth, backingHeight);
+      const pixelRatio =
+        renderer && typeof renderer.pixelRatio === 'number' && renderer.pixelRatio > 0
+          ? renderer.pixelRatio
+          : backingWidth / Math.max(this.scene.width, 1);
+      ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      this.renderFrame(ctx);
+    } finally {
+      ctx.restore();
+    }
+  }
+
+  private renderFrame(ctx: CanvasRenderingContext2D): void {
     const w = this.scene.width;
     const h = this.scene.height;
     this.time += 0.025;

@@ -1,6 +1,9 @@
 import type {
   ChronicleTrail,
   EntityDetailResponse,
+  EntityProfileResponse,
+  EntityRecommendationsResponse,
+  EntityRelationsResponse,
   PathfinderResult,
   SearchResponse,
   StatsResponse,
@@ -9,6 +12,17 @@ import type { GraphLink2D, GraphNeighborhood2D, GraphNode2D, NodeId } from '../s
 import { pickNodeLabel } from '../scene/types';
 import { Theme } from '../ui/theme';
 import { getTurnstileToken } from '../security/turnstile';
+
+export class DataSourceError extends Error {
+  constructor(
+    message: string,
+    readonly kind: 'http' | 'network' | 'invalid-response',
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'DataSourceError';
+  }
+}
 
 export class D1DataSource {
   private baseUrl: string;
@@ -48,6 +62,33 @@ export class D1DataSource {
   private async getProtectedHeaders(): Promise<HeadersInit> {
     this.turnstileToken = await getTurnstileToken(this.turnstileSiteKey);
     return this.getHeaders();
+  }
+
+  private async request<T>(url: string): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(url, { headers: this.getHeaders() });
+    } catch (error) {
+      throw new DataSourceError(
+        error instanceof Error ? error.message : 'Network request failed',
+        'network',
+      );
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new DataSourceError('Invalid JSON response', 'invalid-response', response.status);
+    }
+    if (!response.ok) {
+      const message =
+        body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
+          ? body.error
+          : `Request failed with status ${response.status}`;
+      throw new DataSourceError(message, 'http', response.status);
+    }
+    return body as T;
   }
 
   private formatNode(e: any): GraphNode2D {
@@ -219,6 +260,23 @@ export class D1DataSource {
       console.error('Failed to fetch entity details for', id, err);
       return null;
     }
+  }
+
+  async fetchEntityProfile(id: string): Promise<EntityProfileResponse> {
+    return this.request(`${this.baseUrl}/api/entity/${encodeURIComponent(id)}/profile`);
+  }
+
+  async fetchEntityRelations(
+    id: string,
+    options?: { limit?: number; cursor?: string },
+  ): Promise<EntityRelationsResponse> {
+    const params = new URLSearchParams({ limit: String(options?.limit ?? 30) });
+    if (options?.cursor) params.set('cursor', options.cursor);
+    return this.request(`${this.baseUrl}/api/entity/${encodeURIComponent(id)}/relations?${params}`);
+  }
+
+  async fetchEntityRecommendations(id: string): Promise<EntityRecommendationsResponse> {
+    return this.request(`${this.baseUrl}/api/entity/${encodeURIComponent(id)}/recommendations`);
   }
 
   async search(query: string): Promise<SearchResponse> {

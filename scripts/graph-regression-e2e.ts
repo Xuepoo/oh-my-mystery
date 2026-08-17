@@ -77,6 +77,7 @@ async function touch(
           pointerType: 'touch',
           clientX: x,
           clientY: y,
+          isPrimary: true,
           bubbles: true,
           cancelable: true,
         }),
@@ -86,11 +87,16 @@ async function touch(
   );
 }
 
+async function tap(page: Page, pointerId: number, x: number, y: number): Promise<void> {
+  await touch(page, 'pointerdown', pointerId, x, y);
+  await touch(page, 'pointerup', pointerId, x, y);
+}
+
 async function run(): Promise<void> {
   await ensureServer(API_URL, ['bun', 'src/server.ts'], `${ROOT}apps/api`);
   await ensureServer(
     WEB_URL,
-    ['bunx', 'vite', '--host', '127.0.0.1', '--port', '3000'],
+    ['bun', 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '3000'],
     `${ROOT}apps/web`,
   );
 
@@ -105,21 +111,84 @@ async function run(): Promise<void> {
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
   });
-  await page.addInitScript(() => localStorage.setItem('omm-welcome-dismissed', '1'));
+  await page.addInitScript(() => {
+    localStorage.setItem('omm-welcome-dismissed', '1');
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (value: string) => {
+          (window as any).__COPIED_TEXT__ = value;
+        },
+      },
+    });
+  });
 
   try {
     await reset(page);
     const target = await getTouchTarget(page);
-    await touch(page, 'pointerdown', 1, target.x, target.y);
-    await touch(page, 'pointerup', 1, target.x, target.y);
+    const beforeTap = await page.evaluate((id) => {
+      const app = (window as any).__OMM_APP__;
+      const node = app.viewport.graph.getNode(id);
+      return { x: node.x, y: node.y };
+    }, target.id);
+    const casefileRequests: string[] = [];
+    const recordCasefileRequest = (request: { url(): string }) => {
+      if (/\/api\/entity\/.*\/(profile|relations|recommendations)/.test(request.url())) {
+        casefileRequests.push(request.url());
+      }
+    };
+    page.on('request', recordCasefileRequest);
+    await tap(page, 1, target.x, target.y);
     await page.waitForFunction(
-      (id) => (window as any).__OMM_APP__.activeEntityDetails?.entity.id === id,
+      (id) => (window as any).__OMM_APP__.drawer.session.entityId === id,
       target.id,
+    );
+    await page.waitForFunction(
+      () => (window as any).__OMM_APP__.drawer.session.profile.status === 'ready',
     );
     assert.equal(
-      await page.evaluate(() => (window as any).__OMM_APP__.activeEntityDetails.entity.id),
+      await page.evaluate(() => (window as any).__OMM_APP__.drawer.session.entityId),
       target.id,
     );
+    assert.deepEqual(
+      await page.evaluate((id) => {
+        const node = (window as any).__OMM_APP__.viewport.graph.getNode(id);
+        return { x: node.x, y: node.y };
+      }, target.id),
+      beforeTap,
+    );
+    assert.equal(casefileRequests.filter((url) => url.endsWith('/profile')).length, 1);
+    assert.equal(
+      casefileRequests.some((url) => url.includes('/relations')),
+      false,
+    );
+    assert.equal(
+      casefileRequests.some((url) => url.includes('/recommendations')),
+      false,
+    );
+
+    const firstCopyTarget = await page.evaluate(() => {
+      const target = (window as any).__OMM_APP__.drawer.copyTargets[0];
+      return { x: target.x + target.w / 2, y: target.y + target.h / 2, value: target.copyValue };
+    });
+    await tap(page, 2, firstCopyTarget.x, firstCopyTarget.y);
+    await page.waitForFunction(
+      (value) => (window as any).__COPIED_TEXT__ === value,
+      firstCopyTarget.value,
+    );
+
+    const relationsTab = await page.evaluate(() => {
+      const tab = (window as any).__OMM_APP__.drawer.tabRects.find(
+        (candidate: any) => candidate.tab === 'relations',
+      ).rect;
+      return { x: tab.x + tab.w / 2, y: tab.y + tab.h / 2 };
+    });
+    await tap(page, 3, relationsTab.x, relationsTab.y);
+    await page.waitForFunction(
+      () => (window as any).__OMM_APP__.drawer.session.relations.status === 'ready',
+    );
+    assert.equal(casefileRequests.filter((url) => url.includes('/relations')).length, 1);
+    page.off('request', recordCasefileRequest);
 
     await reset(page);
     const doubleTarget = await getTouchTarget(page);
@@ -128,8 +197,7 @@ async function run(): Promise<void> {
       doubleTarget.id,
     );
     for (let i = 0; i < 2; i++) {
-      await touch(page, 'pointerdown', 10 + i, doubleTarget.x, doubleTarget.y);
-      await touch(page, 'pointerup', 10 + i, doubleTarget.x, doubleTarget.y);
+      await tap(page, 10 + i, doubleTarget.x, doubleTarget.y);
       await page.waitForTimeout(90);
     }
     await page.waitForFunction(
@@ -222,7 +290,7 @@ async function run(): Promise<void> {
     assert.ok(mobileTargets.relation.w >= 44 && mobileTargets.relation.h >= 44);
     assert.ok(mobileTargets.stats.w >= 44 && mobileTargets.stats.h >= 44);
     assert.deepEqual(errors, []);
-    console.log('Graph regression E2E: 8 checks passed');
+    console.log('Graph regression E2E: 14 checks passed');
   } finally {
     await browser.close();
     for (const process of spawned) process.kill();
