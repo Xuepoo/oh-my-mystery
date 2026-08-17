@@ -667,7 +667,7 @@ export async function executeScenarioStep(
       );
       return;
     case 'open-root':
-      await activatePoint(page, await nodeCenter(page, root), context.viewport.mobile, 2);
+      await activatePoint(page, await nodeCenter(page, root), context.viewport.mobile);
       await assertDrawer(page, 'open', true);
       return;
     case 'await-profile':
