@@ -46,7 +46,7 @@ interface PendingNodeGesture {
 
 Only the primary pointer may create a pending node gesture. On `pointerdown`, OMM records its pointer ID, the node, pointer position, the offset from the pointer's world position to the node's current center, and whether the node was permanently pinned before the gesture. It captures that pointer on the canvas. Secondary pointers cancel the pending node gesture before beginning pinch handling, and events whose pointer ID does not own the gesture cannot move, release, or activate the node. Mouse and pen use the same threshold and activation rules; non-primary buttons never begin a node gesture.
 
-On `pointermove`, dragging begins only when movement exceeds 6 logical pixels for a mouse/pen or 10 logical pixels for touch. On the threshold-crossing event, the node is first temporarily pinned at its existing center, then moved once to `currentPointerWorld + recordedGrabOffset`; subsequent moves use the same expression. A drag that begins on a label therefore has no snap discontinuity.
+On `pointermove`, dragging begins only when Euclidean distance from the initial screen point (`Math.hypot(dx, dy)`) exceeds 6 logical pixels for a mouse/pen or 10 logical pixels for touch. On the threshold-crossing event, the node is first temporarily pinned at its existing center, then moved once to `currentPointerWorld + recordedGrabOffset`; subsequent moves use the same expression. A drag that begins on a label therefore has no snap discontinuity.
 
 On `pointerup` below the threshold, the gesture remains a click/tap and opens the casefile without any layout operation. On release after a drag, a node that was permanently pinned before the gesture remains pinned at its new position; otherwise only the drag-owned temporary pin is removed. The layout receives recovery alpha `0.08`. Pointer cancellation restores the pre-gesture permanent pin state and original coordinates, releases pointer capture, and never opens a casefile.
 
@@ -89,7 +89,7 @@ The new frontend contract uses three bounded endpoints:
 - `GET /api/entity/:id/relations?limit=30&cursor=<opaque>`
 - `GET /api/entity/:id/recommendations`
 
-All return JSON. Missing entities return `404 { error: 'Entity not found' }`. Invalid `limit` or cursor returns `400 { error: string }`. Unexpected database failures retain the global `500` JSON contract. `limit` is clamped to 1 through 60 and defaults to 30. The already shipped `GET /api/entity/:id/details` remains unchanged as a compatibility endpoint for this release, but OMM web stops importing its response type or calling it. No new behavior depends on `/details`.
+All return JSON. Missing entities return `404 { error: 'Entity not found' }`. Non-integer or out-of-range `limit` values and invalid cursors return `400 { error: string }`. Unexpected database failures retain the global `500` JSON contract. `limit` must be from 1 through 60 and defaults to 30 when omitted. The already shipped `GET /api/entity/:id/details` remains unchanged as a compatibility endpoint for this release, but OMM web stops importing its response type or calling it. No new behavior depends on `/details`.
 
 The response types are:
 
@@ -114,6 +114,7 @@ interface EntityRelationsResponse {
 }
 
 interface RelationItem {
+  factId: number;
   predicate: string;
   label: string;
   value: string;
@@ -130,6 +131,7 @@ interface EntityRecommendationsResponse {
 interface CasefileRecommendationItem {
   targetId: string;
   name: string;
+  copyValue: string;
   type: EntityType;
   score: number;
   reason: string;
@@ -140,9 +142,9 @@ The profile endpoint resolves referenced author, publisher, translator, award, s
 
 Source prefixes are mapped to readable provenance names such as Wikidata, 豆瓣, 日本国会图书馆, 青空文库, Project Gutenberg, and OMM. The profile response does not expose the raw source ID as a displayed field.
 
-For an outgoing fact (`subject_id` equals the selected entity), an entity relation uses `object_ref` as `targetId`; its resolved label is both `value` and `copyValue`. For an incoming fact (`object_ref` equals the selected entity), `subject_id` is `targetId`; its resolved label is the value. A fact is scalar when `object_ref` does not resolve to an entity and `object_value` is non-empty; it has no `targetId` and uses `object_value` as its value. Rows with neither a resolved counterpart nor a scalar value are omitted. Direction is always retained in the response.
+For an outgoing fact (`subject_id` equals the selected entity), an entity relation uses `object_ref` as `targetId`; its resolved label is both `value` and `copyValue`. For an incoming fact (`object_ref` equals the selected entity), `subject_id` is `targetId`; its resolved label is the value. A self-referential fact is returned once as outgoing. A fact is scalar when `object_ref` does not resolve to an entity and `object_value` is non-empty; it has no `targetId` and uses `object_value` as its value. Rows with neither a resolved counterpart nor a scalar value are omitted. Direction is always retained in the response. `factId` is the stable row identity used when appending relation pages.
 
-Relations sort by `predicate ASC, direction ASC, value ASC, fact id ASC`. The opaque cursor encodes the complete final sort tuple; the next request uses strict tuple comparison, preventing duplicates across pages. A malformed cursor returns 400. Recommendations sort by `rank ASC, target_id ASC` and are bounded to ten items. These endpoints are requested independently.
+Relations sort by `predicate ASC, direction ASC, value ASC, fact id ASC`. The opaque cursor encodes the complete final sort tuple; the next request uses strict tuple comparison, preventing duplicates across pages. A malformed cursor returns 400. Recommendations sort by `rank ASC, target_id ASC`, are bounded to ten items, and set `copyValue` to the resolved recommendation name. These endpoints are requested independently.
 
 ## 6. Casefile Tabs and Request State
 
@@ -164,13 +166,13 @@ Each tab owns an independent scroll position that is preserved while switching t
 
 Empty states are explicit: profile with no optional fields shows `暂无更多档案信息`, relations shows `暂无可展示关系`, and recommendations shows `暂无推荐`.
 
-The `VERIFIED ARCHIVE` seal is removed. Header controls remain sticky. The content region scrolls as a single owner, and changing tabs resets that tab's scroll position.
+The `VERIFIED ARCHIVE` seal is removed. Header controls remain sticky. The content region has one active scroll owner, while each tab preserves its own scroll position during the current drawer session.
 
 ## 7. Copy and Navigation Interaction
 
 Every displayed profile field has one row hit target. A mouse click or mobile tap copies `copyValue`, never the label. For example, activating `ISBN：9787569930979` copies only `9787569930979`. The row shows `已复制` for 1.5 seconds. Clipboard failure shows `复制失败` for 1.5 seconds without closing the card.
 
-A row press is a pending activation. Movement beyond 6 logical pixels for mouse/pen or 10 for touch cancels copy and transfers ownership to drawer-content scrolling. Pointer cancellation also cancels copy. Releasing within the threshold copies once. This prevents touch scrolling from copying fields accidentally.
+A row press is a pending activation. Euclidean movement beyond 6 logical pixels for mouse/pen or 10 for touch cancels copy and transfers ownership to drawer-content scrolling. Pointer cancellation also cancels copy. Releasing within the threshold copies once. This prevents touch scrolling from copying fields accidentally.
 
 The card's top copy button copies all profile fields in display order as `标签：值`, one field per line, omitting empty fields and placing no blank trailing line. It never triggers relations or recommendations and behaves the same regardless of the active tab.
 
