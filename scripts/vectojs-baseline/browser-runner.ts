@@ -685,6 +685,7 @@ export async function executeScenarioStep(
       await page.mouse.wheel(0, 1000);
       return;
     case 'copy-first-field':
+      await activateTarget(page, 'casefile.tab.profile', context.viewport.mobile);
       await activateTarget(page, 'casefile.copy.first', context.viewport.mobile);
       await page
         .waitForFunction(
