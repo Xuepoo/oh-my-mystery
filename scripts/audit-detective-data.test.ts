@@ -132,16 +132,12 @@ test('WAL snapshot leaves database, WAL, and SHM bytes and metadata unchanged', 
   expect(state(path)).toEqual(before);
   expect(report.meta.source_opened_by_sqlite).toBe(false);
   expect(report.meta.audit_strategy).toContain('temporary snapshot');
-  expect(
-    report.meta.candidate_link_query_plan.some((detail: string) =>
-      detail.includes('audit_links_source'),
-    ),
-  ).toBe(true);
-  expect(
-    report.meta.candidate_link_query_plan.some((detail: string) =>
-      detail.includes('audit_links_target'),
-    ),
-  ).toBe(true);
+  expect(report.meta.candidate_link_query_plan).toEqual([
+    'SCAN c',
+    'SEARCH l USING INDEX audit_links_source (source_id=?)',
+    'SCAN c',
+    'SEARCH l USING INDEX audit_links_target (target_id=?)',
+  ]);
   expect(report.coverage.detective_candidates).toBe(3);
   expect(report.coverage.candidate_confidence_tiers.high).toBe(1);
   expect(report.coverage.candidate_confidence_tiers.conflict).toBe(2);
@@ -254,8 +250,10 @@ test('more than 1000 candidates avoid variable limits and keep nested arrays bou
   expect(candidate.linked_works.length).toBe(3);
   expect(candidate.current_ids.length).toBe(3);
   expect(candidate.evidence.length).toBeLessThanOrEqual(3);
-  expect(report.meta.candidate_link_query_plan.join('\n')).toContain('audit_links_source');
-  expect(report.meta.candidate_link_query_plan.join('\n')).toContain('audit_links_target');
+  const plan = report.meta.candidate_link_query_plan.join('\n');
+  expect(plan).toContain('SEARCH l USING INDEX audit_links_source (source_id=?)');
+  expect(plan).toContain('SEARCH l USING INDEX audit_links_target (target_id=?)');
+  expect(plan).not.toContain('SCAN l');
   expect(elapsedMs).toBeLessThan(10_000);
   db.close();
 });

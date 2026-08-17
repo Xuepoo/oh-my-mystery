@@ -242,10 +242,10 @@ function candidateRecords(db: Database, limit: number): Candidate[] {
   db.run('CREATE INDEX audit_links_target ON audit_links(target_id)');
   db.run(`CREATE TEMP TABLE audit_candidate_links AS
     SELECT c.id AS candidate_id,l.source_id,l.target_id,l.method
-    FROM audit_candidates c JOIN audit_links l INDEXED BY audit_links_source ON l.source_id=c.id
+    FROM audit_candidates c CROSS JOIN audit_links l INDEXED BY audit_links_source ON l.source_id=c.id
     UNION ALL
     SELECT c.id AS candidate_id,l.source_id,l.target_id,l.method
-    FROM audit_candidates c JOIN audit_links l INDEXED BY audit_links_target ON l.target_id=c.id
+    FROM audit_candidates c CROSS JOIN audit_links l INDEXED BY audit_links_target ON l.target_id=c.id
     WHERE l.target_id!=l.source_id`);
   db.run('CREATE INDEX audit_candidate_links_id ON audit_candidate_links(candidate_id)');
 
@@ -406,8 +406,10 @@ function duplicateClusters(db: Database, limit: number): { total: number; sample
 
 function candidateLinkQueryPlan(db: Database): string[] {
   return [
-    `SELECT c.id FROM audit_candidates c JOIN audit_links l INDEXED BY audit_links_source ON l.source_id=c.id`,
-    `SELECT c.id FROM audit_candidates c JOIN audit_links l INDEXED BY audit_links_target ON l.target_id=c.id`,
+    `SELECT c.id,l.source_id,l.target_id,l.method
+     FROM audit_candidates c CROSS JOIN audit_links l INDEXED BY audit_links_source ON l.source_id=c.id`,
+    `SELECT c.id,l.source_id,l.target_id,l.method
+     FROM audit_candidates c CROSS JOIN audit_links l INDEXED BY audit_links_target ON l.target_id=c.id`,
   ].flatMap((sql) =>
     (db.query(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[]).map((row) => row.detail),
   );
