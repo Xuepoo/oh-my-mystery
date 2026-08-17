@@ -1,49 +1,79 @@
 import { Database } from 'bun:sqlite';
-import { existsSync, statSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import {
+  constants,
+  copyFileSync,
+  existsSync,
+  linkSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { ZH_T2S_MAP } from './data/zh-t2s-map';
 
 const DEFAULT_DB = resolve(import.meta.dir, '../../mystery-clawer/data/mystery.db');
-const SAMPLE_LIMIT = 50;
+const DEFAULT_SAMPLE_LIMIT = 50;
 const DETECTIVE_CLASS = 'Q3656924';
-const DETECTIVE_OCCUPATIONS = new Set(['Q1058617', 'Q842782', 'Q1397808']);
+const MEDIUM_OCCUPATIONS = new Set(['Q1058617', 'Q842782', 'Q1397808']);
 const LOW_OCCUPATIONS = new Set(['Q1347908', 'Q2271194']);
+const OCCUPATION_SIGNALS = [...MEDIUM_OCCUPATIONS, ...LOW_OCCUPATIONS];
 const ROLE_PREFIX =
   /^(?:\((?:[A-Za-z]{2,}|[美英日法德意俄中])\)|（[^（）]{1,8}）|〔[^〕]{1,8}〕|［[^］]{1,8}］|\[[^\]]{1,8}\])\s*/u;
 
 export type Confidence = 'high' | 'medium' | 'low' | 'conflict';
-export type Entity = {
-  id: string;
-  qid: string | null;
-  type: string;
-  names_json: string;
-  source: string | null;
-};
-export type Candidate = {
+type Evidence = { kind: 'P31' | 'P106' | string; value: string; source: string | null };
+type Candidate = {
   id: string;
   canonical_id: string;
   current_ids: string[];
+  type: string;
   display_names: string[];
   aliases: string[];
   source_provenance: string[];
+  linked_work_count: number;
   linked_works: string[];
-  evidence: { kind: string; value: string; source: string | null }[];
+  evidence_count: number;
+  evidence: Evidence[];
   confidence: Confidence;
   conflicts: string[];
 };
+type Args = { db: string; output?: string; sampleLimit: number; help: boolean };
+type FileState = { exists: boolean; size?: number; mtimeMs?: number };
 
-function parseArgs(args: string[]): { db: string; output?: string; help: boolean } {
+function stableCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function sortedUnique(values: string[]): string[] {
+  return [...new Set(values)].sort(stableCompare);
+}
+
+function bounded<T>(values: T[], limit: number): T[] {
+  return values.slice(0, limit);
+}
+
+function parseArgs(args: string[]): Args {
   let db = DEFAULT_DB;
   let output: string | undefined;
+  let sampleLimit = DEFAULT_SAMPLE_LIMIT;
   let help = false;
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
     if (arg === '--help' || arg === '-h') help = true;
-    else if (arg === '--db' && args[i + 1]) db = resolve(args[++i]);
-    else if (arg === '--output' && args[i + 1]) output = resolve(args[++i]);
-    else throw new Error(`Unknown or incomplete option: ${arg}`);
+    else if (arg === '--db' && args[index + 1]) db = resolve(args[++index]);
+    else if (arg === '--output' && args[index + 1]) output = resolve(args[++index]);
+    else if (arg === '--sample-limit' && args[index + 1]) {
+      sampleLimit = Number(args[++index]);
+      if (!Number.isSafeInteger(sampleLimit) || sampleLimit < 1 || sampleLimit > 500) {
+        throw new Error('--sample-limit must be an integer from 1 to 500');
+      }
+    } else throw new Error(`Unknown or incomplete option: ${arg}`);
   }
-  return { db, output, help };
+  return { db, output, sampleLimit, help };
 }
 
 function namesFromJson(value: string): { names: string[]; aliases: string[] } {
@@ -52,11 +82,14 @@ function namesFromJson(value: string): { names: string[]; aliases: string[] } {
       labels?: Record<string, string>;
       aliases?: Record<string, string[]>;
     };
-    const names = Object.values(parsed.labels ?? {}).filter(Boolean);
-    const aliases = Object.values(parsed.aliases ?? {})
-      .flat()
-      .filter(Boolean);
-    return { names: [...new Set(names)], aliases: [...new Set(aliases)] };
+    return {
+      names: sortedUnique(Object.values(parsed.labels ?? {}).filter(Boolean)),
+      aliases: sortedUnique(
+        Object.values(parsed.aliases ?? {})
+          .flat()
+          .filter(Boolean),
+      ),
+    };
   } catch {
     return { names: [], aliases: [] };
   }
@@ -68,8 +101,14 @@ export function normalizeDetectiveName(value: string): string {
     .replace(/[（(〔［[]?(?:日|日本|英|英国|美|美国|法|法国|德|德国|中|中国)[）)〕］\]]/gu, '')
     .replace(ROLE_PREFIX, '')
     .replace(/[\s\u00a0·・•,，.。:：;；、/\\_—–-]+/gu, '')
-    .toLocaleLowerCase();
+    .toLowerCase();
   return [...normalized].map((character) => ZH_T2S_MAP[character] ?? character).join('');
+}
+
+export function isDoubanPriceId(id: string): boolean {
+  if (!id.startsWith('douban:p')) return false;
+  const suffix = id.slice(8);
+  return /^(?:\d+(?:\.\d+)?|\.\d+)$/u.test(suffix);
 }
 
 export function reconcileConfidence(input: {
@@ -87,151 +126,184 @@ export function reconcileConfidence(input: {
   return 'conflict';
 }
 
-function countRows(db: Database, sql: string, ...params: string[]): number {
+function fileState(path: string): FileState {
+  if (!existsSync(path)) return { exists: false };
+  const stat = statSync(path);
+  return { exists: true, size: stat.size, mtimeMs: stat.mtimeMs };
+}
+
+function sourceState(path: string): Record<string, FileState> {
+  return {
+    database: fileState(path),
+    wal: fileState(`${path}-wal`),
+    shm: fileState(`${path}-shm`),
+  };
+}
+
+function createSnapshot(source: string): {
+  path: string;
+  directory: string;
+  sourceState: Record<string, FileState>;
+} {
+  if (!existsSync(source) || !statSync(source).isFile()) {
+    throw new Error(`SQLite database not found: ${source}`);
+  }
+  const before = sourceState(source);
+  const directory = mkdtempSync(join(tmpdir(), 'omm-detective-audit-'));
+  const snapshot = join(directory, 'snapshot.sqlite');
+  try {
+    copyFileSync(source, snapshot, constants.COPYFILE_FICLONE);
+    if (existsSync(`${source}-wal`)) {
+      copyFileSync(`${source}-wal`, `${snapshot}-wal`, constants.COPYFILE_FICLONE);
+    }
+    if (JSON.stringify(before) !== JSON.stringify(sourceState(source))) {
+      throw new Error(
+        'Source database changed while the audit snapshot was copied; retry when idle',
+      );
+    }
+    return { path: snapshot, directory, sourceState: before };
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function countRows(db: Database, sql: string, ...params: (string | number)[]): number {
   const row = db.query(sql).get(...params) as { count: number };
   return Number(row.count);
 }
 
-function groupedRows(db: Database, sql: string, ...params: string[]): Record<string, number> {
-  const rows = db.query(sql).all(...params) as { key: string | null; count: number }[];
+function groupedRows(db: Database, sql: string): Record<string, number> {
+  const rows = db.query(sql).all() as { key: string | null; count: number }[];
   return Object.fromEntries(rows.map((row) => [row.key ?? '(null)', Number(row.count)]));
 }
 
 function requireSchema(db: Database): void {
   const tables = new Set(
     (
-      db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]
+      db.query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as {
+        name: string;
+      }[]
     ).map((row) => row.name),
   );
-  for (const table of ['entities', 'facts', 'raw_fetch', 'entity_links']) {
+  for (const table of ['entities', 'entity_links', 'facts', 'raw_fetch']) {
     if (!tables.has(table))
       throw new Error(`Not an authoritative crawler database: missing table ${table}`);
   }
 }
 
-function bounded<T>(values: T[]): T[] {
-  return values.slice(0, SAMPLE_LIMIT);
-}
-
-function rawClaimEvidence(raw: string | null): { kind: string; value: string }[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as { claims?: Record<string, unknown[]> };
-    const claims = parsed.claims ?? {};
-    const evidence: { kind: string; value: string }[] = [];
-    for (const [property, values] of Object.entries(claims)) {
-      if (property !== 'P31' && property !== 'P106') continue;
-      for (const claim of values ?? []) {
-        const mainsnak = (claim as { mainsnak?: { datavalue?: { value?: unknown } } }).mainsnak;
-        const value = mainsnak?.datavalue?.value;
-        const id = typeof value === 'object' && value !== null && 'id' in value ? value.id : value;
-        if (typeof id === 'string') evidence.push({ kind: property, value: id });
-      }
-    }
-    return evidence;
-  } catch {
-    return [];
-  }
-}
-
-function candidateRecords(db: Database): Candidate[] {
-  const entities = db
+function candidateRecords(db: Database, limit: number): Candidate[] {
+  const occupationPlaceholders = OCCUPATION_SIGNALS.map(() => '?').join(',');
+  const rows = db
     .query(
-      "SELECT e.id,e.qid,e.type,e.names_json,e.source,r.raw_json FROM entities e LEFT JOIN raw_fetch r ON r.source='wikidata' AND r.key='entity:' || e.qid WHERE e.type='character'",
+      `WITH evidence AS (
+        SELECT e.id,e.qid,e.type,e.names_json,e.source,'P31' AS kind,j.value AS value
+        FROM entities e JOIN raw_fetch r ON r.source='wikidata' AND r.key='entity:'||e.qid
+        JOIN json_tree(r.raw_json,'$.claims.P31') j ON j.key='id'
+        WHERE json_valid(r.raw_json) AND j.value=?
+        UNION ALL
+        SELECT e.id,e.qid,e.type,e.names_json,e.source,'P106' AS kind,j.value AS value
+        FROM entities e JOIN raw_fetch r ON r.source='wikidata' AND r.key='entity:'||e.qid
+        JOIN json_tree(r.raw_json,'$.claims.P106') j ON j.key='id'
+        WHERE json_valid(r.raw_json) AND j.value IN (${occupationPlaceholders})
+      ) SELECT * FROM evidence ORDER BY id,kind,value`,
     )
-    .all() as (Entity & { raw_json: string | null })[];
-  const candidates: Candidate[] = [];
-  const workRows = db
-    .query(
-      "SELECT object_ref, subject_id FROM facts WHERE predicate IN ('characters','character','P674') AND object_ref IS NOT NULL",
-    )
-    .all() as { object_ref: string; subject_id: string }[];
-  const works = new Map<string, string[]>();
-  for (const row of workRows) {
-    const list = works.get(row.object_ref) ?? [];
-    list.push(row.subject_id);
-    works.set(row.object_ref, list);
-  }
-  const links = db.query('SELECT source_id,target_id,method FROM entity_links').all() as {
-    source_id: string;
-    target_id: string;
-    method: string;
+    .all(DETECTIVE_CLASS, ...OCCUPATION_SIGNALS) as {
+    id: string;
+    qid: string | null;
+    type: string;
+    names_json: string;
+    source: string | null;
+    kind: 'P31' | 'P106';
+    value: string;
   }[];
-  const linksByEntity = new Map<string, typeof links>();
-  for (const link of links) {
-    for (const id of [link.source_id, link.target_id]) {
-      const list = linksByEntity.get(id) ?? [];
-      list.push(link);
-      linksByEntity.set(id, list);
-    }
+  const grouped = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const group = grouped.get(row.id) ?? [];
+    group.push(row);
+    grouped.set(row.id, group);
   }
-  for (const entity of entities) {
-    const parsed = namesFromJson(entity.names_json);
-    const evidence = rawClaimEvidence(entity.raw_json);
+  const ids = [...grouped.keys()].sort(stableCompare);
+  if (ids.length === 0) return [];
+  const marks = ids.map(() => '?').join(',');
+  const works = db
+    .query(
+      `SELECT object_ref,subject_id FROM facts WHERE predicate IN ('P674','character','characters') AND object_ref IN (${marks}) ORDER BY object_ref,subject_id`,
+    )
+    .all(...ids) as { object_ref: string; subject_id: string }[];
+  const links = db
+    .query(
+      `SELECT source_id,target_id,method FROM entity_links WHERE source_id IN (${marks}) OR target_id IN (${marks}) ORDER BY source_id,target_id,method`,
+    )
+    .all(...ids, ...ids) as { source_id: string; target_id: string; method: string }[];
+  return ids.map((id) => {
+    const group = grouped.get(id)!;
+    const entity = group[0];
+    const evidence: Evidence[] = group.map((row) => ({
+      kind: row.kind,
+      value: row.value,
+      source: row.source,
+    }));
+    const entityLinks = links.filter((link) => link.source_id === id || link.target_id === id);
+    const linkedWorks = sortedUnique(
+      works.filter((row) => row.object_ref === id).map((row) => row.subject_id),
+    );
     const explicitClass = evidence.some(
       (item) => item.kind === 'P31' && item.value === DETECTIVE_CLASS,
     );
-    const occupation = evidence.some(
-      (item) => item.kind === 'P106' && DETECTIVE_OCCUPATIONS.has(item.value),
+    const medium = evidence.some(
+      (item) => item.kind === 'P106' && MEDIUM_OCCUPATIONS.has(item.value),
     );
-    const lowOccupation = evidence.some(
-      (item) => item.kind === 'P106' && LOW_OCCUPATIONS.has(item.value),
-    );
-    const linked = linksByEntity.get(entity.id) ?? [];
-    const currentIds = [...new Set([entity.id, ...linked.map((link) => link.source_id)])];
-    const sourceProvenance = [
-      ...new Set([entity.source ?? 'unknown', ...currentIds.map((id) => id.split(':', 1)[0])]),
-    ];
-    const linkedWorks = works.get(entity.id) ?? [];
-    if (!explicitClass && !occupation && !lowOccupation) continue;
-    const conflicts = entity.type !== 'character' ? ['role/type contradiction'] : [];
-    candidates.push({
-      id: entity.id,
-      canonical_id: entity.qid ? `wd:${entity.qid}` : entity.id,
-      current_ids: bounded(currentIds),
-      display_names: bounded(parsed.names),
-      aliases: bounded(parsed.aliases),
-      source_provenance: bounded(sourceProvenance),
-      linked_works: linkedWorks,
-      evidence: bounded([
-        ...evidence.map((item) => ({ ...item, source: entity.source })),
-        ...linked.map((link) => ({
-          kind: `entity_link:${link.method}`,
-          value: link.target_id,
-          source: entity.source,
-        })),
-      ]),
-      confidence: explicitClass
-        ? 'high'
-        : occupation
-          ? 'medium'
-          : lowOccupation
-            ? 'low'
-            : 'conflict',
-      conflicts,
-    });
-  }
-  return candidates;
+    const typeConflict = entity.type !== 'character';
+    const names = namesFromJson(entity.names_json);
+    const currentIds = sortedUnique([
+      id,
+      ...entityLinks.flatMap((link) => [link.source_id, link.target_id]),
+    ]);
+    return {
+      id,
+      canonical_id: entity.qid ? `wd:${entity.qid}` : id,
+      current_ids: bounded(currentIds, limit),
+      type: entity.type,
+      display_names: bounded(names.names, limit),
+      aliases: bounded(names.aliases, limit),
+      source_provenance: bounded(
+        sortedUnique([
+          entity.source ?? 'unknown',
+          ...currentIds.map((current) => current.split(':', 1)[0]),
+        ]),
+        limit,
+      ),
+      linked_work_count: linkedWorks.length,
+      linked_works: bounded(linkedWorks, limit),
+      evidence_count: evidence.length + entityLinks.length,
+      evidence: bounded(
+        [
+          ...evidence,
+          ...entityLinks.map((link) => ({
+            kind: `entity_link:${link.method}`,
+            value: link.target_id,
+            source: entity.source,
+          })),
+        ].sort((left, right) =>
+          stableCompare(`${left.kind}\0${left.value}`, `${right.kind}\0${right.value}`),
+        ),
+        limit,
+      ),
+      confidence: typeConflict ? 'conflict' : explicitClass ? 'high' : medium ? 'medium' : 'low',
+      conflicts: typeConflict ? [`detective evidence contradicts entity type ${entity.type}`] : [],
+    };
+  });
 }
 
-function duplicateClusters(db: Database): {
-  total: number;
-  samples: {
-    normalized_name: string;
-    count: number;
-    ids: string[];
-    qids: string[];
-    confidence: Confidence;
-  }[];
-} {
+function duplicateClusters(db: Database, limit: number): { total: number; samples: unknown[] } {
   const rows = db
-    .query("SELECT id,qid,names_json FROM entities WHERE id LIKE 'douban:a%'")
-    .all() as Pick<Entity, 'id' | 'qid' | 'names_json'>[];
+    .query("SELECT id,qid,names_json FROM entities WHERE id LIKE 'douban:a%' ORDER BY id")
+    .all() as { id: string; qid: string | null; names_json: string }[];
   const groups = new Map<string, typeof rows>();
   for (const row of rows) {
     const primary = namesFromJson(row.names_json).names[0];
-    if (!primary) continue;
-    const normalized = normalizeDetectiveName(primary);
+    const normalized = primary ? normalizeDetectiveName(primary) : '';
     if (!normalized) continue;
     const group = groups.get(normalized) ?? [];
     group.push(row);
@@ -239,15 +311,18 @@ function duplicateClusters(db: Database): {
   }
   const clusters = [...groups.entries()]
     .filter(([, group]) => group.length > 1)
-    .map(([normalizedName, group]) => {
-      const qids = [
-        ...new Set(group.map((row) => row.qid).filter((qid): qid is string => Boolean(qid))),
-      ];
+    .map(([normalized_name, group]) => {
+      const qids = sortedUnique(
+        group.map((row) => row.qid).filter((qid): qid is string => Boolean(qid)),
+      );
       return {
-        normalized_name: normalizedName,
+        normalized_name,
         count: group.length,
-        ids: group.map((row) => row.id),
-        qids,
+        ids: bounded(
+          group.map((row) => row.id),
+          limit,
+        ),
+        qids: bounded(qids, limit),
         confidence: reconcileConfidence({
           exactQid: qids.length === 1 && group.every((row) => row.qid === qids[0]),
           normalizedNameMatch: true,
@@ -257,181 +332,246 @@ function duplicateClusters(db: Database): {
     })
     .sort(
       (left, right) =>
-        right.count - left.count || left.normalized_name.localeCompare(right.normalized_name),
+        right.count - left.count || stableCompare(left.normalized_name, right.normalized_name),
     );
-  return { total: clusters.length, samples: bounded(clusters) };
+  return { total: clusters.length, samples: bounded(clusters, limit) };
 }
 
-function audit(dbPath: string): Record<string, unknown> {
-  if (!existsSync(dbPath) || !statSync(dbPath).isFile())
-    throw new Error(`SQLite database not found: ${dbPath}`);
-  const db = new Database(dbPath, { readonly: true });
-  try {
-    requireSchema(db);
-    const candidates = candidateRecords(db);
-    const duplicates = duplicateClusters(db);
-    const entityTypes = groupedRows(
-      db,
-      'SELECT type AS key, COUNT(*) AS count FROM entities GROUP BY type ORDER BY count DESC',
-    );
-    const sourcePrefixes = groupedRows(
-      db,
-      "SELECT substr(id, 1, instr(id, ':') - 1) AS key, COUNT(*) AS count FROM entities WHERE instr(id, ':') > 0 GROUP BY key ORDER BY count DESC",
-    );
-    const seriesTargets = db
-      .query(
-        "SELECT f.object_ref AS target, COALESCE(e.type,'missing') AS type FROM facts f LEFT JOIN entities e ON e.id=f.object_ref WHERE f.predicate IN ('series','P179') AND (e.type IS NULL OR e.type != 'series')",
-      )
-      .all() as { target: string; type: string }[];
-    const typeConflictRows = db
-      .query(
-        "SELECT l.source_id,s.type AS source_type,l.target_id,t.type AS target_type,l.method FROM entity_links l JOIN entities s ON s.id=l.source_id JOIN entities t ON t.id=l.target_id WHERE s.type != t.type AND NOT (s.type='person' AND t.type='author') LIMIT ?",
-      )
-      .all(SAMPLE_LIMIT) as {
-      source_id: string;
-      source_type: string;
-      target_id: string;
-      target_type: string;
-      method: string;
-    }[];
-    const pollutionSamples = db
-      .query(
-        "SELECT id,type,names_json FROM entities WHERE (id LIKE 'douban:p%' AND (id GLOB 'douban:p[0-9.]*' OR type IN ('person','author'))) OR (id LIKE 'wd:%' AND type='person' AND qid IS NOT NULL) LIMIT ?",
-      )
-      .all(SAMPLE_LIMIT) as { id: string; type: string; names_json: string }[];
-    const personWorkTypes = groupedRows(
-      db,
-      "SELECT jt.value AS key, COUNT(DISTINCT e.id) AS count FROM raw_fetch r JOIN entities e ON r.key='entity:' || e.qid JOIN json_tree(r.raw_json, '$.claims.P31') jt ON jt.key='id' WHERE e.type='person' AND r.source='wikidata' AND jt.value IN ('Q11424','Q5398426','Q7889','Q5') GROUP BY jt.value ORDER BY count DESC",
-    );
-    const report = {
-      meta: {
-        generated_at: new Date().toISOString(),
-        database: dbPath,
-        read_only: true,
-        sample_limit: SAMPLE_LIMIT,
+function buildReport(
+  db: Database,
+  sourcePath: string,
+  sampleLimit: number,
+): Record<string, unknown> {
+  requireSchema(db);
+  const candidates = candidateRecords(db, sampleLimit);
+  const candidateIds = candidates.map((candidate) => candidate.id);
+  const candidateWorkCount =
+    candidateIds.length === 0
+      ? 0
+      : countRows(
+          db,
+          `SELECT COUNT(DISTINCT subject_id) AS count FROM facts WHERE predicate IN ('P674','character','characters') AND object_ref IN (${candidateIds.map(() => '?').join(',')})`,
+          ...candidateIds,
+        );
+  const duplicates = duplicateClusters(db, sampleLimit);
+  const invalidSeriesSamples = db
+    .query(
+      `SELECT f.object_ref AS target,COALESCE(e.type,'missing') AS type,COUNT(*) AS edge_count
+       FROM facts f LEFT JOIN entities e ON e.id=f.object_ref
+       WHERE f.predicate IN ('P179','series') AND (e.type IS NULL OR e.type!='series')
+       GROUP BY f.object_ref,COALESCE(e.type,'missing') ORDER BY edge_count DESC,target,type LIMIT ?`,
+    )
+    .all(sampleLimit);
+  const typeConflictSamples = db
+    .query(
+      `SELECT l.source_id,s.type AS source_type,l.target_id,t.type AS target_type,l.method
+       FROM entity_links l JOIN entities s ON s.id=l.source_id JOIN entities t ON t.id=l.target_id
+       WHERE s.type!=t.type AND NOT (s.type='person' AND t.type='author')
+       ORDER BY l.source_id,l.target_id,l.method LIMIT ?`,
+    )
+    .all(sampleLimit);
+  const pollutionSamples = db
+    .query(
+      `SELECT id,type,names_json FROM entities
+       WHERE id LIKE 'douban:p%' OR (id LIKE 'wd:%' AND type IN ('author','person'))
+       ORDER BY id LIMIT ?`,
+    )
+    .all(sampleLimit) as { id: string; type: string; names_json: string }[];
+  const report = {
+    meta: {
+      database: sourcePath,
+      read_only: true,
+      source_opened_by_sqlite: false,
+      audit_strategy:
+        'copy database and WAL bytes to an isolated temporary snapshot before opening SQLite',
+      sample_limit: sampleLimit,
+      deterministic_body: true,
+    },
+    coverage: {
+      entities: countRows(db, 'SELECT COUNT(*) AS count FROM entities'),
+      facts: countRows(db, 'SELECT COUNT(*) AS count FROM facts'),
+      raw_claim_rows: countRows(db, 'SELECT COUNT(*) AS count FROM raw_fetch'),
+      entity_types: groupedRows(
+        db,
+        'SELECT type AS key,COUNT(*) AS count FROM entities GROUP BY type ORDER BY count DESC,type',
+      ),
+      source_prefixes: groupedRows(
+        db,
+        "SELECT substr(id,1,instr(id,':')-1) AS key,COUNT(*) AS count FROM entities WHERE instr(id,':')>0 GROUP BY key ORDER BY count DESC,key",
+      ),
+      detective_candidates: candidates.length,
+      candidate_confidence_tiers: Object.fromEntries(
+        ['high', 'medium', 'low', 'conflict'].map((tier) => [
+          tier,
+          candidates.filter((candidate) => candidate.confidence === tier).length,
+        ]),
+      ),
+      character_linked_works: countRows(
+        db,
+        "SELECT COUNT(DISTINCT subject_id) AS count FROM facts WHERE predicate IN ('P674','character','characters')",
+      ),
+      works_linked_to_candidates: candidateWorkCount,
+      series_entities: countRows(db, "SELECT COUNT(*) AS count FROM entities WHERE type='series'"),
+      series_linked_works: countRows(
+        db,
+        "SELECT COUNT(DISTINCT subject_id) AS count FROM facts WHERE predicate IN ('P179','series')",
+      ),
+      invalid_series_fact_edges: countRows(
+        db,
+        "SELECT COUNT(*) AS count FROM facts f LEFT JOIN entities e ON e.id=f.object_ref WHERE f.predicate IN ('P179','series') AND (e.type IS NULL OR e.type!='series')",
+      ),
+      distinct_invalid_series_targets: countRows(
+        db,
+        "SELECT COUNT(DISTINCT f.object_ref) AS count FROM facts f LEFT JOIN entities e ON e.id=f.object_ref WHERE f.predicate IN ('P179','series') AND (e.type IS NULL OR e.type!='series')",
+      ),
+      distinct_dangling_series_targets: countRows(
+        db,
+        "SELECT COUNT(DISTINCT f.object_ref) AS count FROM facts f LEFT JOIN entities e ON e.id=f.object_ref WHERE f.predicate IN ('P179','series') AND e.id IS NULL",
+      ),
+    },
+    candidates,
+    duplicates: { same_name_douban_author_clusters: duplicates.total, samples: duplicates.samples },
+    pollution: {
+      douban_p_entities: countRows(
+        db,
+        "SELECT COUNT(*) AS count FROM entities WHERE id LIKE 'douban:p%'",
+      ),
+      douban_price_ids: countRows(
+        db,
+        `SELECT COUNT(*) AS count FROM entities WHERE id LIKE 'douban:p%'
+         AND substr(id,9)!='' AND substr(id,9) NOT GLOB '*[^0-9.]*'
+         AND substr(id,9) GLOB '*[0-9]*'
+         AND substr(id,9) NOT GLOB '*.'
+         AND length(substr(id,9))-length(replace(substr(id,9),'.',''))<=1`,
+      ),
+      douban_p_author_targets: countRows(
+        db,
+        "SELECT COUNT(DISTINCT object_ref) AS count FROM facts WHERE predicate IN ('aozora_role','author') AND object_ref LIKE 'douban:p%'",
+      ),
+      douban_p_name_matches_people: countRows(
+        db,
+        `SELECT COUNT(DISTINCT p.id) AS count FROM entities p JOIN entities a ON a.type='author'
+         AND lower(trim(COALESCE(json_extract(a.names_json,'$.labels.zh'),json_extract(a.names_json,'$.labels.ja'),json_extract(a.names_json,'$.labels.en'))))
+          =lower(trim(COALESCE(json_extract(p.names_json,'$.labels.zh'),json_extract(p.names_json,'$.labels.ja'),json_extract(p.names_json,'$.labels.en'))))
+         WHERE p.id LIKE 'douban:p%'`,
+      ),
+      douban_p_publisher_facts: countRows(
+        db,
+        "SELECT COUNT(*) AS count FROM facts WHERE predicate='publisher' AND object_ref LIKE 'douban:p%'",
+      ),
+      film_as_person_or_author: countRows(
+        db,
+        `SELECT COUNT(DISTINCT e.id) AS count FROM raw_fetch r JOIN entities e ON r.key='entity:'||e.qid
+         JOIN json_tree(r.raw_json,'$.claims.P31') j ON j.key='id' AND j.value='Q11424'
+         WHERE r.source='wikidata' AND json_valid(r.raw_json) AND e.type IN ('author','person')`,
+      ),
+      person_author_claims_by_type: groupedRows(
+        db,
+        `SELECT j.value AS key,COUNT(DISTINCT e.id) AS count FROM raw_fetch r JOIN entities e ON r.key='entity:'||e.qid
+         JOIN json_tree(r.raw_json,'$.claims.P31') j ON j.key='id'
+         WHERE r.source='wikidata' AND json_valid(r.raw_json) AND e.type IN ('author','person')
+         AND j.value IN ('Q11424','Q5398426','Q7889','Q5') GROUP BY j.value ORDER BY count DESC,j.value`,
+      ),
+      entity_link_type_conflicts: {
+        count: countRows(
+          db,
+          `SELECT COUNT(*) AS count FROM entity_links l JOIN entities s ON s.id=l.source_id JOIN entities t ON t.id=l.target_id
+           WHERE s.type!=t.type AND NOT (s.type='person' AND t.type='author')`,
+        ),
+        samples: typeConflictSamples,
       },
-      coverage: {
-        entities: countRows(db, 'SELECT COUNT(*) AS count FROM entities'),
-        facts: countRows(db, 'SELECT COUNT(*) AS count FROM facts'),
-        raw_claim_rows: countRows(db, 'SELECT COUNT(*) AS count FROM raw_fetch'),
-        entity_types: entityTypes,
-        source_prefixes: sourcePrefixes,
-        detective_candidates: candidates.length,
-        candidate_confidence_tiers: Object.fromEntries(
-          ['high', 'medium', 'low', 'conflict'].map((tier) => [
-            tier,
-            candidates.filter((candidate) => candidate.confidence === tier).length,
-          ]),
-        ),
-        character_linked_works: countRows(
-          db,
-          "SELECT COUNT(DISTINCT subject_id) AS count FROM facts WHERE predicate IN ('characters','character','P674')",
-        ),
-        works_linked_to_candidates: new Set(
-          candidates.flatMap((candidate) => candidate.linked_works),
-        ).size,
-        series_entities: countRows(
-          db,
-          "SELECT COUNT(*) AS count FROM entities WHERE type='series'",
-        ),
-        series_linked_works: countRows(
-          db,
-          "SELECT COUNT(DISTINCT subject_id) AS count FROM facts WHERE predicate IN ('series','P179')",
-        ),
-        mistyped_series_targets: seriesTargets.length,
-        dangling_series_targets: seriesTargets.filter((row) => row.type === 'missing').length,
-      },
-      candidates,
-      duplicates: {
-        same_name_douban_author_clusters: duplicates.total,
-        samples: duplicates.samples,
-      },
-      pollution: {
-        douban_p_entities: countRows(
-          db,
-          "SELECT COUNT(*) AS count FROM entities WHERE id LIKE 'douban:p%'",
-        ),
-        douban_price_ids: countRows(
-          db,
-          "SELECT COUNT(*) AS count FROM entities WHERE id LIKE 'douban:p%' AND substr(id,10) GLOB '[0-9]*' AND CAST(substr(id,10) AS REAL) > 0",
-        ),
-        douban_p_author_targets: countRows(
-          db,
-          "SELECT COUNT(DISTINCT object_ref) AS count FROM facts WHERE predicate IN ('author','aozora_role') AND object_ref LIKE 'douban:p%'",
-        ),
-        douban_p_name_matches_people: countRows(
-          db,
-          "SELECT COUNT(DISTINCT p.id) AS count FROM entities p JOIN entities author ON author.type='author' AND lower(trim(COALESCE(json_extract(author.names_json,'$.labels.zh'),json_extract(author.names_json,'$.labels.ja'),json_extract(author.names_json,'$.labels.en'))))=lower(trim(COALESCE(json_extract(p.names_json,'$.labels.zh'),json_extract(p.names_json,'$.labels.ja'),json_extract(p.names_json,'$.labels.en')))) WHERE p.id LIKE 'douban:p%'",
-        ),
-        douban_p_publisher_facts: countRows(
-          db,
-          "SELECT COUNT(*) AS count FROM facts WHERE predicate='publisher' AND object_ref LIKE 'douban:p%'",
-        ),
-        film_as_person_or_author: countRows(
-          db,
-          "SELECT COUNT(*) AS count FROM raw_fetch r JOIN entities e ON r.key='entity:' || e.qid WHERE e.type='person' AND r.source='wikidata' AND EXISTS (SELECT 1 FROM json_tree(r.raw_json, '$.claims.P31') WHERE key='id' AND value='Q11424')",
-        ),
-        person_bucket_claims_by_type: personWorkTypes,
-        entity_link_type_conflicts: {
-          count: countRows(
-            db,
-            "SELECT COUNT(*) AS count FROM entity_links l JOIN entities s ON s.id=l.source_id JOIN entities t ON t.id=l.target_id WHERE s.type != t.type AND NOT (s.type='person' AND t.type='author')",
-          ),
-          samples: typeConflictRows,
-        },
-        invalid_series_targets: bounded(seriesTargets),
-        samples: pollutionSamples.map((row) => ({
-          id: row.id,
-          type: row.type,
-          names: namesFromJson(row.names_json).names,
-        })),
-      },
-      reconciliation: {
-        rules: [
-          'exact external QID or explicit alias provenance: high',
-          'normalized name plus overlapping works: medium',
-          'name-only: low/conflict, never auto-merge',
-          'role/type contradiction: conflict',
-        ],
-        normalization:
-          'NFKC, nationality/role and presentation brackets, punctuation, common Unicode variants; no transliteration inference',
-      },
-      limitations: [
-        'Audit only: no merge, crawl, database write, remote D1 operation, snow operation, or publication.',
+      invalid_series_target_samples: invalidSeriesSamples,
+      samples: pollutionSamples.map((row) => ({
+        id: row.id,
+        type: row.type,
+        names: bounded(namesFromJson(row.names_json).names, sampleLimit),
+      })),
+    },
+    reconciliation: {
+      rules: [
+        'exact external QID or explicit alias provenance: high',
+        'normalized name plus overlapping works: medium',
+        'name-only: low/conflict, never auto-merge',
+        'role/type contradiction: conflict',
       ],
-    };
-    return report;
+      normalization:
+        'NFKC, nationality/role and presentation brackets, punctuation, common Unicode variants; no transliteration inference',
+    },
+    limitations: [
+      'Audit only: no merge, crawl, source database write, remote D1 operation, snow operation, or publication.',
+    ],
+  };
+  return report;
+}
+
+export function auditDatabase(
+  sourcePath: string,
+  sampleLimit = DEFAULT_SAMPLE_LIMIT,
+): Record<string, unknown> {
+  const snapshot = createSnapshot(sourcePath);
+  try {
+    const db = new Database(snapshot.path, { readonly: true });
+    try {
+      const report = buildReport(db, sourcePath, sampleLimit);
+      if (JSON.stringify(snapshot.sourceState) !== JSON.stringify(sourceState(sourcePath))) {
+        throw new Error('Source database changed during audit; report discarded');
+      }
+      return report;
+    } finally {
+      db.close();
+    }
   } finally {
-    db.close();
+    rmSync(snapshot.directory, { recursive: true, force: true });
   }
 }
 
-export function runCli(args = process.argv.slice(2)): void {
+function writeOutput(path: string, contents: string): void {
+  if (existsSync(path)) throw new Error(`Output already exists: ${path}`);
+  const temporary = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  try {
+    writeFileSync(temporary, contents, { encoding: 'utf8', flag: 'wx' });
+    try {
+      linkSync(temporary, path);
+      unlinkSync(temporary);
+    } catch (error) {
+      if (existsSync(path)) throw error;
+      renameSync(temporary, path);
+    }
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+export function runCli(args = process.argv.slice(2)): number {
   try {
     const options = parseArgs(args);
     if (options.help) {
-      console.error('Usage: bun scripts/audit-detective-data.ts [--db <path>] [--output <path>]');
-      return;
+      process.stdout.write(
+        'Usage: bun scripts/audit-detective-data.ts [--db <path>] [--output <path>] [--sample-limit <1-500>]\n',
+      );
+      return 0;
     }
-    const report = audit(options.db);
+    const report = auditDatabase(options.db, options.sampleLimit);
     const json = `${JSON.stringify(report, null, 2)}\n`;
-    if (options.output) writeFileSync(options.output, json, { encoding: 'utf8', flag: 'wx' });
+    if (options.output) writeOutput(options.output, json);
     else process.stdout.write(json);
     const coverage = report.coverage as {
       entities: number;
       detective_candidates: number;
       works_linked_to_candidates: number;
-      mistyped_series_targets: number;
+      invalid_series_fact_edges: number;
     };
-    console.error(
-      `detective audit: ${coverage.entities} entities, ${coverage.detective_candidates} candidates, ${coverage.works_linked_to_candidates} linked works, ${coverage.mistyped_series_targets} mistyped series targets`,
+    process.stderr.write(
+      `detective audit: ${coverage.entities} entities, ${coverage.detective_candidates} candidates, ${coverage.works_linked_to_candidates} linked works, ${coverage.invalid_series_fact_edges} invalid series edges\n`,
     );
+    return 0;
   } catch (error) {
-    console.error(
-      `detective audit failed: ${error instanceof Error ? error.message : String(error)}`,
+    process.stderr.write(
+      `detective audit failed: ${error instanceof Error ? error.message : String(error)}\n`,
     );
-    process.exitCode = 1;
+    return 1;
   }
 }
 
-if (import.meta.main) runCli();
+if (import.meta.main) process.exitCode = runCli();
