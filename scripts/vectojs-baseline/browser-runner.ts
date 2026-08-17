@@ -630,15 +630,41 @@ export async function executeScenarioStep(
       await page.keyboard.press('Escape');
       return;
     case 'assert-no-pointer-owner':
-      await assertPageState(page, () => {
-        const ownership = (
-          window as unknown as {
-            __OMM_APP__?: { instrumentation?: { pointerOwnership: Record<string, unknown> } };
-          }
-        ).__OMM_APP__?.instrumentation?.pointerOwnership;
-        if (!ownership) return false;
-        return Object.values(ownership).every((value) => value === null || value === false);
-      });
+      await page.waitForFunction(
+        () => {
+          const ownership = (
+            window as unknown as {
+              __OMM_APP__?: {
+                instrumentation?: {
+                  pointerOwnership: {
+                    activePointerIds: readonly number[];
+                    canvasCapturedPointerIds: readonly number[];
+                    drawerPointerId: number | null;
+                    nodePointerId: number | null;
+                    panning: boolean;
+                    pinching: boolean;
+                    pendingClick: boolean;
+                    longPressPending: boolean;
+                  };
+                };
+              };
+            }
+          ).__OMM_APP__?.instrumentation?.pointerOwnership;
+          if (!ownership) return false;
+          return (
+            ownership.activePointerIds.length === 0 &&
+            ownership.canvasCapturedPointerIds.length === 0 &&
+            ownership.drawerPointerId === null &&
+            ownership.nodePointerId === null &&
+            !ownership.panning &&
+            !ownership.pinching &&
+            !ownership.pendingClick &&
+            !ownership.longPressPending
+          );
+        },
+        undefined,
+        { timeout: 5000 },
+      );
       return;
     case 'open-root':
       await activatePoint(page, await nodeCenter(page, root), context.viewport.mobile, 2);
