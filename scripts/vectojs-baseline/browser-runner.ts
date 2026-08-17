@@ -681,21 +681,21 @@ export async function executeScenarioStep(
       return;
     case 'activate-relations':
     case 'activate-relations-before-navigation':
-      await activateTarget(page, 'casefile.tab.relations', context.viewport.mobile);
+      await activateDrawerTarget(page, 'casefile.tab.relations');
       await assertDrawer(page, 'relationsStatus', 'ready');
       return;
     case 'activate-recommendations':
-      await activateTarget(page, 'casefile.tab.recommendations', context.viewport.mobile);
+      await activateDrawerTarget(page, 'casefile.tab.recommendations');
       await assertDrawer(page, 'recommendationsStatus', 'ready');
       return;
     case 'load-relation-page':
-      await activateTarget(page, 'casefile.tab.relations', context.viewport.mobile);
+      await activateDrawerTarget(page, 'casefile.tab.relations');
       await assertDrawer(page, 'relationsStatus', 'ready');
-      await activateTarget(page, 'casefile.relations.load-more', context.viewport.mobile);
+      await activateDrawerTarget(page, 'casefile.relations.load-more');
       await waitForStablePredicate(page, 'animationFree');
       return;
     case 'copy-first-field':
-      await activateTarget(page, 'casefile.tab.profile', context.viewport.mobile);
+      await activateDrawerTarget(page, 'casefile.tab.profile');
       await activateDrawerTarget(page, 'casefile.copy.first');
       await page
         .waitForFunction(
