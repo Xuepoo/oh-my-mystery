@@ -80,6 +80,7 @@ function state(
       ['db', ''],
       ['wal', '-wal'],
       ['shm', '-shm'],
+      ['journal', '-journal'],
     ].map(([key, suffix]) => {
       const file = `${path}${suffix}`;
       if (!existsSync(file)) return [key, { exists: false }];
@@ -131,6 +132,16 @@ test('WAL snapshot leaves database, WAL, and SHM bytes and metadata unchanged', 
   expect(state(path)).toEqual(before);
   expect(report.meta.source_opened_by_sqlite).toBe(false);
   expect(report.meta.audit_strategy).toContain('temporary snapshot');
+  expect(
+    report.meta.candidate_link_query_plan.some((detail: string) =>
+      detail.includes('audit_links_source'),
+    ),
+  ).toBe(true);
+  expect(
+    report.meta.candidate_link_query_plan.some((detail: string) =>
+      detail.includes('audit_links_target'),
+    ),
+  ).toBe(true);
   expect(report.coverage.detective_candidates).toBe(3);
   expect(report.coverage.candidate_confidence_tiers.high).toBe(1);
   expect(report.coverage.candidate_confidence_tiers.conflict).toBe(2);
@@ -154,6 +165,25 @@ test('snapshot copy detects concurrent source metadata changes and cleans up', (
         const changed = new Date(Date.now() + 10_000);
         utimesSync(path, changed, changed);
       }
+    }),
+  ).toThrow('Source database changed while the audit snapshot was copied');
+  db.close();
+});
+
+test('snapshot copies rollback journals and rejects journal changes during copy', () => {
+  const { path, db } = fixture();
+  const journal = `${path}-journal`;
+  writeFileSync(journal, 'rollback journal bytes');
+  const before = state(path);
+  const snapshot = createSnapshot(path);
+  expect(readFileSync(`${snapshot.path}-journal`, 'utf8')).toBe('rollback journal bytes');
+  expect(state(path)).toEqual(before);
+  rmSync(snapshot.directory, { recursive: true, force: true });
+
+  expect(() =>
+    createSnapshot(path, (source, destination, mode) => {
+      copyFileSync(source, destination, mode);
+      if (source === journal) writeFileSync(journal, 'changed rollback journal bytes');
     }),
   ).toThrow('Source database changed while the audit snapshot was copied');
   db.close();
@@ -205,6 +235,14 @@ test('more than 1000 candidates avoid variable limits and keep nested arrays bou
       );
       db.run('INSERT INTO entity_links VALUES (?,?,?)', `stress:${index}`, 'wd:QX0000', 'stress');
     }
+    for (let index = 0; index < 5000; index += 1) {
+      db.run(
+        'INSERT INTO entity_links VALUES (?,?,?)',
+        `irrelevant-source:${index}`,
+        `irrelevant-target:${index}`,
+        'stress',
+      );
+    }
   })();
   const started = performance.now();
   const report = auditDatabase(path, 3) as any;
@@ -216,6 +254,8 @@ test('more than 1000 candidates avoid variable limits and keep nested arrays bou
   expect(candidate.linked_works.length).toBe(3);
   expect(candidate.current_ids.length).toBe(3);
   expect(candidate.evidence.length).toBeLessThanOrEqual(3);
+  expect(report.meta.candidate_link_query_plan.join('\n')).toContain('audit_links_source');
+  expect(report.meta.candidate_link_query_plan.join('\n')).toContain('audit_links_target');
   expect(elapsedMs).toBeLessThan(10_000);
   db.close();
 });
@@ -271,12 +311,28 @@ test('hard-link publication failure leaves destination absent and removes tempor
   dirs.push(dir);
   const output = join(dir, 'report.json');
   expect(() =>
-    writeOutput(output, 'report', () => {
-      throw new Error('simulated unsupported hard link');
+    writeOutput(output, 'report', {
+      publish: () => {
+        throw new Error('simulated unsupported hard link');
+      },
     }),
   ).toThrow('Atomic no-clobber output publication failed');
   expect(existsSync(output)).toBe(false);
   expect(readdirSync(dir)).toEqual([]);
+});
+
+test('cleanup failure after hard-link publication remains successful', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omm-audit-output-'));
+  dirs.push(dir);
+  const output = join(dir, 'report.json');
+  const result = writeOutput(output, 'published', {
+    cleanup: () => {
+      throw new Error('simulated unlink failure');
+    },
+  });
+  expect(readFileSync(output, 'utf8')).toBe('published');
+  expect(result.cleanup_warning).toContain('temporary cleanup failed');
+  expect(readdirSync(dir).some((file) => file.endsWith('.tmp'))).toBe(true);
 });
 
 test('missing and invalid databases fail without creating or changing them', () => {

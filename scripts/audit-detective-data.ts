@@ -43,7 +43,11 @@ type Candidate = {
 type Args = { db: string; output?: string; sampleLimit: number; help: boolean };
 type FileState = { exists: boolean; size?: string; mtimeNs?: string };
 type CopyFile = (source: string, destination: string, mode: number) => void;
-type PublishLink = (temporary: string, destination: string) => void;
+type OutputOperations = {
+  publish: (temporary: string, destination: string) => void;
+  cleanup: (temporary: string) => void;
+  remove: (temporary: string) => void;
+};
 
 function stableCompare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -138,6 +142,7 @@ function sourceState(path: string): Record<string, FileState> {
     database: fileState(path),
     wal: fileState(`${path}-wal`),
     shm: fileState(`${path}-shm`),
+    journal: fileState(`${path}-journal`),
   };
 }
 
@@ -159,6 +164,9 @@ export function createSnapshot(
     copy(source, snapshot, constants.COPYFILE_FICLONE);
     if (existsSync(`${source}-wal`)) {
       copy(`${source}-wal`, `${snapshot}-wal`, constants.COPYFILE_FICLONE);
+    }
+    if (existsSync(`${source}-journal`)) {
+      copy(`${source}-journal`, `${snapshot}-journal`, constants.COPYFILE_FICLONE);
     }
     if (JSON.stringify(before) !== JSON.stringify(sourceState(source))) {
       throw new Error(
@@ -229,9 +237,16 @@ function candidateRecords(db: Database, limit: number): Candidate[] {
   ).run(DETECTIVE_CLASS, ...OCCUPATION_SIGNALS);
   db.run('CREATE TEMP TABLE audit_candidates AS SELECT id FROM audit_evidence GROUP BY id');
   db.run('CREATE UNIQUE INDEX audit_candidates_id ON audit_candidates(id)');
+  db.run('CREATE TEMP TABLE audit_links AS SELECT source_id,target_id,method FROM entity_links');
+  db.run('CREATE INDEX audit_links_source ON audit_links(source_id)');
+  db.run('CREATE INDEX audit_links_target ON audit_links(target_id)');
   db.run(`CREATE TEMP TABLE audit_candidate_links AS
     SELECT c.id AS candidate_id,l.source_id,l.target_id,l.method
-    FROM audit_candidates c JOIN entity_links l ON l.source_id=c.id OR l.target_id=c.id`);
+    FROM audit_candidates c JOIN audit_links l INDEXED BY audit_links_source ON l.source_id=c.id
+    UNION ALL
+    SELECT c.id AS candidate_id,l.source_id,l.target_id,l.method
+    FROM audit_candidates c JOIN audit_links l INDEXED BY audit_links_target ON l.target_id=c.id
+    WHERE l.target_id!=l.source_id`);
   db.run('CREATE INDEX audit_candidate_links_id ON audit_candidate_links(candidate_id)');
 
   const entities = db
@@ -389,6 +404,15 @@ function duplicateClusters(db: Database, limit: number): { total: number; sample
   return { total: clusters.length, samples: bounded(clusters, limit) };
 }
 
+function candidateLinkQueryPlan(db: Database): string[] {
+  return [
+    `SELECT c.id FROM audit_candidates c JOIN audit_links l INDEXED BY audit_links_source ON l.source_id=c.id`,
+    `SELECT c.id FROM audit_candidates c JOIN audit_links l INDEXED BY audit_links_target ON l.target_id=c.id`,
+  ].flatMap((sql) =>
+    (db.query(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[]).map((row) => row.detail),
+  );
+}
+
 function buildReport(
   db: Database,
   sourcePath: string,
@@ -431,11 +455,12 @@ function buildReport(
       read_only: true,
       source_opened_by_sqlite: false,
       audit_strategy:
-        'copy database and WAL bytes to an isolated temporary snapshot before opening SQLite',
+        'copy database, WAL, and rollback-journal bytes when present to an isolated temporary snapshot before opening SQLite',
       snapshot_consistency:
-        'best effort: source DB/WAL/SHM size and nanosecond mtime are compared before and after copying; this is not a transactional SQLite backup',
+        'best effort: source DB/WAL/SHM/rollback-journal size and nanosecond mtime are compared before and after copying; this is not a transactional SQLite backup',
       expected_processing_complexity:
         'O(relevant evidence, link, fact, and entity rows + candidates); all nested output arrays are sample-limited',
+      candidate_link_query_plan: candidateLinkQueryPlan(db),
       sample_limit: sampleLimit,
       deterministic_body: true,
     },
@@ -583,19 +608,33 @@ export function auditDatabase(
   }
 }
 
-export function writeOutput(path: string, contents: string, publish: PublishLink = linkSync): void {
+export function writeOutput(
+  path: string,
+  contents: string,
+  operations: Partial<OutputOperations> = {},
+): { cleanup_warning?: string } {
   if (existsSync(path)) throw new Error(`Output already exists: ${path}`);
   const temporary = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  const publish = operations.publish ?? linkSync;
+  const cleanup = operations.cleanup ?? unlinkSync;
+  const remove = operations.remove ?? ((file: string) => rmSync(file, { force: true }));
   try {
     writeFileSync(temporary, contents, { encoding: 'utf8', flag: 'wx' });
     publish(temporary, path);
-    unlinkSync(temporary);
   } catch (error) {
-    rmSync(temporary, { force: true });
+    remove(temporary);
     throw new Error(
       `Atomic no-clobber output publication failed for ${path}: ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
+  }
+  try {
+    cleanup(temporary);
+    return {};
+  } catch (error) {
+    return {
+      cleanup_warning: `Published ${path}, but temporary cleanup failed for ${temporary}: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 
@@ -610,8 +649,11 @@ export function runCli(args = process.argv.slice(2)): number {
     }
     const report = auditDatabase(options.db, options.sampleLimit);
     const json = `${JSON.stringify(report, null, 2)}\n`;
-    if (options.output) writeOutput(options.output, json);
-    else process.stdout.write(json);
+    if (options.output) {
+      const result = writeOutput(options.output, json);
+      if (result.cleanup_warning)
+        process.stderr.write(`detective audit warning: ${result.cleanup_warning}\n`);
+    } else process.stdout.write(json);
     const coverage = report.coverage as {
       entities: number;
       detective_candidates: number;
