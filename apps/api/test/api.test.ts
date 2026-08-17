@@ -133,7 +133,7 @@ function buildTestDatabase(): Database {
     ['wd:Q125970', 'author', '东野圭吾', 'Keigo Higashino', '東野圭吾', ''],
     ['wd:Q347412', 'author', '江户川乱步', 'Edogawa Ranpo', '江戸川乱歩', '（日）江户川乱步'],
     ['wd:Q586362', 'author', '埃勒里·奎因', 'Ellery Queen', '', '埃勒里奎因'],
-    ['douban:a999', 'author', '（日）东野圭吾', '', '', ''],
+    ['douban:a999', 'author', '〔日〕东野圭吾', '', '', ''],
     ['douban:p999', 'publisher', '东野圭吾', '', '', ''],
   ];
   for (const row of searches) {

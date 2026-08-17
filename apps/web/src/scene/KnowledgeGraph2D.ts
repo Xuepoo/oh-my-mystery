@@ -780,10 +780,10 @@ export class KnowledgeGraph2D {
 
   private nodeIdentity(node: GraphNode2D): string {
     const name = node.name
-      .replace(/^[（([【][日中美英法德俄韩港台欧日\w\s]+[）)\]】][、，,\s·.]*/g, '')
+      .replace(/^[（([【〔［][日中美英法德俄韩港台欧日\w\s]+[）)\]】〕］][、，,\s·.]*/g, '')
       .replace(/^(原作|作畫|作画|著|编|譯|译|繪|絵|画|イラスト)[：:\s]+/g, '')
       .replace(/[\u529b]イウ/g, 'カイウ')
-      .replace(/^[（([【()\]】、，,·.\s]+|[（([【()\]】、，,·.\s]+$/g, '')
+      .replace(/^[（([【()\]】〕］、，,·.\s]+|[（([【()\]】〕］、，,·.\s]+$/g, '')
       .replace(
         /[戶亂東島莊綾賞獎獲館筆書國會]/g,
         (value) =>

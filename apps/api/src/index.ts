@@ -512,14 +512,14 @@ app.get('/api/entity/:id/publications', async (c) => {
 function normalizeSearchName(name: string): string {
   return (
     name
-      // Strip nationality/country brackets: (日), （日）, [日], 【日】, (美), （英）, (日)、, （日）· etc.
-      .replace(/^[（([【][日中美英法德俄韩港台欧日\w\s]+[）)\]】][、，,\s·.]*/g, '')
+      // Strip nationality/country brackets: (日), （日）, [日], 【日】, 〔日〕, ［日］ etc.
+      .replace(/^[（([【〔［][日中美英法德俄韩港台欧日\w\s]+[）)\]】〕］][、，,\s·.]*/g, '')
       // Strip roles: 原作：, 作画：, 著：, 译：, 编：
       .replace(/^(原作|作畫|作画|著|编|譯|译|繪|絵|画|イラスト)[：:\s]+/g, '')
       // Replace broken typos like 力イウ -> カイウ
       .replace(/[\u529B]イウ/g, 'カイウ')
       // Strip trailing or leading unclosed brackets and punctuation: (, （, ), ）, 、, ,, ·
-      .replace(/^[（([【()\]】、，,·.\s]+|[（([【()\]】、，,·.\s]+$/g, '')
+      .replace(/^[（([【()\]】〕］、，,·.\s]+|[（([【()\]】〕］、，,·.\s]+$/g, '')
       .trim()
   );
 }
