@@ -73,7 +73,9 @@ export function createFixtureRouter(
     assertComplete(): void {
       for (const route of manifest.routes) {
         if (expectedRouteIds.has(route.id) && requestCounts.get(route.id) === 0) {
-          throw new Error(`Missing fixture request ${route.method} ${route.url}`);
+          throw new Error(
+            `Missing fixture request ${route.method} ${route.url}; counts=${JSON.stringify(Object.fromEntries(requestCounts))}`,
+          );
         }
       }
     },
