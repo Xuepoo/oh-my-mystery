@@ -262,16 +262,22 @@ export async function launchBrowsers(
               });
               await installFixtureRoutes(page.context(), router);
               await page.addInitScript(() => {
-                Object.defineProperty(navigator, 'clipboard', {
-                  configurable: true,
-                  value: {
-                    writeText(value: string) {
-                      (window as unknown as { __OMM_COPIED_TEXT__?: string }).__OMM_COPIED_TEXT__ =
-                        value;
-                      return Promise.resolve();
-                    },
-                  },
-                });
+                const writeText = (value: string) => {
+                  (window as unknown as { __OMM_COPIED_TEXT__?: string }).__OMM_COPIED_TEXT__ =
+                    value;
+                  return Promise.resolve();
+                };
+                try {
+                  Object.defineProperty(navigator, 'clipboard', {
+                    configurable: true,
+                    value: { writeText },
+                  });
+                } catch {
+                  Object.defineProperty(navigator.clipboard, 'writeText', {
+                    configurable: true,
+                    value: writeText,
+                  });
+                }
               });
               let idleAudit: ReturnType<typeof collectIdleAudit> | undefined;
               interaction.push(
@@ -690,7 +696,7 @@ export async function executeScenarioStep(
       return;
     case 'copy-first-field':
       await activateTarget(page, 'casefile.tab.profile', context.viewport.mobile);
-      await activateTarget(page, 'casefile.copy.first', context.viewport.mobile);
+      await activateDrawerTarget(page, 'casefile.copy.first');
       await page
         .waitForFunction(
           (expected) =>
@@ -958,6 +964,32 @@ async function activateClearControl(page: Page): Promise<void> {
     if (!app?.graphClearControl?.handleClick(x, y)) {
       throw new Error('Clear control rejected its instrumented target point');
     }
+  }, point);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+}
+
+async function activateDrawerTarget(page: Page, id: string): Promise<void> {
+  const point = await targetCenter(page, id);
+  await page.evaluate(({ x, y }) => {
+    const drawer = (
+      window as unknown as {
+        __OMM_APP__?: {
+          drawer?: {
+            handlePointerDown(x: number, y: number, pointerType: 'mouse'): boolean;
+            handlePointerUp(x: number, y: number): boolean;
+          };
+        };
+      }
+    ).__OMM_APP__?.drawer;
+    if (!drawer?.handlePointerDown(x, y, 'mouse')) {
+      throw new Error('Drawer rejected its instrumented target point');
+    }
+    if (!drawer.handlePointerUp(x, y)) throw new Error('Drawer did not complete target activation');
   }, point);
   await page.evaluate(
     () =>
