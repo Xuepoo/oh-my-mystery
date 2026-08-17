@@ -13,7 +13,7 @@
 
 ## ✨ 核心特性
 
-- 🚀 **Zero-DOM 纯 Canvas 渲染架构**：采用 VectoJS 与 Three.js 2D/3D 双层渲染管线，摒弃沉重 DOM 树，在万级实体拓扑下保持恒定 60FPS 极速交互。
+- 🚀 **Zero-DOM 纯 Canvas 渲染架构**：采用 VectoJS Canvas 与 `@vectojs/graph-layout` 2D 力导向布局，摒弃沉重 DOM 树，提供高性能知识图谱交互。
 - 📜 **推理演进编年史 (Chronicle Trails)**：沉浸式多幕叙事导览，带你穿梭于「黄金时代三巨头」与「日本推理小说百年演进史」，镜头自动平滑滑行聚焦至历史线索中心。
 - 🔗 **侦探关系探路器 (Pathfinder)**：基于图拓扑的最短关系链推演算法，一键揭示任意两位侦探作家或作品之间的隐秘脉络（如：_柯南·道尔 ↔ 江户川乱步_）。
 - 🌟 **智能文脉关联与推荐 (Recommendations)**：结合图谱拓扑与离线预计算的关联推荐系统，并附带动态文脉共鸣度仪表。
@@ -42,7 +42,7 @@ omm/
 
 | 模块           | 技术选型                             | 说明                                          |
 | :------------- | :----------------------------------- | :-------------------------------------------- |
-| **前端核心**   | VectoJS + Three.js + TypeScript      | Zero-DOM Canvas 渲染与 3D 力导向知识图谱      |
+| **前端核心**   | VectoJS + graph-layout + TypeScript  | Zero-DOM Canvas 渲染与 2D 力导向知识图谱      |
 | **构建工具**   | Vite 8 + Bun                         | 高效模块热更新与代码分包构建                  |
 | **后端框架**   | Hono                                 | 轻量极速 Web 框架，原生运行于 Edge 边缘节点   |
 | **边缘运行时** | Cloudflare Workers + D1              | Serverless 分布式无服务器架构与 SQLite 数据库 |
