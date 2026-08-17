@@ -630,6 +630,7 @@ app.get('/api/search', async (c) => {
   for (const row of searchRows) {
     const id = String(row.id);
     if (seenIds.has(id)) continue;
+    seenIds.add(id);
 
     let rawName = row.name_zh || row.name_en || row.name_ja || id;
     let subtitle =

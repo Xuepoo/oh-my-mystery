@@ -134,9 +134,9 @@ export class NodeRadialMenu extends Entity {
       },
       {
         action: 'expand',
-        icon: loading ? '⏳' : canLoadMore ? '+' : expanded ? '↩' : '✦',
+        icon: loading ? '✕' : canLoadMore ? '+' : expanded ? '↩' : '✦',
         label: loading
-          ? `加载中${progressLabel}`
+          ? `取消${progressLabel}`
           : canLoadMore
             ? `更多${progressLabel}`
             : expanded
