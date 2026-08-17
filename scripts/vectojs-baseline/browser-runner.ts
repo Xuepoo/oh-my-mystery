@@ -735,7 +735,7 @@ export async function executeScenarioStep(
       return;
     }
     case 'follow-related-author':
-      await activateTarget(page, 'casefile.row.relation:101.navigate', context.viewport.mobile);
+      await activateDrawerTarget(page, 'casefile.row.relation:101.navigate');
       await assertPageState(
         page,
         (id) =>
