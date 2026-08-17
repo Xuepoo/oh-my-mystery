@@ -551,7 +551,18 @@ export async function executeScenarioStep(
       return;
     case 'type-search':
       await page.keyboard.type(context.fixture.expected.firstProfileCopy);
-      await page.waitForTimeout(50);
+      await page.waitForFunction(
+        () =>
+          Boolean(
+            (
+              window as unknown as {
+                __OMM_APP__?: { headerBar?: { searchResults?: readonly unknown[] } };
+              }
+            ).__OMM_APP__?.headerBar?.searchResults?.length,
+          ),
+        undefined,
+        { timeout: 5000 },
+      );
       return;
     case 'activate-first-result':
       await page.keyboard.press('Enter');
