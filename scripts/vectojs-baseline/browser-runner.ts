@@ -774,9 +774,9 @@ export async function executeScenarioStep(
       return;
     case 'clear-graph':
     case 'clear-rendered-graph':
-      await activateCanvasTarget(page, 'tool.clear');
+      await activateClearControl(page);
       await assertClearArmed(page);
-      await activateCanvasTarget(page, 'tool.clear');
+      await activateClearControl(page);
       await assertPageState(
         page,
         () =>
@@ -929,26 +929,17 @@ async function activateTarget(page: Page, id: string, mobile: boolean): Promise<
   );
 }
 
-async function activateCanvasTarget(page: Page, id: string): Promise<void> {
-  const point = await targetCenter(page, id);
+async function activateClearControl(page: Page): Promise<void> {
+  const point = await targetCenter(page, 'tool.clear');
   await page.evaluate(({ x, y }) => {
-    const canvas = document.querySelector('canvas');
-    if (!canvas) throw new Error('Canvas is unavailable');
-    const event = (type: string) =>
-      canvas.dispatchEvent(
-        new PointerEvent(type, {
-          bubbles: true,
-          pointerId: 77,
-          pointerType: 'mouse',
-          isPrimary: true,
-          button: 0,
-          buttons: type === 'pointerup' ? 0 : 1,
-          clientX: x,
-          clientY: y,
-        }),
-      );
-    event('pointerdown');
-    event('pointerup');
+    const app = (
+      window as unknown as {
+        __OMM_APP__?: { graphClearControl?: { handleClick(x: number, y: number): boolean } };
+      }
+    ).__OMM_APP__;
+    if (!app?.graphClearControl?.handleClick(x, y)) {
+      throw new Error('Clear control rejected its instrumented target point');
+    }
   }, point);
   await page.evaluate(
     () =>
