@@ -1,10 +1,18 @@
 /// <reference types="vite/client" />
 
-interface ImportMetaEnv {
-  readonly VITE_API_URL?: string;
-  readonly VITE_TURNSTILE_SITE_KEY?: string;
-}
+import type { App } from './App';
 
-interface ImportMeta {
-  readonly env: ImportMetaEnv;
+declare global {
+  interface Window {
+    __OMM_APP__?: App;
+  }
+
+  interface ImportMetaEnv {
+    readonly VITE_API_URL?: string;
+    readonly VITE_TURNSTILE_SITE_KEY?: string;
+  }
+
+  interface ImportMeta {
+    readonly env: ImportMetaEnv;
+  }
 }

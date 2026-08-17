@@ -1,0 +1,32 @@
+{
+  "found": true,
+  "nodes": [
+    {
+      "id": "wd:Q347412",
+      "type": "author",
+      "names": {
+        "labels": {
+          "zh": "江户川乱步"
+        }
+      }
+    },
+    {
+      "id": "wd:Q1002",
+      "type": "work",
+      "names": {
+        "labels": {
+          "zh": "怪人二十面相"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "wd:Q347412",
+      "target": "wd:Q1002",
+      "predicate": "notable_work"
+    }
+  ],
+  "hops": 1,
+  "explanation": "成功连通，共经过 1 条关系跳跃"
+}

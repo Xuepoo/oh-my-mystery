@@ -1,0 +1,14 @@
+{
+  "entityId": "wd:Q35064",
+  "items": [
+    {
+      "factId": 201,
+      "predicate": "influenced_by",
+      "label": "影响关系",
+      "value": "江户川乱步",
+      "copyValue": "江户川乱步",
+      "targetId": "wd:Q347412",
+      "direction": "incoming"
+    }
+  ]
+}

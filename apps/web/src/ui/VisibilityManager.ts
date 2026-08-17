@@ -35,6 +35,14 @@ export class VisibilityManager extends Entity {
     return this.open;
   }
 
+  getInstrumentationTarget(): {
+    id: 'tool.visibility';
+    rect: { x: number; y: number; w: number; h: number };
+  } | null {
+    if (!this.enabled || this.viewport.getHiddenNodes().length === 0) return null;
+    return { id: 'tool.visibility', rect: { ...this.toggleRect } };
+  }
+
   close(): void {
     if (!this.open) return;
     this.open = false;

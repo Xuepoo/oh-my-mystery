@@ -1,0 +1,31 @@
+{
+  "entity": {
+    "id": "wd:Q1001",
+    "type": "work",
+    "names": {
+      "labels": {
+        "zh": "D坂杀人事件"
+      }
+    }
+  },
+  "facts": [
+    {
+      "subject_id": "wd:Q347412",
+      "predicate": "author_of",
+      "object_ref": "wd:Q1001"
+    }
+  ],
+  "neighbors": [
+    {
+      "id": "wd:Q347412",
+      "type": "author",
+      "names": {
+        "labels": {
+          "zh": "江户川乱步"
+        }
+      }
+    }
+  ],
+  "hasMore": false,
+  "total": 1
+}

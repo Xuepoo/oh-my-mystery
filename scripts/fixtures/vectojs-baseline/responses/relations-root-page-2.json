@@ -1,0 +1,14 @@
+{
+  "entityId": "wd:Q347412",
+  "items": [
+    {
+      "factId": 103,
+      "predicate": "notable_work",
+      "label": "代表作",
+      "value": "怪人二十面相",
+      "copyValue": "怪人二十面相",
+      "targetId": "wd:Q1002",
+      "direction": "outgoing"
+    }
+  ]
+}

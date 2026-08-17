@@ -54,6 +54,18 @@ export class ViewportControls extends Entity {
     this.scene?.markDirty();
   }
 
+  getInstrumentationTargets(): readonly {
+    id: 'viewport.fit' | 'viewport.freeze' | 'viewport.reset';
+    rect: { x: number; y: number; w: number; h: number };
+  }[] {
+    if (!this.rendered || !this.visible) return [];
+    return [
+      { id: 'viewport.fit', rect: { ...this.fitBtnRect } },
+      { id: 'viewport.freeze', rect: { ...this.freezeBtnRect } },
+      { id: 'viewport.reset', rect: { ...this.resetBtnRect } },
+    ];
+  }
+
   private drawButton(
     ctx: CanvasRenderingContext2D,
     rect: { x: number; y: number; w: number; h: number },

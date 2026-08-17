@@ -1,0 +1,26 @@
+[
+  {
+    "id": "chronicle-1",
+    "slug": "detective-origins",
+    "title": {
+      "zh": "日本推理文学起点"
+    },
+    "description": {
+      "zh": "从江户川乱步到横沟正史"
+    },
+    "steps": [
+      {
+        "id": "step-1",
+        "title": {
+          "zh": "乱步登场"
+        },
+        "summary": {
+          "zh": "D坂杀人事件发表"
+        },
+        "primaryEntityId": "wd:Q347412",
+        "focusEntityIds": ["wd:Q347412", "wd:Q1001"],
+        "year": 1923
+      }
+    ]
+  }
+]

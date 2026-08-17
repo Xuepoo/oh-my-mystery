@@ -289,6 +289,7 @@ interface CopyTarget extends Rect {
 
 interface NavigationTarget extends Rect {
   targetId: string;
+  key: string;
 }
 
 type PointerTarget =
@@ -387,6 +388,49 @@ export class CasefileDrawer extends Entity {
 
   isDrawerOpen(): boolean {
     return this.isOpen;
+  }
+
+  getInstrumentationState(): {
+    open: boolean;
+    dragging: boolean;
+    entityId: string | null;
+    activeTab: CasefileTab;
+    profileStatus: CasefileSession['profile']['status'];
+    relationsStatus: CasefileSession['relations']['status'];
+    recommendationsStatus: CasefileSession['recommendations']['status'];
+  } {
+    return {
+      open: this.isOpen,
+      dragging: this.dragging,
+      entityId: this.session.entityId,
+      activeTab: this.session.activeTab,
+      profileStatus: this.session.profile.status,
+      relationsStatus: this.session.relations.status,
+      recommendationsStatus: this.session.recommendations.status,
+    };
+  }
+
+  getInstrumentationTargets(): readonly { id: string; rect: Rect }[] {
+    if (!this.isOpen) return [];
+    const targets: { id: string; rect: Rect }[] = [
+      { id: 'casefile.close', rect: { ...this.closeRect } },
+      { id: 'casefile.copy', rect: { ...this.copyAllRect } },
+      ...this.tabRects.map(({ tab, rect }) => ({ id: `casefile.tab.${tab}`, rect: { ...rect } })),
+    ];
+    this.copyTargets.forEach((target, index) => {
+      targets.push({ id: `casefile.copy.${target.feedbackKey}`, rect: { ...target } });
+      if (index === 0) targets.push({ id: 'casefile.copy.first', rect: { ...target } });
+      if (
+        target.feedbackKey.startsWith('relation:') ||
+        target.feedbackKey.startsWith('recommendation:')
+      ) {
+        targets.push({ id: `casefile.row.${target.feedbackKey}`, rect: { ...target } });
+      }
+    });
+    for (const target of this.navigationTargets) {
+      targets.push({ id: `casefile.row.${target.key}.navigate`, rect: { ...target } });
+    }
+    return targets;
   }
 
   isDragging(): boolean {
@@ -831,6 +875,7 @@ export class CasefileDrawer extends Entity {
         w: 44,
         h: 44,
         targetId,
+        key: feedbackKey,
       };
       this.navigationTargets.push(arrow);
       ctx.strokeStyle = Theme.colors.border;

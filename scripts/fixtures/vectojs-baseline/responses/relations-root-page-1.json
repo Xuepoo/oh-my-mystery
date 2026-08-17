@@ -1,0 +1,24 @@
+{
+  "entityId": "wd:Q347412",
+  "items": [
+    {
+      "factId": 101,
+      "predicate": "influenced_by",
+      "label": "影响关系",
+      "value": "横沟正史",
+      "copyValue": "横沟正史",
+      "targetId": "wd:Q35064",
+      "direction": "outgoing"
+    },
+    {
+      "factId": 102,
+      "predicate": "author_of",
+      "label": "作者",
+      "value": "D坂杀人事件",
+      "copyValue": "D坂杀人事件",
+      "targetId": "wd:Q1001",
+      "direction": "outgoing"
+    }
+  ],
+  "nextCursor": "fixture-page-2"
+}

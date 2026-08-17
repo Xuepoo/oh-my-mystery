@@ -1,0 +1,43 @@
+{
+  "entity": {
+    "id": "wd:Q347412",
+    "type": "author",
+    "names": {
+      "labels": {
+        "zh": "江户川乱步",
+        "ja": "江戸川乱歩"
+      }
+    },
+    "bio": "日本推理小说作家与评论家。",
+    "birth": "1894-10-21",
+    "death": "1965-07-28",
+    "country": "JP",
+    "source": "wikidata"
+  },
+  "fields": [
+    {
+      "key": "name",
+      "label": "名称",
+      "value": "江户川乱步",
+      "copyValue": "江户川乱步"
+    },
+    {
+      "key": "type",
+      "label": "类型",
+      "value": "作者",
+      "copyValue": "作者"
+    },
+    {
+      "key": "birth",
+      "label": "出生",
+      "value": "1894-10-21",
+      "copyValue": "1894-10-21"
+    },
+    {
+      "key": "source",
+      "label": "来源",
+      "value": "Wikidata",
+      "copyValue": "Wikidata"
+    }
+  ]
+}

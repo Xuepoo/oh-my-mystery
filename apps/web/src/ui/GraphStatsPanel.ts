@@ -93,6 +93,17 @@ export class GraphStatsPanel extends Entity {
     return this.open;
   }
 
+  getInstrumentationTargets(): readonly { id: string; rect: Rect }[] {
+    if (!this.enabled) return [];
+    const layout = getGraphStatsLayout(this.scene?.width ?? 1280, this.scene?.height ?? 800);
+    return this.open
+      ? [
+          { id: 'tool.stats', rect: { ...layout.toggle } },
+          { id: 'tool.stats.close', rect: { ...layout.close } },
+        ]
+      : [{ id: 'tool.stats', rect: { ...layout.toggle } }];
+  }
+
   close(): void {
     if (!this.open) return;
     this.open = false;

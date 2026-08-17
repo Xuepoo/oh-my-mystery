@@ -93,6 +93,33 @@ export class HeaderBar extends Entity {
     this.domInput = null;
   }
 
+  getInstrumentationTargets(): readonly {
+    id:
+      | 'header.search'
+      | 'header.pathfinder'
+      | 'header.settings'
+      | 'header.chronicle'
+      | 'header.help';
+    rect: { x: number; y: number; w: number; h: number };
+  }[] {
+    const targets: {
+      id:
+        | 'header.search'
+        | 'header.pathfinder'
+        | 'header.settings'
+        | 'header.chronicle'
+        | 'header.help';
+      rect: { x: number; y: number; w: number; h: number };
+    }[] = [
+      { id: 'header.search', rect: { ...this.searchInputRect } },
+      { id: 'header.pathfinder', rect: { ...this.pathfinderBtnRect } },
+      { id: 'header.settings', rect: { ...this.settingsBtnRect } },
+      { id: 'header.chronicle', rect: { ...this.chroniclesBtnRect } },
+      { id: 'header.help', rect: { ...this.helpBtnRect } },
+    ];
+    return targets.filter((target) => target.rect.w > 0 && target.rect.h > 0);
+  }
+
   private initDomInput(): void {
     if (typeof document === 'undefined') return;
 

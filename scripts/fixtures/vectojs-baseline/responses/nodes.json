@@ -1,0 +1,29 @@
+[
+  {
+    "id": "wd:Q347412",
+    "type": "author",
+    "names": {
+      "labels": {
+        "zh": "江户川乱步"
+      }
+    }
+  },
+  {
+    "id": "wd:Q1001",
+    "type": "work",
+    "names": {
+      "labels": {
+        "zh": "D坂杀人事件"
+      }
+    }
+  },
+  {
+    "id": "wd:Q35064",
+    "type": "author",
+    "names": {
+      "labels": {
+        "zh": "横沟正史"
+      }
+    }
+  }
+]

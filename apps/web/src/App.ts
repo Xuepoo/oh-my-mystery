@@ -27,6 +27,10 @@ import { loadRenderSettings, measureDisplayRefresh, saveRenderSettings } from '.
 import type { RenderSettings } from './render-settings';
 import { loadNodeStyleSettings, saveNodeStyleSettings } from './node-style-settings';
 import type { NodeStyleSettings } from './node-style-settings';
+import {
+  createOmmAppInstrumentation,
+  type OmmAppInstrumentation,
+} from './testing/omm-app-instrumentation';
 import { NodeAppearanceModal } from './ui/NodeAppearanceModal';
 import { clearSession, loadSession, saveSession, type GraphSessionSnapshot } from './session';
 
@@ -48,6 +52,7 @@ interface PendingNodeGesture {
 }
 
 export class App {
+  readonly instrumentation: OmmAppInstrumentation;
   readonly scene: Scene;
   readonly canvas: HTMLCanvasElement;
   readonly source: D1DataSource;
@@ -100,6 +105,7 @@ export class App {
   private sessionRestore: GraphSessionSnapshot | null = null;
   private sessionSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private sessionSavingEnabled = true;
+  private ready = false;
 
   // The scene renders on demand; it stays awake while the user is interacting,
   // the physics sim is running, or the camera is animating — plus a short
@@ -332,9 +338,10 @@ export class App {
 
     // 5. Handle Window Resize
     window.addEventListener('resize', this.onResize);
+    this.instrumentation = createOmmAppInstrumentation(this);
   }
 
-  private isEventOverUI(x: number, y: number): boolean {
+  public isEventOverUI(x: number, y: number): boolean {
     return (
       this.helpModal.isPointInside(x, y) ||
       this.headerBar.isPointInside(x, y) ||
@@ -353,6 +360,37 @@ export class App {
       this.controls.isPointInside(x, y) ||
       this.radialMenu.isPointInside(x, y)
     );
+  }
+
+  public getNodeAtScreenPoint(x: number, y: number): GraphNode2D | null {
+    return this.overlayLayer.getNodeAtScreenPoint(x, y);
+  }
+
+  public isReady(): boolean {
+    return this.ready;
+  }
+
+  public getPointerOwnershipSummary(): {
+    activePointerIds: readonly number[];
+    canvasCapturedPointerIds: readonly number[];
+    drawerPointerId: number | null;
+    nodePointerId: number | null;
+    panning: boolean;
+    pinching: boolean;
+    pendingClick: boolean;
+    longPressPending: boolean;
+  } {
+    const activePointerIds = [...this.activePointers.keys()];
+    return {
+      activePointerIds,
+      canvasCapturedPointerIds: activePointerIds.filter((id) => this.canvas.hasPointerCapture(id)),
+      drawerPointerId: this.drawerPointerId,
+      nodePointerId: this.pendingNodeGesture?.pointerId ?? null,
+      panning: this.isPanning,
+      pinching: this.pinchState !== null,
+      pendingClick: this.pendingNodeClick !== null,
+      longPressPending: this.longPressTimer !== null,
+    };
   }
 
   private setupInteractions(): void {
@@ -1068,6 +1106,7 @@ export class App {
     await this.viewport.init();
     const session = this.sessionRestore || loadSession();
     if (session) this.restoreSession(session);
+    this.ready = true;
   }
 
   private scheduleSessionSave(): void {

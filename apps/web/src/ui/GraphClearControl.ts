@@ -20,6 +20,17 @@ export class GraphClearControl extends Entity {
     this.scene?.markDirty();
   }
 
+  getInstrumentationState(): { armed: boolean } {
+    return { armed: performance.now() <= this.armedUntil };
+  }
+
+  getInstrumentationTarget(): {
+    id: 'tool.clear';
+    rect: { x: number; y: number; w: number; h: number };
+  } | null {
+    return this.enabled ? { id: 'tool.clear', rect: { ...this.rect } } : null;
+  }
+
   isPointInside(x: number, y: number): boolean {
     return (
       this.enabled &&

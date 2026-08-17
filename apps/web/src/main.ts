@@ -8,15 +8,13 @@ async function bootstrap() {
   }
 
   const app = new App(canvas);
+  window.__OMM_APP__ = app;
   await app.start();
-
-  // Expose to window for testing / DevTools
-  (window as any).__OMM_APP__ = app;
 
   if (import.meta.hot) {
     import.meta.hot.dispose(() => {
       app.dispose();
-      delete (window as any).__OMM_APP__;
+      delete window.__OMM_APP__;
     });
   }
 }

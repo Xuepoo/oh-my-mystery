@@ -1,0 +1,19 @@
+{
+  "query": "江户川乱步",
+  "results": [
+    {
+      "id": "wd:Q347412",
+      "type": "author",
+      "name": "江户川乱步",
+      "subtitle": "日本推理作家",
+      "score": 1
+    },
+    {
+      "id": "wd:Q9999",
+      "type": "work",
+      "name": "江户川乱步作品研究",
+      "subtitle": "全局检索结果",
+      "score": 0.5
+    }
+  ]
+}

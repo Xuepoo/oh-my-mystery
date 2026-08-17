@@ -1,0 +1,30 @@
+{
+  "entity": {
+    "id": "wd:Q35064",
+    "type": "author",
+    "names": {
+      "labels": {
+        "zh": "横沟正史",
+        "ja": "横溝正史"
+      }
+    },
+    "birth": "1902-05-24",
+    "death": "1981-12-28",
+    "country": "JP",
+    "source": "wikidata"
+  },
+  "fields": [
+    {
+      "key": "name",
+      "label": "名称",
+      "value": "横沟正史",
+      "copyValue": "横沟正史"
+    },
+    {
+      "key": "type",
+      "label": "类型",
+      "value": "作者",
+      "copyValue": "作者"
+    }
+  ]
+}

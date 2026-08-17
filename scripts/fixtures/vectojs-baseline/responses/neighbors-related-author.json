@@ -1,0 +1,31 @@
+{
+  "entity": {
+    "id": "wd:Q35064",
+    "type": "author",
+    "names": {
+      "labels": {
+        "zh": "横沟正史"
+      }
+    }
+  },
+  "facts": [
+    {
+      "subject_id": "wd:Q347412",
+      "predicate": "influenced_by",
+      "object_ref": "wd:Q35064"
+    }
+  ],
+  "neighbors": [
+    {
+      "id": "wd:Q347412",
+      "type": "author",
+      "names": {
+        "labels": {
+          "zh": "江户川乱步"
+        }
+      }
+    }
+  ],
+  "hasMore": false,
+  "total": 1
+}

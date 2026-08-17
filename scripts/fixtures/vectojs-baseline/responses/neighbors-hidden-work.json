@@ -1,0 +1,31 @@
+{
+  "entity": {
+    "id": "wd:Q1002",
+    "type": "work",
+    "names": {
+      "labels": {
+        "zh": "怪人二十面相"
+      }
+    }
+  },
+  "facts": [
+    {
+      "subject_id": "wd:Q347412",
+      "predicate": "notable_work",
+      "object_ref": "wd:Q1002"
+    }
+  ],
+  "neighbors": [
+    {
+      "id": "wd:Q347412",
+      "type": "author",
+      "names": {
+        "labels": {
+          "zh": "江户川乱步"
+        }
+      }
+    }
+  ],
+  "hasMore": false,
+  "total": 1
+}

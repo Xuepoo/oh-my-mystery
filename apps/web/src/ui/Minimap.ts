@@ -95,6 +95,17 @@ export class Minimap extends Entity {
     return true;
   }
 
+  getInstrumentationTarget(): {
+    id: 'tool.minimap';
+    rect: { x: number; y: number; w: number; h: number };
+  } | null {
+    if (!this.enabled || !this.scene) return null;
+    return {
+      id: 'tool.minimap',
+      rect: { x: 24, y: this.scene.height - this.heightPx - 24, w: this.widthPx, h: this.heightPx },
+    };
+  }
+
   isPointInside(x: number, y: number): boolean {
     return this.enabled && this.inRect(x, y, this.getFrameRect());
   }

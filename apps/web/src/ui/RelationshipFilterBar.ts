@@ -142,6 +142,28 @@ export class RelationshipFilterBar extends Entity {
     return [...this.active];
   }
 
+  getInstrumentationState(): { expanded: boolean; activeIndexes: readonly number[] } {
+    return { expanded: this.expanded, activeIndexes: [...this.active] };
+  }
+
+  getInstrumentationTargets(): readonly {
+    id: string;
+    rect: { x: number; y: number; w: number; h: number };
+  }[] {
+    if (!this.enabled) return [];
+    const layout = getRelationshipFilterLayout(this.scene?.width ?? 1280, RELATIONS.length);
+    const targets = [{ id: 'tool.relationship', rect: { ...layout.toggle } }];
+    if (this.expanded) {
+      for (const rect of layout.filters) {
+        targets.push({
+          id: `tool.relationship.${RELATIONS[rect.index]!.predicates[0]}`,
+          rect: { ...rect },
+        });
+      }
+    }
+    return targets;
+  }
+
   getActivePredicates(): readonly string[] {
     const predicates = new Set<string>();
     for (const index of this.active) {

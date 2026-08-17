@@ -20,6 +20,19 @@ export class GraphHistoryControls extends Entity {
     this.scene?.markDirty();
   }
 
+  getInstrumentationState(): { count: number } {
+    return { count: this.count };
+  }
+
+  getInstrumentationTargets(): readonly {
+    id: 'tool.history.undo';
+    rect: { x: number; y: number; w: number; h: number };
+  }[] {
+    return this.enabled && this.count > 0
+      ? [{ id: 'tool.history.undo', rect: { ...this.buttonRect } }]
+      : [];
+  }
+
   isPointInside(x: number, y: number): boolean {
     return this.enabled && this.count > 0 && this.inRect(x, y, this.buttonRect);
   }

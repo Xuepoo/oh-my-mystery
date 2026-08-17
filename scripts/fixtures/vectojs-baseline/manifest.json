@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 1,
+  "entities": {
+    "rootAuthor": "wd:Q347412",
+    "relatedWork": "wd:Q1001",
+    "relatedAuthor": "wd:Q35064",
+    "hiddenWork": "wd:Q1002",
+    "globalOnlyResult": "wd:Q9999"
+  },
+  "expected": {
+    "firstProfileCopy": "江户川乱步"
+  },
+  "controls": [
+    "header.search",
+    "header.pathfinder",
+    "header.settings",
+    "header.chronicle",
+    "header.help",
+    "tool.relationship",
+    "tool.relationship.author_of",
+    "tool.relationship.influenced_by",
+    "tool.relationship.related",
+    "tool.stats",
+    "tool.minimap",
+    "tool.clear",
+    "tool.history.undo",
+    "tool.history.redo",
+    "tool.visibility",
+    "viewport.fit",
+    "viewport.freeze",
+    "viewport.reset",
+    "casefile.close",
+    "casefile.copy",
+    "casefile.tab.profile",
+    "casefile.tab.relations",
+    "casefile.tab.recommendations",
+    "casefile.row.profile.name",
+    "casefile.row.relation.101",
+    "casefile.row.relation.101.arrow",
+    "casefile.row.recommendation.wd:Q1002",
+    "casefile.row.recommendation.wd:Q1002.arrow"
+  ],
+  "allowedContainmentPairs": [
+    ["casefile.row.relation.101", "casefile.row.relation.101.arrow"],
+    ["casefile.row.recommendation.wd:Q1002", "casefile.row.recommendation.wd:Q1002.arrow"]
+  ],
+  "routes": [
+    {
+      "id": "seeds",
+      "method": "GET",
+      "url": "/api/seeds",
+      "status": 200,
+      "delayMs": 20,
+      "response": "responses/seeds.json"
+    },
+    {
+      "id": "nodes-root-related",
+      "method": "GET",
+      "url": "/api/nodes?ids=wd%3AQ347412%2Cwd%3AQ1001%2Cwd%3AQ35064",
+      "status": 200,
+      "delayMs": 15,
+      "response": "responses/nodes.json"
+    },
+    {
+      "id": "search-root",
+      "method": "GET",
+      "url": "/api/search?q=%E6%B1%9F%E6%88%B7%E5%B7%9D%E4%B9%B1%E6%AD%A5&limit=15",
+      "status": 200,
+      "delayMs": 30,
+      "response": "responses/search.json"
+    },
+    {
+      "id": "search-invalid",
+      "method": "GET",
+      "url": "/api/search?q=x&limit=0",
+      "status": 400,
+      "delayMs": 5,
+      "response": "responses/error-invalid-query.json"
+    },
+    {
+      "id": "profile-root",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ347412/profile",
+      "status": 200,
+      "delayMs": 40,
+      "response": "responses/profile-root.json"
+    },
+    {
+      "id": "profile-related-author",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ35064/profile",
+      "status": 200,
+      "delayMs": 40,
+      "response": "responses/profile-related-author.json"
+    },
+    {
+      "id": "profile-missing",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ404/profile",
+      "status": 404,
+      "delayMs": 5,
+      "response": "responses/error-not-found.json"
+    },
+    {
+      "id": "relations-root-page-1",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ347412/relations?limit=30",
+      "status": 200,
+      "delayMs": 45,
+      "response": "responses/relations-root-page-1.json"
+    },
+    {
+      "id": "relations-root-page-2",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ347412/relations?limit=30&cursor=fixture-page-2",
+      "status": 200,
+      "delayMs": 45,
+      "response": "responses/relations-root-page-2.json"
+    },
+    {
+      "id": "relations-related-author",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ35064/relations?limit=30",
+      "status": 200,
+      "delayMs": 45,
+      "response": "responses/relations-related-author.json"
+    },
+    {
+      "id": "recommendations-root",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ347412/recommendations",
+      "status": 200,
+      "delayMs": 50,
+      "response": "responses/recommendations-root.json"
+    },
+    {
+      "id": "neighbors-root",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ347412/neighbors?limit=50&direction=both",
+      "status": 200,
+      "delayMs": 35,
+      "response": "responses/neighbors-root.json"
+    },
+    {
+      "id": "neighbors-related-author",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ35064/neighbors?limit=50&direction=both",
+      "status": 200,
+      "delayMs": 35,
+      "response": "responses/neighbors-related-author.json"
+    },
+    {
+      "id": "neighbors-related-work",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ1001/neighbors?limit=50&direction=both",
+      "status": 200,
+      "delayMs": 35,
+      "response": "responses/neighbors-related-work.json"
+    },
+    {
+      "id": "neighbors-hidden-work",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ1002/neighbors?limit=50&direction=both",
+      "status": 200,
+      "delayMs": 35,
+      "response": "responses/neighbors-hidden-work.json"
+    },
+    {
+      "id": "path-root-hidden",
+      "method": "GET",
+      "url": "/api/path?source=wd%3AQ347412&target=wd%3AQ1002",
+      "status": 200,
+      "delayMs": 60,
+      "response": "responses/path.json"
+    },
+    {
+      "id": "chronicles",
+      "method": "GET",
+      "url": "/api/chronicles",
+      "status": 200,
+      "delayMs": 25,
+      "response": "responses/chronicles.json"
+    },
+    {
+      "id": "chronicle-detail",
+      "method": "GET",
+      "url": "/api/chronicles/detective-origins",
+      "status": 200,
+      "delayMs": 25,
+      "response": "responses/chronicle-detail.json"
+    },
+    {
+      "id": "stats",
+      "method": "GET",
+      "url": "/api/stats",
+      "status": 200,
+      "delayMs": 20,
+      "response": "responses/stats.json"
+    },
+    {
+      "id": "invalid-cursor",
+      "method": "GET",
+      "url": "/api/entity/wd%3AQ347412/relations?limit=30&cursor=invalid",
+      "status": 400,
+      "delayMs": 5,
+      "response": "responses/error-invalid-query.json"
+    }
+  ]
+}
