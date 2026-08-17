@@ -31,6 +31,7 @@ export interface GraphNeighborhood2D {
   neighbors: GraphNode2D[];
   nextCursor?: string;
   hasMore: boolean;
+  total?: number;
   failed?: boolean;
 }
 

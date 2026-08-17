@@ -232,12 +232,13 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
         ? "(object_ref = ? AND subject_id IS NOT NULL AND subject_id != '')"
         : `((subject_id = ? AND object_ref IS NOT NULL AND object_ref != '')
            OR (object_ref = ? AND subject_id IS NOT NULL AND subject_id != ''))`;
-  const bindings: unknown[] = direction === 'both' ? [id, id] : [id];
+  const baseBindings: unknown[] = direction === 'both' ? [id, id] : [id];
   let predicateClause = '';
   if (predicates?.length) {
     predicateClause = ` AND predicate IN (${predicates.map(() => '?').join(',')})`;
-    bindings.push(...predicates);
   }
+  const bindings: unknown[] = [...baseBindings];
+  if (predicates?.length) bindings.push(...predicates);
   let cursorClause = '';
   if (cursor) {
     const [priority, factId] = cursor.split(':');
@@ -263,6 +264,18 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
 
   const pageRows = (rawFactsRows.results || []).slice(0, limit) as any[];
   const hasMore = (rawFactsRows.results || []).length > limit;
+
+  const totalRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS total
+       FROM facts
+      WHERE ${directionClause}
+        AND predicate NOT IN ('translator', 'publisher_name', 'genre')
+        AND (predicate != 'aozora_role' OR object_value = '著者')
+        ${predicateClause}`,
+  )
+    .bind(...baseBindings, ...(predicates ?? []))
+    .first();
+  const total = Number((totalRow as any)?.total ?? 0);
 
   const rawFacts: OmmFact[] = pageRows.map((row: any) => ({
     subject_id: row.subject_id,
@@ -373,6 +386,7 @@ app.get('/api/entity/:id/neighbors', turnstileVerify, async (c) => {
     facts: validFacts,
     neighbors: kgNeighbors,
     hasMore,
+    total,
     nextCursor:
       hasMore && pageRows.length
         ? `${pageRows.at(-1)!.predicate === 'publisher' ? 0 : 1}:${pageRows.at(-1)!.id}`
@@ -601,8 +615,18 @@ app.get('/api/search', async (c) => {
   const results: SearchResultItem[] = [];
   const searchRows = (rows.results || []) as any[];
   const seenIds = new Set<string>();
-  const seenNames = new Set<string>();
 
+  interface SearchCandidate {
+    id: string;
+    type: string;
+    name: string;
+    subtitle?: string;
+    simpKey: string;
+    wd: boolean;
+    personish: boolean;
+  }
+
+  const candidates: SearchCandidate[] = [];
   for (const row of searchRows) {
     const id = String(row.id);
     if (seenIds.has(id)) continue;
@@ -644,21 +668,52 @@ app.get('/api/search', async (c) => {
       }
     }
 
-    const simpKey = toSimpKey(cleanName);
-    const nameKey = `${row.type || 'other'}|${simpKey}`;
-    if (seenNames.has(nameKey)) continue;
-
-    seenIds.add(id);
-    seenNames.add(nameKey);
-
-    results.push({
+    const type = row.type || 'other';
+    candidates.push({
       id,
-      type: row.type || 'other',
+      type,
       name: cleanName,
       subtitle,
-      score: 1.0,
+      simpKey: toSimpKey(cleanName),
+      wd: id.startsWith('wd:'),
+      personish: type === 'author' || type === 'person',
     });
+  }
 
+  // Group by normalized name. A canonical Wikidata person claims the whole name
+  // group: same-name duplicates from other sources (including polluted
+  // publisher/work rows) collapse into it. Distinct Wikidata entities sharing a
+  // name (homonyms) all survive. Without a canonical person, dedupe per type as
+  // before so legitimate publishers/works with the same name stay visible.
+  const nameGroups = new Map<string, SearchCandidate[]>();
+  for (const candidate of candidates) {
+    const group = nameGroups.get(candidate.simpKey) ?? [];
+    group.push(candidate);
+    nameGroups.set(candidate.simpKey, group);
+  }
+  for (const group of nameGroups.values()) {
+    const canonicalPerson = group.find((candidate) => candidate.wd && candidate.personish);
+    const keep = canonicalPerson
+      ? group.filter((candidate) => candidate.wd)
+      : (() => {
+          const seenTypes = new Set<string>();
+          return group.filter((candidate) => {
+            if (seenTypes.has(candidate.type)) return false;
+            seenTypes.add(candidate.type);
+            return true;
+          });
+        })();
+    for (const candidate of keep) {
+      seenIds.add(candidate.id);
+      results.push({
+        id: candidate.id,
+        type: candidate.type,
+        name: candidate.name,
+        subtitle: candidate.subtitle,
+        score: 1.0,
+      });
+      if (results.length >= limit) break;
+    }
     if (results.length >= limit) break;
   }
 

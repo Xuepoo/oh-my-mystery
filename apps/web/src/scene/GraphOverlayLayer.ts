@@ -140,15 +140,17 @@ export class GraphOverlayLayer extends Entity {
     const ctx = getCanvasCtx(r);
     this.viewport.update();
 
+    const nodes = this.viewport.getNodes();
+    const anyLoading = nodes.some((node) => this.viewport.isNodeLoading(node.id));
     // Ambient ripple only pulses while the graph is visibly alive (physics or
-    // camera motion); at rest it resets so a half-expanded ring never freezes.
-    if (this.viewport.isPhysicsActive() || this.viewport.isCameraAnimating()) {
+    // camera motion) or a page fetch is in flight; at rest it resets so a
+    // half-expanded ring never freezes.
+    if (this.viewport.isPhysicsActive() || this.viewport.isCameraAnimating() || anyLoading) {
       this.pulsePhase += 0.06;
       this.ripplePhase = (this.ripplePhase + 0.03) % 1;
     } else {
       this.ripplePhase = 0;
     }
-    const nodes = this.viewport.getNodes();
     if (nodes.length === 0) return;
 
     const w = this.scene.width;
@@ -167,6 +169,19 @@ export class GraphOverlayLayer extends Entity {
       const sc = this.viewport.worldToScreen(nx, ny);
       node.sx = sc.x;
       node.sy = sc.y;
+    }
+
+    // 1b. Pulsing halo for nodes with in-flight page fetches
+    for (let i = 0; i < nodeCount; i++) {
+      const node = nodes[i]!;
+      if (!this.viewport.isNodeLoading(node.id)) continue;
+      if (node.sx === undefined || node.sy === undefined) continue;
+      const pulse = (Math.sin(this.pulsePhase * 4) + 1) / 2;
+      ctx.strokeStyle = `rgba(255, 217, 142, ${(0.35 + pulse * 0.4).toFixed(3)})`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(node.sx, node.sy, (node.radius ?? 8) + 10 + pulse * 5, 0, Math.PI * 2);
+      ctx.stroke();
     }
 
     // 2. Batched Relational Connection Threads (Links/Edges)

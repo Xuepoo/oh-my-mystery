@@ -285,6 +285,8 @@ export class App {
       isPinned: (id) => this.viewport.isNodePinned(id),
       isExpanded: (id) => this.viewport.isNodeExpanded(id),
       canLoadMore: (id) => this.viewport.canLoadMore(id),
+      isNodeLoading: (id) => this.viewport.isNodeLoading(id),
+      getExpansionProgress: (id) => this.viewport.getExpansionProgress(id),
       onAction: (action, node) => {
         if (action === 'pin') {
           this.viewport.toggleNodePinned(node.id);
@@ -483,6 +485,7 @@ export class App {
       const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
       if (hitNode) {
         this.draggedNode = hitNode;
+        this.viewport.clearHoverPin();
         const worldPos = this.viewport.screenToWorld(x, y);
         this.viewport.graph.pinNode(hitNode.id, worldPos.x, worldPos.y);
         this.scene.markDirty();
@@ -681,8 +684,12 @@ export class App {
       if (!this.isEventOverUI(x, y)) {
         const hitNode = this.overlayLayer.getNodeAtScreenPoint(x, y);
         this.overlayLayer.setHoveredEntity(hitNode);
+        // Temporarily pin the hovered node so it stops drifting under the
+        // cursor; permanent pins and drags take precedence.
+        this.viewport.setHoverPinned(hitNode?.id ?? null);
       } else {
         this.overlayLayer.setHoveredEntity(null);
+        this.viewport.setHoverPinned(null);
       }
     }
   };

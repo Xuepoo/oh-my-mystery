@@ -133,6 +133,8 @@ function buildTestDatabase(): Database {
     ['wd:Q125970', 'author', '东野圭吾', 'Keigo Higashino', '東野圭吾', ''],
     ['wd:Q347412', 'author', '江户川乱步', 'Edogawa Ranpo', '江戸川乱歩', '（日）江户川乱步'],
     ['wd:Q586362', 'author', '埃勒里·奎因', 'Ellery Queen', '', '埃勒里奎因'],
+    ['douban:a999', 'author', '（日）东野圭吾', '', '', ''],
+    ['douban:p999', 'publisher', '东野圭吾', '', '', ''],
   ];
   for (const row of searches) {
     insertSearch.run(...row);
@@ -261,6 +263,7 @@ describe('OMM Backend API Endpoints', () => {
     expect(firstBody.facts[0].predicate).toBe('publisher');
     expect(firstBody.hasMore).toBe(true);
     expect(firstBody.nextCursor).toBeString();
+    expect(firstBody.total).toBe(3);
 
     const second = await app.request(
       `/api/entity/test:publisher/neighbors?limit=1&cursor=${encodeURIComponent(firstBody.nextCursor)}`,
@@ -272,6 +275,7 @@ describe('OMM Backend API Endpoints', () => {
     expect(secondBody.facts).toHaveLength(1);
     expect(secondBody.facts[0].subject_id).not.toBe(firstBody.facts[0].subject_id);
     expect(secondBody.facts[0].predicate).toBe('publisher');
+    expect(secondBody.total).toBe(3);
   });
 
   it('filters neighbor pages by direction and predicate', async () => {
@@ -433,6 +437,17 @@ describe('OMM Backend API Endpoints', () => {
     expect(authorHit).toBeDefined();
     expect(authorHit.name).not.toContain('（日）');
     expect(authorHit.name).not.toContain('(');
+  });
+
+  it('GET /api/search collapses same-name pollution into the canonical Wikidata person', async () => {
+    const res = await app.request('/api/search?q=东野圭吾', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    const ids = (body.results as any[]).map((result) => result.id);
+    expect(ids).toContain('wd:Q125970');
+    expect(ids).not.toContain('douban:a999');
+    expect(ids).not.toContain('douban:p999');
+    expect(ids.filter((id) => id !== 'wd:Q125970' && id.includes('东野'))).toHaveLength(0);
   });
 });
 

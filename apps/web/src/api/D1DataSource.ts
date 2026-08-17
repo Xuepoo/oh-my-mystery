@@ -139,6 +139,7 @@ export class D1DataSource {
         neighbors: any[];
         nextCursor?: string;
         hasMore?: boolean;
+        total?: number;
       };
 
       const rawNeighbors: GraphNode2D[] = (data.neighbors || []).map((n) => this.formatNode(n));
@@ -167,6 +168,7 @@ export class D1DataSource {
         neighbors: rawNeighbors,
         nextCursor: data.nextCursor,
         hasMore: Boolean(data.hasMore && data.nextCursor),
+        total: typeof data.total === 'number' ? data.total : undefined,
       };
 
       this.cacheSet(cacheKey, neighborhood);
