@@ -686,12 +686,26 @@ export async function executeScenarioStep(
       return;
     case 'copy-first-field':
       await activateTarget(page, 'casefile.copy.first', context.viewport.mobile);
-      await assertPageState(
-        page,
-        (expected) =>
-          (window as unknown as { __OMM_COPIED_TEXT__?: string }).__OMM_COPIED_TEXT__ === expected,
-        context.fixture.expected.firstProfileCopy,
-      );
+      await page
+        .waitForFunction(
+          (expected) =>
+            (window as unknown as { __OMM_COPIED_TEXT__?: string }).__OMM_COPIED_TEXT__ ===
+            expected,
+          context.fixture.expected.firstProfileCopy,
+          { timeout: 5000 },
+        )
+        .catch(async (error) => {
+          const state = await page.evaluate(() => ({
+            copied: (window as unknown as { __OMM_COPIED_TEXT__?: string }).__OMM_COPIED_TEXT__,
+            clipboard: typeof navigator.clipboard?.writeText,
+            targets: (
+              window as unknown as { __OMM_APP__?: { instrumentation?: { targets: unknown } } }
+            ).__OMM_APP__?.instrumentation?.targets,
+          }));
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)} state=${JSON.stringify(state)}`,
+          );
+        });
       return;
     case 'scroll-casefile':
     case 'scroll-from-copy-field-without-copy': {
