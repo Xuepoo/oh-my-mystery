@@ -34,6 +34,7 @@
     "casefile.tab.profile",
     "casefile.tab.relations",
     "casefile.tab.recommendations",
+    "casefile.relations.load-more",
     "casefile.row.profile.name",
     "casefile.row.relation:101",
     "casefile.row.relation:101.navigate",

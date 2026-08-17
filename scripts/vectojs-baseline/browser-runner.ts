@@ -683,7 +683,10 @@ export async function executeScenarioStep(
       await assertDrawer(page, 'recommendationsStatus', 'ready');
       return;
     case 'load-relation-page':
-      await page.mouse.wheel(0, 1000);
+      await activateTarget(page, 'casefile.tab.relations', context.viewport.mobile);
+      await assertDrawer(page, 'relationsStatus', 'ready');
+      await activateTarget(page, 'casefile.relations.load-more', context.viewport.mobile);
+      await waitForStablePredicate(page, 'animationFree');
       return;
     case 'copy-first-field':
       await activateTarget(page, 'casefile.tab.profile', context.viewport.mobile);

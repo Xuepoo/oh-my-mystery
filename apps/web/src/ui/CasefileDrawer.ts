@@ -430,6 +430,8 @@ export class CasefileDrawer extends Entity {
     for (const target of this.navigationTargets) {
       targets.push({ id: `casefile.row.${target.key}.navigate`, rect: { ...target } });
     }
+    if (this.loadMoreRect)
+      targets.push({ id: 'casefile.relations.load-more', rect: { ...this.loadMoreRect } });
     return targets;
   }
 
