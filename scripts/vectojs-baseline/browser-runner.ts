@@ -821,16 +821,33 @@ export async function executeScenarioStep(
       await assertFiniteGeometry(page);
       return;
     case 'await-idle':
-      await waitForStablePredicate(page, 'animationFree');
+      await page.waitForFunction(
+        () => {
+          const instrumentation = (
+            window as unknown as {
+              __OMM_APP__?: { instrumentation?: { animationFree: boolean; sceneAlive: boolean } };
+            }
+          ).__OMM_APP__?.instrumentation;
+          return instrumentation?.animationFree === true && instrumentation.sceneAlive === false;
+        },
+        undefined,
+        { timeout: 10000 },
+      );
       return;
     case 'observe-120-frames': {
       const frames = await page.evaluate(async () => {
         const output: string[][] = [];
         for (let index = 0; index < 120; index += 1) {
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-          const free = (
-            window as unknown as { __OMM_APP__?: { instrumentation?: { animationFree: boolean } } }
-          ).__OMM_APP__?.instrumentation?.animationFree;
+          const instrumentation = (
+            window as unknown as {
+              __OMM_APP__?: {
+                instrumentation?: { animationFree: boolean; sceneAlive: boolean };
+              };
+            }
+          ).__OMM_APP__?.instrumentation;
+          const free =
+            instrumentation?.animationFree === true && instrumentation.sceneAlive === false;
           output.push(free ? [] : ['animation-active']);
         }
         return output;

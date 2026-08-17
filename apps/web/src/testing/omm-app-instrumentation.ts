@@ -27,6 +27,7 @@ interface InstrumentationOwner {
   visibilityManager: App['visibilityManager'];
   isReady: App['isReady'];
   getPointerOwnershipSummary: App['getPointerOwnershipSummary'];
+  isSceneAlive: App['isSceneAlive'];
   isEventOverUI: App['isEventOverUI'];
   getNodeAtScreenPoint: App['getNodeAtScreenPoint'];
 }
@@ -48,6 +49,10 @@ export class OmmAppInstrumentation {
       !this.app.viewport.isCameraAnimating() &&
       !this.app.drawer.hasPendingAnimations()
     );
+  }
+
+  get sceneAlive(): boolean {
+    return this.app.isSceneAlive();
   }
 
   get camera(): { panX: number; panY: number; zoom: number } {
