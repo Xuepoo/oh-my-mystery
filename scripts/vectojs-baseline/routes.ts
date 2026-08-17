@@ -35,7 +35,7 @@ export function createFixtureRouter(
     dependencies.sleep ??
     ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const byRequest = new Map(
-    manifest.routes.map((route) => [`${route.method} ${route.url}`, route]),
+    manifest.routes.map((route) => [requestKey(route.method, route.url), route]),
   );
   if (byRequest.size !== manifest.routes.length)
     throw new Error('Duplicate fixture route definitions');
@@ -51,7 +51,7 @@ export function createFixtureRouter(
     async handle(playwrightRoute): Promise<void> {
       const request = playwrightRoute.request();
       const url = new URL(request.url());
-      const key = `${request.method()} ${url.pathname}${url.search}`;
+      const key = requestKey(request.method(), `${url.pathname}${url.search}`);
       const fixtureRoute = byRequest.get(key);
       if (!fixtureRoute) throw new Error(`Unknown fixture request ${key}`);
       const count = requestCounts.get(fixtureRoute.id) ?? 0;
@@ -78,4 +78,15 @@ export function createFixtureRouter(
       }
     },
   };
+}
+
+function requestKey(method: string, input: string): string {
+  const url = new URL(input, 'http://fixture.invalid');
+  const query = [...url.searchParams.entries()]
+    .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+      `${leftKey}\0${leftValue}`.localeCompare(`${rightKey}\0${rightValue}`),
+    )
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join('&');
+  return `${method.toUpperCase()} ${url.pathname}${query ? `?${query}` : ''}`;
 }
