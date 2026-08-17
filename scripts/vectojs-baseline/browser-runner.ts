@@ -748,7 +748,7 @@ export async function executeScenarioStep(
       );
       return;
     case 'close-casefile':
-      await activateTarget(page, 'casefile.close', context.viewport.mobile);
+      await activateDrawerTarget(page, 'casefile.close');
       await assertDrawer(page, 'open', false);
       return;
     case 'assert-fixture-requests-and-copy':
