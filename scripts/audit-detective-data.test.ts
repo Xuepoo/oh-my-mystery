@@ -1,15 +1,27 @@
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, test } from 'bun:test';
 import {
   auditDatabase,
+  createSnapshot,
   isDoubanPriceId,
   normalizeDetectiveName,
   reconcileConfidence,
   runCli,
+  writeOutput,
 } from './audit-detective-data';
 
 const dirs: string[] = [];
@@ -35,6 +47,8 @@ function fixture(): { dir: string; path: string; db: Database } {
       ('wd:Q2','Q2','author','{"labels":{"en":"Mistyped Sleuth"},"aliases":{}}','wikidata'),
       ('wd:Q3','Q3','person','{"labels":{"en":"Film Person"},"aliases":{}}','wikidata'),
       ('wd:Q4','Q4','person','{"labels":{"en":"Mistyped Investigator"},"aliases":{}}','wikidata'),
+      ('wd:Q5','Q5','character','{"labels":{"en":"Qualifier Only"},"aliases":{}}','wikidata'),
+      ('wd:Q6','Q6','character','{"labels":{"en":"Malformed Claim"},"aliases":{}}','wikidata'),
       ('work:1',NULL,'work','{"labels":{"zh":"作品"},"aliases":{}}','test'),
       ('work:2',NULL,'work','{"labels":{"zh":"错误系列"},"aliases":{}}','test'),
       ('douban:p7',NULL,'publisher','{"labels":{"zh":"7"},"aliases":{}}','douban'),
@@ -51,7 +65,9 @@ function fixture(): { dir: string; path: string; db: Database } {
       (1,'wikidata','entity:Q1','{"claims":{"P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q3656924"}}}}]}}'),
       (2,'wikidata','entity:Q2','{"claims":{"P106":[{"mainsnak":{"datavalue":{"value":{"id":"Q1058617"}}}}]}}'),
       (3,'wikidata','entity:Q3','{"claims":{"P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q11424"}}}}]}}'),
-      (4,'wikidata','entity:Q4','{"claims":{"P106":[{"mainsnak":{"datavalue":{"value":{"id":"Q2271194"}}}}]}}')`,
+      (4,'wikidata','entity:Q4','{"claims":{"P106":[{"mainsnak":{"datavalue":{"value":{"id":"Q2271194"}}}}]}}'),
+      (5,'wikidata','entity:Q5','{"claims":{"P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q5"}}},"qualifiers":{"P999":[{"datavalue":{"value":{"id":"Q3656924"}}}]},"references":[{"snaks":{"P999":[{"datavalue":{"value":{"id":"Q3656924"}}}]}}]}]}}'),
+      (6,'wikidata','entity:Q6','{"claims":{"P31":[{"mainsnak":null}],"P106":[null,{"references":[{"snaks":{"P999":[{"datavalue":{"value":{"id":"Q1058617"}}}]}}]}]}}')`,
   );
   return { dir, path, db };
 }
@@ -118,12 +134,89 @@ test('WAL snapshot leaves database, WAL, and SHM bytes and metadata unchanged', 
   expect(report.coverage.detective_candidates).toBe(3);
   expect(report.coverage.candidate_confidence_tiers.high).toBe(1);
   expect(report.coverage.candidate_confidence_tiers.conflict).toBe(2);
+  expect(report.candidates.some((candidate: any) => candidate.id === 'wd:Q5')).toBe(false);
+  expect(report.candidates.some((candidate: any) => candidate.id === 'wd:Q6')).toBe(false);
   expect(report.candidates.find((candidate: any) => candidate.id === 'wd:Q2').conflicts).toEqual([
     'detective evidence contradicts entity type author',
   ]);
   expect(report.candidates.find((candidate: any) => candidate.id === 'wd:Q4').conflicts).toEqual([
     'detective evidence contradicts entity type person',
   ]);
+  db.close();
+});
+
+test('snapshot copy detects concurrent source metadata changes and cleans up', () => {
+  const { path, db } = fixture();
+  expect(() =>
+    createSnapshot(path, (source, destination, mode) => {
+      copyFileSync(source, destination, mode);
+      if (source === path) {
+        const changed = new Date(Date.now() + 10_000);
+        utimesSync(path, changed, changed);
+      }
+    }),
+  ).toThrow('Source database changed while the audit snapshot was copied');
+  db.close();
+});
+
+test('qualifier, reference, null, and malformed claims produce zero candidates', () => {
+  const { path, db } = fixture();
+  db.run("DELETE FROM raw_fetch WHERE key IN ('entity:Q1','entity:Q2','entity:Q4')");
+  const report = auditDatabase(path) as any;
+  expect(report.coverage.detective_candidates).toBe(0);
+  expect(report.candidates).toEqual([]);
+  db.close();
+});
+
+test('more than 1000 candidates avoid variable limits and keep nested arrays bounded', () => {
+  const { path, db } = fixture();
+  const insertEntity = db.prepare('INSERT INTO entities VALUES (?,?,?,?,?)');
+  const insertRaw = db.prepare('INSERT INTO raw_fetch VALUES (?,?,?,?)');
+  db.transaction(() => {
+    for (let index = 0; index < 1100; index += 1) {
+      const qid = `QX${index.toString().padStart(4, '0')}`;
+      insertEntity.run(
+        `wd:${qid}`,
+        qid,
+        'character',
+        JSON.stringify({
+          labels: { en: `Candidate ${index}` },
+          aliases: { en: Array.from({ length: 8 }, (_, alias) => `Alias ${index}-${alias}`) },
+        }),
+        'wikidata',
+      );
+      insertRaw.run(
+        100 + index,
+        'wikidata',
+        `entity:${qid}`,
+        '{"claims":{"P31":[{"mainsnak":{"datavalue":{"value":{"id":"Q3656924"}}}}]}}',
+      );
+    }
+    for (let index = 0; index < 8; index += 1) {
+      db.run(
+        'INSERT INTO facts VALUES (?,?,?,?,?,?,?)',
+        100 + index,
+        `stress-work:${index}`,
+        'characters',
+        'wd:QX0000',
+        null,
+        null,
+        'stress',
+      );
+      db.run('INSERT INTO entity_links VALUES (?,?,?)', `stress:${index}`, 'wd:QX0000', 'stress');
+    }
+  })();
+  const started = performance.now();
+  const report = auditDatabase(path, 3) as any;
+  const elapsedMs = performance.now() - started;
+  expect(report.coverage.detective_candidates).toBe(1103);
+  const candidate = report.candidates.find((item: any) => item.id === 'wd:QX0000');
+  expect(candidate.aliases.length).toBe(3);
+  expect(candidate.linked_work_count).toBe(8);
+  expect(candidate.linked_works.length).toBe(3);
+  expect(candidate.current_ids.length).toBe(3);
+  expect(candidate.evidence.length).toBeLessThanOrEqual(3);
+  expect(elapsedMs).toBeLessThan(10_000);
   db.close();
 });
 
@@ -171,6 +264,19 @@ test('CLI help uses stdout and output errors do not overwrite destinations', () 
   expect(runCli(['--db', path, '--output', output])).toBe(1);
   expect(readFileSync(output, 'utf8')).toBe('keep');
   db.close();
+});
+
+test('hard-link publication failure leaves destination absent and removes temporary output', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'omm-audit-output-'));
+  dirs.push(dir);
+  const output = join(dir, 'report.json');
+  expect(() =>
+    writeOutput(output, 'report', () => {
+      throw new Error('simulated unsupported hard link');
+    }),
+  ).toThrow('Atomic no-clobber output publication failed');
+  expect(existsSync(output)).toBe(false);
+  expect(readdirSync(dir)).toEqual([]);
 });
 
 test('missing and invalid databases fail without creating or changing them', () => {

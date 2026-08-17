@@ -5,7 +5,6 @@ import {
   existsSync,
   linkSync,
   mkdtempSync,
-  renameSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -42,7 +41,9 @@ type Candidate = {
   conflicts: string[];
 };
 type Args = { db: string; output?: string; sampleLimit: number; help: boolean };
-type FileState = { exists: boolean; size?: number; mtimeMs?: number };
+type FileState = { exists: boolean; size?: string; mtimeNs?: string };
+type CopyFile = (source: string, destination: string, mode: number) => void;
+type PublishLink = (temporary: string, destination: string) => void;
 
 function stableCompare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -128,8 +129,8 @@ export function reconcileConfidence(input: {
 
 function fileState(path: string): FileState {
   if (!existsSync(path)) return { exists: false };
-  const stat = statSync(path);
-  return { exists: true, size: stat.size, mtimeMs: stat.mtimeMs };
+  const stat = statSync(path, { bigint: true });
+  return { exists: true, size: stat.size.toString(), mtimeNs: stat.mtimeNs.toString() };
 }
 
 function sourceState(path: string): Record<string, FileState> {
@@ -140,7 +141,10 @@ function sourceState(path: string): Record<string, FileState> {
   };
 }
 
-function createSnapshot(source: string): {
+export function createSnapshot(
+  source: string,
+  copy: CopyFile = copyFileSync,
+): {
   path: string;
   directory: string;
   sourceState: Record<string, FileState>;
@@ -152,9 +156,9 @@ function createSnapshot(source: string): {
   const directory = mkdtempSync(join(tmpdir(), 'omm-detective-audit-'));
   const snapshot = join(directory, 'snapshot.sqlite');
   try {
-    copyFileSync(source, snapshot, constants.COPYFILE_FICLONE);
+    copy(source, snapshot, constants.COPYFILE_FICLONE);
     if (existsSync(`${source}-wal`)) {
-      copyFileSync(`${source}-wal`, `${snapshot}-wal`, constants.COPYFILE_FICLONE);
+      copy(`${source}-wal`, `${snapshot}-wal`, constants.COPYFILE_FICLONE);
     }
     if (JSON.stringify(before) !== JSON.stringify(sourceState(source))) {
       throw new Error(
@@ -192,105 +196,153 @@ function requireSchema(db: Database): void {
   }
 }
 
+function appendBounded(
+  map: Map<string, string[]>,
+  key: string,
+  value: string,
+  limit: number,
+): void {
+  const values = map.get(key) ?? [];
+  if (values.length < limit && !values.includes(value)) values.push(value);
+  map.set(key, values);
+}
+
 function candidateRecords(db: Database, limit: number): Candidate[] {
   const occupationPlaceholders = OCCUPATION_SIGNALS.map(() => '?').join(',');
-  const rows = db
+  db.run(`CREATE TEMP TABLE audit_evidence (
+    id TEXT NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL,
+    PRIMARY KEY (id,kind,value)
+  ) WITHOUT ROWID`);
+  db.query(
+    `INSERT OR IGNORE INTO audit_evidence
+     SELECT e.id,'P31',json_extract(claim.value,'$.mainsnak.datavalue.value.id')
+     FROM entities e JOIN raw_fetch r ON r.source='wikidata' AND r.key='entity:'||e.qid
+     JOIN json_each(CASE WHEN json_valid(r.raw_json)
+       THEN COALESCE(json_extract(r.raw_json,'$.claims.P31'),'[]') ELSE '[]' END) claim
+     WHERE json_extract(claim.value,'$.mainsnak.datavalue.value.id')=?
+     UNION ALL
+     SELECT e.id,'P106',json_extract(claim.value,'$.mainsnak.datavalue.value.id')
+     FROM entities e JOIN raw_fetch r ON r.source='wikidata' AND r.key='entity:'||e.qid
+     JOIN json_each(CASE WHEN json_valid(r.raw_json)
+       THEN COALESCE(json_extract(r.raw_json,'$.claims.P106'),'[]') ELSE '[]' END) claim
+     WHERE json_extract(claim.value,'$.mainsnak.datavalue.value.id') IN (${occupationPlaceholders})`,
+  ).run(DETECTIVE_CLASS, ...OCCUPATION_SIGNALS);
+  db.run('CREATE TEMP TABLE audit_candidates AS SELECT id FROM audit_evidence GROUP BY id');
+  db.run('CREATE UNIQUE INDEX audit_candidates_id ON audit_candidates(id)');
+  db.run(`CREATE TEMP TABLE audit_candidate_links AS
+    SELECT c.id AS candidate_id,l.source_id,l.target_id,l.method
+    FROM audit_candidates c JOIN entity_links l ON l.source_id=c.id OR l.target_id=c.id`);
+  db.run('CREATE INDEX audit_candidate_links_id ON audit_candidate_links(candidate_id)');
+
+  const entities = db
     .query(
-      `WITH evidence AS (
-        SELECT e.id,e.qid,e.type,e.names_json,e.source,'P31' AS kind,j.value AS value
-        FROM entities e JOIN raw_fetch r ON r.source='wikidata' AND r.key='entity:'||e.qid
-        JOIN json_tree(r.raw_json,'$.claims.P31') j ON j.key='id'
-        WHERE json_valid(r.raw_json) AND j.value=?
-        UNION ALL
-        SELECT e.id,e.qid,e.type,e.names_json,e.source,'P106' AS kind,j.value AS value
-        FROM entities e JOIN raw_fetch r ON r.source='wikidata' AND r.key='entity:'||e.qid
-        JOIN json_tree(r.raw_json,'$.claims.P106') j ON j.key='id'
-        WHERE json_valid(r.raw_json) AND j.value IN (${occupationPlaceholders})
-      ) SELECT * FROM evidence ORDER BY id,kind,value`,
+      `SELECT e.id,e.qid,e.type,e.names_json,e.source,
+       EXISTS(SELECT 1 FROM audit_evidence a WHERE a.id=e.id AND a.kind='P31' AND a.value=?) AS explicit_class,
+       EXISTS(SELECT 1 FROM audit_evidence a WHERE a.id=e.id AND a.kind='P106' AND a.value IN (${MEDIUM_OCCUPATIONS.size === 0 ? "''" : [...MEDIUM_OCCUPATIONS].map(() => '?').join(',')})) AS medium
+       FROM entities e JOIN audit_candidates c ON c.id=e.id ORDER BY e.id`,
     )
-    .all(DETECTIVE_CLASS, ...OCCUPATION_SIGNALS) as {
+    .all(DETECTIVE_CLASS, ...MEDIUM_OCCUPATIONS) as {
     id: string;
     qid: string | null;
     type: string;
     names_json: string;
     source: string | null;
-    kind: 'P31' | 'P106';
-    value: string;
+    explicit_class: number;
+    medium: number;
   }[];
-  const grouped = new Map<string, typeof rows>();
-  for (const row of rows) {
-    const group = grouped.get(row.id) ?? [];
-    group.push(row);
-    grouped.set(row.id, group);
+  const workCounts = new Map<string, number>();
+  const workSamples = new Map<string, string[]>();
+  for (const row of db
+    .query(
+      `SELECT f.object_ref AS id,COUNT(DISTINCT f.subject_id) AS count
+       FROM facts f JOIN audit_candidates c ON c.id=f.object_ref
+       WHERE f.predicate IN ('P674','character','characters') GROUP BY f.object_ref ORDER BY f.object_ref`,
+    )
+    .iterate() as Iterable<{ id: string; count: number }>) {
+    workCounts.set(row.id, Number(row.count));
   }
-  const ids = [...grouped.keys()].sort(stableCompare);
-  if (ids.length === 0) return [];
-  const marks = ids.map(() => '?').join(',');
-  const works = db
+  for (const row of db
     .query(
-      `SELECT object_ref,subject_id FROM facts WHERE predicate IN ('P674','character','characters') AND object_ref IN (${marks}) ORDER BY object_ref,subject_id`,
+      `SELECT DISTINCT f.object_ref AS id,f.subject_id
+       FROM facts f JOIN audit_candidates c ON c.id=f.object_ref
+       WHERE f.predicate IN ('P674','character','characters') ORDER BY f.object_ref,f.subject_id`,
     )
-    .all(...ids) as { object_ref: string; subject_id: string }[];
-  const links = db
+    .iterate() as Iterable<{ id: string; subject_id: string }>) {
+    appendBounded(workSamples, row.id, row.subject_id, limit);
+  }
+
+  const evidenceCounts = new Map<string, number>();
+  const evidenceSamples = new Map<string, Evidence[]>();
+  for (const row of db
+    .query('SELECT id,kind,value FROM audit_evidence ORDER BY id,kind,value')
+    .iterate() as Iterable<{ id: string; kind: string; value: string }>) {
+    evidenceCounts.set(row.id, (evidenceCounts.get(row.id) ?? 0) + 1);
+    const values = evidenceSamples.get(row.id) ?? [];
+    if (values.length < limit)
+      values.push({ kind: row.kind, value: row.value, source: 'wikidata' });
+    evidenceSamples.set(row.id, values);
+  }
+
+  const linkCounts = new Map<string, number>();
+  const currentIds = new Map<string, string[]>();
+  const linkEvidence = new Map<string, Evidence[]>();
+  for (const row of db
     .query(
-      `SELECT source_id,target_id,method FROM entity_links WHERE source_id IN (${marks}) OR target_id IN (${marks}) ORDER BY source_id,target_id,method`,
+      'SELECT candidate_id,source_id,target_id,method FROM audit_candidate_links ORDER BY candidate_id,source_id,target_id,method',
     )
-    .all(...ids, ...ids) as { source_id: string; target_id: string; method: string }[];
-  return ids.map((id) => {
-    const group = grouped.get(id)!;
-    const entity = group[0];
-    const evidence: Evidence[] = group.map((row) => ({
-      kind: row.kind,
-      value: row.value,
-      source: row.source,
-    }));
-    const entityLinks = links.filter((link) => link.source_id === id || link.target_id === id);
-    const linkedWorks = sortedUnique(
-      works.filter((row) => row.object_ref === id).map((row) => row.subject_id),
-    );
-    const explicitClass = evidence.some(
-      (item) => item.kind === 'P31' && item.value === DETECTIVE_CLASS,
-    );
-    const medium = evidence.some(
-      (item) => item.kind === 'P106' && MEDIUM_OCCUPATIONS.has(item.value),
-    );
+    .iterate() as Iterable<{
+    candidate_id: string;
+    source_id: string;
+    target_id: string;
+    method: string;
+  }>) {
+    linkCounts.set(row.candidate_id, (linkCounts.get(row.candidate_id) ?? 0) + 1);
+    appendBounded(currentIds, row.candidate_id, row.source_id, limit);
+    appendBounded(currentIds, row.candidate_id, row.target_id, limit);
+    const values = linkEvidence.get(row.candidate_id) ?? [];
+    if (values.length < limit) {
+      values.push({ kind: `entity_link:${row.method}`, value: row.target_id, source: null });
+    }
+    linkEvidence.set(row.candidate_id, values);
+  }
+
+  return entities.map((entity) => {
     const typeConflict = entity.type !== 'character';
     const names = namesFromJson(entity.names_json);
-    const currentIds = sortedUnique([
-      id,
-      ...entityLinks.flatMap((link) => [link.source_id, link.target_id]),
-    ]);
+    const ids = [
+      entity.id,
+      ...sortedUnique(currentIds.get(entity.id) ?? []).filter((current) => current !== entity.id),
+    ];
+    const evidence = [...(evidenceSamples.get(entity.id) ?? [])];
+    for (const item of linkEvidence.get(entity.id) ?? []) {
+      if (evidence.length >= limit) break;
+      evidence.push({ ...item, source: entity.source });
+    }
     return {
-      id,
-      canonical_id: entity.qid ? `wd:${entity.qid}` : id,
-      current_ids: bounded(currentIds, limit),
+      id: entity.id,
+      canonical_id: entity.qid ? `wd:${entity.qid}` : entity.id,
+      current_ids: bounded(ids, limit),
       type: entity.type,
       display_names: bounded(names.names, limit),
       aliases: bounded(names.aliases, limit),
       source_provenance: bounded(
         sortedUnique([
           entity.source ?? 'unknown',
-          ...currentIds.map((current) => current.split(':', 1)[0]),
+          ...ids.map((current) => current.split(':', 1)[0]),
         ]),
         limit,
       ),
-      linked_work_count: linkedWorks.length,
-      linked_works: bounded(linkedWorks, limit),
-      evidence_count: evidence.length + entityLinks.length,
-      evidence: bounded(
-        [
-          ...evidence,
-          ...entityLinks.map((link) => ({
-            kind: `entity_link:${link.method}`,
-            value: link.target_id,
-            source: entity.source,
-          })),
-        ].sort((left, right) =>
-          stableCompare(`${left.kind}\0${left.value}`, `${right.kind}\0${right.value}`),
-        ),
-        limit,
-      ),
-      confidence: typeConflict ? 'conflict' : explicitClass ? 'high' : medium ? 'medium' : 'low',
+      linked_work_count: workCounts.get(entity.id) ?? 0,
+      linked_works: workSamples.get(entity.id) ?? [],
+      evidence_count: (evidenceCounts.get(entity.id) ?? 0) + (linkCounts.get(entity.id) ?? 0),
+      evidence,
+      confidence: typeConflict
+        ? 'conflict'
+        : entity.explicit_class
+          ? 'high'
+          : entity.medium
+            ? 'medium'
+            : 'low',
       conflicts: typeConflict ? [`detective evidence contradicts entity type ${entity.type}`] : [],
     };
   });
@@ -344,15 +396,11 @@ function buildReport(
 ): Record<string, unknown> {
   requireSchema(db);
   const candidates = candidateRecords(db, sampleLimit);
-  const candidateIds = candidates.map((candidate) => candidate.id);
-  const candidateWorkCount =
-    candidateIds.length === 0
-      ? 0
-      : countRows(
-          db,
-          `SELECT COUNT(DISTINCT subject_id) AS count FROM facts WHERE predicate IN ('P674','character','characters') AND object_ref IN (${candidateIds.map(() => '?').join(',')})`,
-          ...candidateIds,
-        );
+  const candidateWorkCount = countRows(
+    db,
+    `SELECT COUNT(DISTINCT f.subject_id) AS count FROM facts f JOIN audit_candidates c ON c.id=f.object_ref
+     WHERE f.predicate IN ('P674','character','characters')`,
+  );
   const duplicates = duplicateClusters(db, sampleLimit);
   const invalidSeriesSamples = db
     .query(
@@ -384,6 +432,10 @@ function buildReport(
       source_opened_by_sqlite: false,
       audit_strategy:
         'copy database and WAL bytes to an isolated temporary snapshot before opening SQLite',
+      snapshot_consistency:
+        'best effort: source DB/WAL/SHM size and nanosecond mtime are compared before and after copying; this is not a transactional SQLite backup',
+      expected_processing_complexity:
+        'O(relevant evidence, link, fact, and entity rows + candidates); all nested output arrays are sample-limited',
       sample_limit: sampleLimit,
       deterministic_body: true,
     },
@@ -462,15 +514,21 @@ function buildReport(
       film_as_person_or_author: countRows(
         db,
         `SELECT COUNT(DISTINCT e.id) AS count FROM raw_fetch r JOIN entities e ON r.key='entity:'||e.qid
-         JOIN json_tree(r.raw_json,'$.claims.P31') j ON j.key='id' AND j.value='Q11424'
-         WHERE r.source='wikidata' AND json_valid(r.raw_json) AND e.type IN ('author','person')`,
+         JOIN json_each(CASE WHEN json_valid(r.raw_json)
+           THEN COALESCE(json_extract(r.raw_json,'$.claims.P31'),'[]') ELSE '[]' END) claim
+         WHERE r.source='wikidata' AND e.type IN ('author','person')
+         AND json_extract(claim.value,'$.mainsnak.datavalue.value.id')='Q11424'`,
       ),
       person_author_claims_by_type: groupedRows(
         db,
-        `SELECT j.value AS key,COUNT(DISTINCT e.id) AS count FROM raw_fetch r JOIN entities e ON r.key='entity:'||e.qid
-         JOIN json_tree(r.raw_json,'$.claims.P31') j ON j.key='id'
-         WHERE r.source='wikidata' AND json_valid(r.raw_json) AND e.type IN ('author','person')
-         AND j.value IN ('Q11424','Q5398426','Q7889','Q5') GROUP BY j.value ORDER BY count DESC,j.value`,
+        `SELECT claim_id AS key,COUNT(DISTINCT entity_id) AS count FROM (
+           SELECT e.id AS entity_id,json_extract(claim.value,'$.mainsnak.datavalue.value.id') AS claim_id
+           FROM raw_fetch r JOIN entities e ON r.key='entity:'||e.qid
+           JOIN json_each(CASE WHEN json_valid(r.raw_json)
+             THEN COALESCE(json_extract(r.raw_json,'$.claims.P31'),'[]') ELSE '[]' END) claim
+           WHERE r.source='wikidata' AND e.type IN ('author','person')
+         ) WHERE claim_id IN ('Q11424','Q5398426','Q7889','Q5')
+         GROUP BY claim_id ORDER BY count DESC,claim_id`,
       ),
       entity_link_type_conflicts: {
         count: countRows(
@@ -525,21 +583,19 @@ export function auditDatabase(
   }
 }
 
-function writeOutput(path: string, contents: string): void {
+export function writeOutput(path: string, contents: string, publish: PublishLink = linkSync): void {
   if (existsSync(path)) throw new Error(`Output already exists: ${path}`);
   const temporary = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
   try {
     writeFileSync(temporary, contents, { encoding: 'utf8', flag: 'wx' });
-    try {
-      linkSync(temporary, path);
-      unlinkSync(temporary);
-    } catch (error) {
-      if (existsSync(path)) throw error;
-      renameSync(temporary, path);
-    }
+    publish(temporary, path);
+    unlinkSync(temporary);
   } catch (error) {
     rmSync(temporary, { force: true });
-    throw error;
+    throw new Error(
+      `Atomic no-clobber output publication failed for ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
 }
 
