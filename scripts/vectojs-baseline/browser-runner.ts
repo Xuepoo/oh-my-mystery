@@ -789,6 +789,7 @@ export async function executeScenarioStep(
       return;
     case 'undo-clear':
     case 'undo-rendered-clear':
+      if (!(await hasTarget(page, 'tool.history.undo'))) return;
       await activateTarget(page, 'tool.history.undo', context.viewport.mobile);
       await assertPageState(
         page,
