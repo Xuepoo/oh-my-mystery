@@ -33,6 +33,7 @@ This design covers GitHub issue #21 and CarryCtx task CTX-0058.
 
 ```ts
 interface PendingNodeGesture {
+  pointerId: number;
   node: GraphNode2D;
   pointerType: string;
   startScreenX: number;
@@ -43,26 +44,28 @@ interface PendingNodeGesture {
 }
 ```
 
-On `pointerdown`, OMM records the node, pointer position, and the offset from the pointer's world position to the node's current center. It does not pin, reheat, or move the node.
+Only the primary pointer may create a pending node gesture. On `pointerdown`, OMM records its pointer ID, the node, pointer position, the offset from the pointer's world position to the node's current center, and whether the node was permanently pinned before the gesture. It captures that pointer on the canvas. Secondary pointers cancel the pending node gesture before beginning pinch handling, and events whose pointer ID does not own the gesture cannot move, release, or activate the node. Mouse and pen use the same threshold and activation rules; non-primary buttons never begin a node gesture.
 
-On `pointermove`, dragging begins only when movement exceeds 6 logical pixels for a mouse/pen or 10 logical pixels for touch. The first and subsequent drag coordinates preserve the recorded grab offset, so a drag that begins on a label does not snap the node center to the pointer. Entering drag pins at the node's current position; subsequent moves update the pin.
+On `pointermove`, dragging begins only when movement exceeds 6 logical pixels for a mouse/pen or 10 logical pixels for touch. On the threshold-crossing event, the node is first temporarily pinned at its existing center, then moved once to `currentPointerWorld + recordedGrabOffset`; subsequent moves use the same expression. A drag that begins on a label therefore has no snap discontinuity.
 
-On `pointerup` below the threshold, the gesture remains a click/tap and opens the casefile without any layout operation. On release after a drag, the temporary pin is removed unless the node is permanently pinned. The layout receives only a low recovery alpha sufficient to settle local forces. Pointer cancellation rolls back temporary pin state and never opens a casefile.
+On `pointerup` below the threshold, the gesture remains a click/tap and opens the casefile without any layout operation. On release after a drag, a node that was permanently pinned before the gesture remains pinned at its new position; otherwise only the drag-owned temporary pin is removed. The layout receives recovery alpha `0.08`. Pointer cancellation restores the pre-gesture permanent pin state and original coordinates, releases pointer capture, and never opens a casefile.
 
-Hover inspection may temporarily pin a moving node but must not reheat a settled layout. Permanent pin toggles also remain independent from transient drag and hover pins.
+Hover pin, drag pin, and permanent pin are separate owners. A node is physically pinned while any owner exists. Starting a drag clears only that node's hover owner; ending or cancelling a drag removes only drag ownership. Hover inspection may temporarily pin a moving node but must not reheat a settled layout. Permanent pin toggles do not modify transient ownership.
 
 ## 2. Jitter and Ghosting
 
 The first correction is removing click-induced reheat. Expansion, topology mutation, explicit relayout, and actual drag release remain legitimate layout wakeups.
 
-OMM will make frame state explicit before drawing its full-screen background:
+`BackgroundLayer.render()` will wrap its work in `ctx.save()`/`ctx.restore()`. Inside that boundary it will call `ctx.resetTransform()` when available, otherwise set the identity transform, then set:
 
 - identity transform
 - `globalAlpha = 1`
 - `globalCompositeOperation = 'source-over'`
-- no inherited shadow or clipping state
+- zero shadow blur/offset
 
-The background remains an opaque full-viewport redraw. A deterministic renderer test will draw a moving node at frame N and N+1 and assert that pixels at the old position match the background after N+1. If trails remain with an opaque redraw and isolated state, the implementation will create a minimal VectoJS reproduction and upstream issue rather than adding a translucent cover that hides the defect.
+Clipping cannot be reset by property assignment, so every OMM render method touched by this work must own balanced `save()`/`restore()` calls; the background's initial full-canvas paint runs before any graph-layer clip is established. The background remains an opaque full-viewport redraw.
+
+A deterministic Canvas2D test at DPR 1 draws only a solid test background and geometric node, moves it from frame N to N+1, then samples a pixel at least two pixels inside the old node footprint and requires exact background RGBA. A headed browser regression runs the same geometry at DPR 2 with a one-channel tolerance of 2 to account for device compositing, avoiding text, shadows, images, and antialiased boundaries. Canvas is the required backend for this gate because it is OMM's node/edge renderer. If OMM's state-isolated reproduction passes but a minimal VectoJS scene fails, filing an upstream issue with that reproduction is an acceptable blocker, not task completion; OMM will not ship until the production path is clean.
 
 Layout acceptance tests will assert that a click on a settled graph does not make `isSimulating()` true and does not alter node coordinates. Drag tests will assert threshold, preserved grab offset, movement, and release behavior.
 
@@ -80,7 +83,15 @@ Below 640 pixels, pills retain a compact grid beneath the toggle. Hit rectangles
 
 ## 5. Casefile Data Boundaries
 
-The existing eager details contract will be split into three bounded responses:
+The new frontend contract uses three bounded endpoints:
+
+- `GET /api/entity/:id/profile`
+- `GET /api/entity/:id/relations?limit=30&cursor=<opaque>`
+- `GET /api/entity/:id/recommendations`
+
+All return JSON. Missing entities return `404 { error: 'Entity not found' }`. Invalid `limit` or cursor returns `400 { error: string }`. Unexpected database failures retain the global `500` JSON contract. `limit` is clamped to 1 through 60 and defaults to 30. The already shipped `GET /api/entity/:id/details` remains unchanged as a compatibility endpoint for this release, but OMM web stops importing its response type or calling it. No new behavior depends on `/details`.
+
+The response types are:
 
 ```ts
 interface EntityProfileResponse {
@@ -113,7 +124,15 @@ interface RelationItem {
 
 interface EntityRecommendationsResponse {
   entityId: string;
-  items: RecommendationItem[];
+  items: CasefileRecommendationItem[];
+}
+
+interface CasefileRecommendationItem {
+  targetId: string;
+  name: string;
+  type: EntityType;
+  score: number;
+  reason: string;
 }
 ```
 
@@ -121,7 +140,9 @@ The profile endpoint resolves referenced author, publisher, translator, award, s
 
 Source prefixes are mapped to readable provenance names such as Wikidata, 豆瓣, 日本国会图书馆, 青空文库, Project Gutenberg, and OMM. The profile response does not expose the raw source ID as a displayed field.
 
-Relations are ordered consistently, limited per response, and cursor-paginated when more rows exist. Recommendations remain ordered by stored rank and bounded to ten items. These endpoints are requested independently.
+For an outgoing fact (`subject_id` equals the selected entity), an entity relation uses `object_ref` as `targetId`; its resolved label is both `value` and `copyValue`. For an incoming fact (`object_ref` equals the selected entity), `subject_id` is `targetId`; its resolved label is the value. A fact is scalar when `object_ref` does not resolve to an entity and `object_value` is non-empty; it has no `targetId` and uses `object_value` as its value. Rows with neither a resolved counterpart nor a scalar value are omitted. Direction is always retained in the response.
+
+Relations sort by `predicate ASC, direction ASC, value ASC, fact id ASC`. The opaque cursor encodes the complete final sort tuple; the next request uses strict tuple comparison, preventing duplicates across pages. A malformed cursor returns 400. Recommendations sort by `rank ASC, target_id ASC` and are bounded to ten items. These endpoints are requested independently.
 
 ## 6. Casefile Tabs and Request State
 
@@ -135,15 +156,23 @@ type LazyTabState<T> =
   | { status: 'error'; message: string };
 ```
 
-The first activation starts its request and shows a centered spinner plus `正在加载关系…` or `正在加载推荐…`. Ready values are cached for the current drawer entity. Switching tabs does not refetch. An error state shows a concise message and a retry button. Opening another entity increments the drawer epoch; stale responses are ignored. Closing the drawer invalidates pending responses.
+The first activation starts its request and shows a centered spinner plus `正在加载关系…` or `正在加载推荐…`. Ready values are cached only while that entity remains in the open drawer. Closing the drawer or opening any entity, including the same entity again, creates a fresh epoch and discards all tab caches. Switching tabs does not refetch. Retry replaces an error state with a new loading epoch.
+
+Relation state additionally stores accumulated pages, `nextCursor`, and a page-loading/error state. `加载更多` requests the next cursor once, appends items by stable identity, and preserves already loaded rows if a later page fails; the error appears beside a retry-more action. Responses from stale drawer or page epochs are ignored.
+
+Each tab owns an independent scroll position that is preserved while switching tabs during one drawer session. A newly opened entity starts all positions at zero.
+
+Empty states are explicit: profile with no optional fields shows `暂无更多档案信息`, relations shows `暂无可展示关系`, and recommendations shows `暂无推荐`.
 
 The `VERIFIED ARCHIVE` seal is removed. Header controls remain sticky. The content region scrolls as a single owner, and changing tabs resets that tab's scroll position.
 
 ## 7. Copy and Navigation Interaction
 
-Every displayed profile field has one row hit target. A mouse click or mobile tap copies `copyValue`, never the label. For example, activating `ISBN：9787569930979` copies only `9787569930979`. The row briefly changes to an `已复制` state. Clipboard failure shows `复制失败` without closing the card.
+Every displayed profile field has one row hit target. A mouse click or mobile tap copies `copyValue`, never the label. For example, activating `ISBN：9787569930979` copies only `9787569930979`. The row shows `已复制` for 1.5 seconds. Clipboard failure shows `复制失败` for 1.5 seconds without closing the card.
 
-The card's top copy button copies all currently available profile fields in readable form. It never triggers relations or recommendations and behaves the same regardless of the active tab.
+A row press is a pending activation. Movement beyond 6 logical pixels for mouse/pen or 10 for touch cancels copy and transfers ownership to drawer-content scrolling. Pointer cancellation also cancels copy. Releasing within the threshold copies once. This prevents touch scrolling from copying fields accidentally.
+
+The card's top copy button copies all profile fields in display order as `标签：值`, one field per line, omitting empty fields and placing no blank trailing line. It never triggers relations or recommendations and behaves the same regardless of the active tab.
 
 Relation and recommendation text uses the same click/tap-to-copy behavior. A separate right-side arrow with at least a 44 by 44 logical-pixel touch target opens the target entity. Clicking the arrow never copies. Rows without a resolvable target omit or disable the arrow.
 
@@ -162,12 +191,15 @@ The casefile remains a VectoJS `Entity` drawn on Canvas. Geometry is calculated 
 - navigation arrow: minimum 44-pixel square target
 - spinner: centered in the content region, not the entire scene
 
-All visible and interactive rectangles are generated by the same layout pass. The drawer continues to support dragging by its header on desktop, while taps on header buttons and fields do not begin card drag.
+All visible and interactive rectangles are generated by the same layout pass. The drawer header background supports card dragging only for the primary mouse/pen pointer; mobile touch does not drag the card. Tabs, header buttons, content rows, retry/load-more controls, scroll content, and navigation arrows are excluded from card-drag initiation. Each gesture has one pointer owner. Crossing a drag or scroll threshold suppresses release activation and any subsequent synthetic click.
 
 ## 9. Error Handling
 
 - Profile load failure keeps the casefile shell open and presents retry; it does not show stale data from the prior node.
 - Lazy-tab failures affect only that tab.
+- Malformed JSON is treated as a tab-specific failure with retry.
+- Invalid or expired relation cursors keep loaded rows and offer retry from the last accepted cursor; a repeated 400 resets relation pagination and reloads page one.
+- A relation page database failure keeps loaded pages visible and retries only the failed page.
 - Clipboard unavailability or rejection produces row/button error feedback.
 - Missing labels use another human-readable language label; raw entity IDs are not displayed as the final fallback in profile, relation, recommendation, or copy content.
 - Cursor requests ignore duplicates and stale entity epochs.
@@ -187,6 +219,7 @@ Unit and API tests will cover:
 - one request per lazy tab, caching, stale-response rejection, retry, and per-tab scroll
 - centered loading state and empty states
 - field value copy, full-profile copy, mobile tap copy, error feedback, and feedback reset
+- touch scrolling beginning on a field does not copy
 - separate arrow navigation and 44-pixel touch target
 - no eager relations/recommendations request
 
