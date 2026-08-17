@@ -13,13 +13,12 @@
     "@omm/shared": "workspace:*",
     "@vectojs/core": "^1.35.3",
     "@vectojs/devtools": "^0.11.1",
+    "@vectojs/graph-layout": "^0.2.1",
     "@vectojs/markdown": "^0.20.3",
     "@vectojs/styles": "^0.3.2",
-    "@vectojs/ui": "^2.16.7",
-    "d3-force": "^3.0.0"
+    "@vectojs/ui": "^2.16.7"
   },
   "devDependencies": {
-    "@types/d3-force": "^3.0.10",
     "typescript": "^7.0.2",
     "vite": "^8.2.1"
   }

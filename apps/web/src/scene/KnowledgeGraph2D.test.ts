@@ -324,4 +324,198 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     expect(root.fx).toBe(beforeX);
     graph.dispose();
   });
+
+  it('preserves existing positions across incremental expansion and settles with finite coordinates', async () => {
+    const root = node('root');
+    const child = node('child');
+    const source = {
+      async getNeighbors() {
+        return {
+          entity: root,
+          neighbors: [child],
+          facts: [{ source: 'root', target: 'child', predicate: 'publisher' }],
+          hasMore: false,
+          total: 500,
+        };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+    const initial = { x: root.x, y: root.y };
+
+    await graph.toggleExpansion('root');
+    expect({ x: root.x, y: root.y }).toEqual(initial);
+    expect(Number.isFinite(child.x)).toBe(true);
+    expect(Number.isFinite(child.y)).toBe(true);
+
+    for (let tick = 0; tick < 1000 && graph.isSimulating(); tick++) graph.step();
+    expect(graph.isSimulating()).toBe(false);
+    for (const current of graph.nodes) {
+      expect(Number.isFinite(current.x)).toBe(true);
+      expect(Number.isFinite(current.y)).toBe(true);
+    }
+    graph.dispose();
+  });
+
+  it('keeps drag and permanent pins synchronized with the active layout', async () => {
+    const root = node('root');
+    const source = {
+      async getNeighbors() {
+        return { entity: root, neighbors: [], facts: [], hasMore: false };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+
+    graph.pinNode('root', 120, -45);
+    for (let tick = 0; tick < 8; tick++) graph.step();
+    expect({ x: root.x, y: root.y }).toEqual({ x: 120, y: -45 });
+
+    graph.togglePinned('root');
+    graph.unpinNode('root');
+    graph.reheat(0.4);
+    graph.step();
+    expect({ x: root.x, y: root.y }).toEqual({ x: 120, y: -45 });
+
+    expect(graph.togglePinned('root')).toBe(false);
+    expect(graph.isSimulating()).toBe(true);
+    graph.step();
+    expect(Number.isFinite(root.x)).toBe(true);
+    expect(Number.isFinite(root.y)).toBe(true);
+    graph.dispose();
+  });
+
+  it('keeps relayout positions after the next physics tick', async () => {
+    const root = node('root');
+    const first = node('first');
+    const second = node('second');
+    const source = {
+      async getNeighbors() {
+        return {
+          entity: root,
+          neighbors: [first, second],
+          facts: [
+            { source: 'root', target: 'first', predicate: 'publisher' },
+            { source: 'root', target: 'second', predicate: 'publisher' },
+          ],
+          hasMore: false,
+        };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+    await graph.toggleExpansion('root');
+
+    expect(graph.relayoutAround('root')).toBe(2);
+    const before = graph.nodes.filter(({ id }) => id !== 'root').map(({ x, y }) => [x, y]);
+    graph.step();
+    const after = graph.nodes.filter(({ id }) => id !== 'root').map(({ x, y }) => [x, y]);
+    for (let i = 0; i < before.length; i++) {
+      expect(
+        Math.hypot(
+          (after[i]![0] ?? 0) - (before[i]![0] ?? 0),
+          (after[i]![1] ?? 0) - (before[i]![1] ?? 0),
+        ),
+      ).toBeLessThan(20);
+    }
+    graph.dispose();
+  });
+
+  it('drops permanent pin state when collapse removes an owned node', async () => {
+    const root = node('root');
+    const child = node('child');
+    const source = {
+      async getNeighbors() {
+        return {
+          entity: root,
+          neighbors: [child],
+          facts: [{ source: 'root', target: 'child', predicate: 'publisher' }],
+          hasMore: false,
+        };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+    await graph.toggleExpansion('root');
+    expect(graph.togglePinned('child')).toBe(true);
+
+    graph.collapse('root');
+    expect(graph.isPinned('child')).toBe(false);
+    graph.dispose();
+  });
+
+  it('restores hidden expansion ownership across snapshots', async () => {
+    const root = node('root');
+    const child = node('child');
+    const source = {
+      async getNeighbors() {
+        return {
+          entity: root,
+          neighbors: [child],
+          facts: [{ source: 'root', target: 'child', predicate: 'publisher' }],
+          hasMore: false,
+        };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+    await graph.toggleExpansion('root');
+    graph.hideNode('child');
+
+    const restored = new KnowledgeGraph2D({ source });
+    restored.importSnapshot(graph.exportSnapshot());
+    expect(restored.restoreNode('child')).toBe(true);
+    restored.collapse('root');
+    expect(restored.getNode('child')).toBeUndefined();
+    graph.dispose();
+    restored.dispose();
+  });
+
+  it('drops permanent pin state when path replacement removes a transient node', async () => {
+    const root = node('root');
+    const transient = node('transient');
+    const source = {
+      async getNeighbors() {
+        return { entity: root, neighbors: [], facts: [], hasMore: false };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+    graph.addPath(
+      [root, transient],
+      [{ source: 'root', target: 'transient', predicate: 'related' }],
+    );
+    expect(graph.togglePinned('transient')).toBe(true);
+
+    graph.addPath([root], []);
+    expect(graph.getNode('transient')).toBeUndefined();
+    expect(graph.isPinned('transient')).toBe(false);
+    graph.dispose();
+  });
+
+  it('reheats a cooled layout when dragging starts', async () => {
+    const root = node('root');
+    const child = node('child');
+    const source = {
+      async getNeighbors() {
+        return {
+          entity: root,
+          neighbors: [child],
+          facts: [{ source: 'root', target: 'child', predicate: 'publisher' }],
+          hasMore: false,
+        };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+    await graph.toggleExpansion('root');
+    for (let tick = 0; tick < 1000 && graph.isSimulating(); tick++) graph.step();
+    expect(graph.isSimulating()).toBe(false);
+
+    graph.pinNode('root', 100, 100);
+    expect(graph.isSimulating()).toBe(true);
+    graph.step();
+    expect(graph.isSimulating()).toBe(true);
+    graph.dispose();
+  });
 });

@@ -1,11 +1,4 @@
-import {
-  forceCollide,
-  forceLink,
-  forceManyBody,
-  forceRadial,
-  forceSimulation,
-  type Simulation,
-} from 'd3-force';
+import { ForceLayout2D, type GraphNode } from '@vectojs/graph-layout';
 import type { D1DataSource } from '../api/D1DataSource';
 import {
   type DistributionMode,
@@ -45,6 +38,7 @@ export interface KnowledgeGraphSnapshot {
   hidden: {
     node: GraphNode2D;
     pinned: boolean;
+    nodeOwners?: string[];
     links: { link: GraphLink2D; owners: string[] }[];
   }[];
   pathNodes: string[];
@@ -86,7 +80,8 @@ export class KnowledgeGraph2D {
   private pathFactKeys = new Set<string>();
   private generation = 0;
 
-  private simulation: Simulation<GraphNode2D, any> | null = null;
+  private layout: ForceLayout2D | null = null;
+  private layoutActive = false;
 
   constructor(options: KnowledgeGraph2DOptions) {
     this.source = options.source;
@@ -144,6 +139,7 @@ export class KnowledgeGraph2D {
       hidden: [...this.hiddenNodes.values()].map((snapshot) => ({
         node: { ...snapshot.node, labels: { ...snapshot.node.labels } },
         pinned: snapshot.pinned,
+        nodeOwners: [...snapshot.nodeOwners],
         links: snapshot.links.map(({ link, owners }) => ({
           link: { ...link },
           owners: [...owners],
@@ -229,7 +225,7 @@ export class KnowledgeGraph2D {
       this.hiddenNodes.set(hidden.node.id, {
         node: hidden.node,
         pinned: hidden.pinned,
-        nodeOwners: new Set(),
+        nodeOwners: new Set(hidden.nodeOwners ?? []),
         links: hidden.links.map(({ link, owners }) => ({
           link: { ...link },
           owners: new Set(owners),
@@ -357,6 +353,8 @@ export class KnowledgeGraph2D {
     if (neighborhood.nextCursor) this.expansionCursors.set(nodeId, neighborhood.nextCursor);
     else this.expansionCursors.delete(nodeId);
     let addedCount = 0;
+    const addedNodeIds: string[] = [];
+    const addedFactKeys = new Set<string>();
     const ownedNodes = this.expansionNodes.get(nodeId) ?? new Set<string>();
     const ownedFacts = this.expansionFacts.get(nodeId) ?? new Set<string>();
     if (firstPage) {
@@ -405,6 +403,7 @@ export class KnowledgeGraph2D {
         this.nodesMap.set(neighbor.id, neighbor);
         this.nodesList.push(neighbor);
         addedCount++;
+        addedNodeIds.push(neighbor.id);
       }
     }
 
@@ -422,6 +421,7 @@ export class KnowledgeGraph2D {
           target: tgtId,
           predicate: f.predicate,
         });
+        addedFactKeys.add(key);
       }
       ownedFacts.add(key);
       let owners = this.factOwners.get(key);
@@ -432,7 +432,26 @@ export class KnowledgeGraph2D {
       owners.add(nodeId);
     }
 
-    this.rebuildSimulation();
+    this.updateNodeMetrics();
+    if (this.layout) {
+      this.layout.appendGraph({
+        nodes: addedNodeIds
+          .map((id) => this.nodesMap.get(id))
+          .filter((node): node is GraphNode2D => Boolean(node))
+          .map((node) => this.layoutNode(node)),
+        links: this.layoutLinksFor(
+          this.linksList.filter((link) => {
+            const source = typeof link.source === 'object' ? link.source.id : link.source;
+            const target = typeof link.target === 'object' ? link.target.id : link.target;
+            return addedFactKeys.has(`${source}|${link.predicate}|${target}`);
+          }),
+        ),
+      });
+      this.layoutActive = true;
+      this.syncNodePositions();
+    } else {
+      this.rebuildSimulation();
+    }
     this.reheat(0.6);
 
     if (typeof neighborhood.total === 'number') this.expansionTotal.set(nodeId, neighborhood.total);
@@ -516,7 +535,14 @@ export class KnowledgeGraph2D {
     node.radius = this.baseRadius(node.type);
     this.nodesMap.set(node.id, node);
     this.nodesList.push(node);
-    this.rebuildSimulation();
+    this.updateNodeMetrics();
+    if (this.layout) {
+      this.layout.appendGraph({ nodes: [this.layoutNode(node)], links: [] });
+      this.layoutActive = true;
+      this.syncNodePositions();
+    } else {
+      this.rebuildSimulation();
+    }
     this.reheat(0.35);
     return true;
   }
@@ -552,6 +578,7 @@ export class KnowledgeGraph2D {
       }
       this.nodesMap.delete(id);
       this.nodesList = this.nodesList.filter((node) => node.id !== id);
+      this.pinnedIds.delete(id);
     }
 
     const center = this.nodesList.length
@@ -590,8 +617,9 @@ export class KnowledgeGraph2D {
 
   clear(): void {
     this.generation++;
-    this.simulation?.stop();
-    this.simulation = null;
+    this.layout?.dispose();
+    this.layout = null;
+    this.layoutActive = false;
     this.nodesMap.clear();
     this.nodesList = [];
     this.linksList = [];
@@ -665,6 +693,7 @@ export class KnowledgeGraph2D {
         this.nodeOwners.delete(id);
         if (!this.rootIds.has(id) && !this.manualIds.has(id) && !this.expandedSet.has(id)) {
           this.nodesMap.delete(id);
+          this.pinnedIds.delete(id);
         }
       }
     }
@@ -688,11 +717,46 @@ export class KnowledgeGraph2D {
   }
 
   private rebuildSimulation(): void {
-    if (this.simulation) {
-      this.simulation.stop();
-    }
+    this.updateNodeMetrics();
+    const layout = new ForceLayout2D({
+      repulsion: (node) =>
+        this.baseRadius(node.type) * 11 + (this.distribution === 'dispersed' ? 135 : 95),
+      collisionRadius: (node) =>
+        this.baseRadius(node.type) +
+        (this.distribution === 'compact' ? 10 : this.distribution === 'dispersed' ? 20 : 14),
+      collisionStrength: 0.7,
+      linkDistance: (link) => {
+        const source = this.nodesMap.get(String(link.source));
+        const target = this.nodesMap.get(String(link.target));
+        const rSum = this.baseRadius(source?.type) + this.baseRadius(target?.type);
+        const modeScale =
+          this.distribution === 'compact' ? 0.82 : this.distribution === 'dispersed' ? 1.25 : 1;
+        if (source?.type === 'author' && target?.type === 'work')
+          return (30 + rSum * 1.3) * modeScale;
+        if (source?.type === 'author' && target?.type === 'character')
+          return (34 + rSum * 1.4) * modeScale;
+        return (40 + rSum * 1.5) * modeScale;
+      },
+      linkStrength: 0.42,
+      centerStrength: 0.016,
+      velocityDecay: 0.64,
+      alphaDecay: 0.024,
+      repulsionDistanceMax:
+        this.distribution === 'compact' ? 360 : this.distribution === 'dispersed' ? 560 : 450,
+      seed: 7,
+    });
+    layout.setGraph({
+      nodes: this.nodesList.map((node) => this.layoutNode(node)),
+      links: this.layoutLinks(),
+    });
+    this.layout?.dispose();
+    this.layout = layout;
+    this.layoutActive = this.nodesList.length > 0;
+    this.syncNodePositions();
+  }
 
-    // 1. Calculate dynamic degree and radius for each node (Obsidian-style scaling)
+  private updateNodeMetrics(): void {
+    // Calculate dynamic degree and radius for each node (Obsidian-style scaling).
     const degreeMap = new Map<string, number>();
     for (const link of this.linksList) {
       const srcId = typeof link.source === 'object' ? link.source.id : link.source;
@@ -710,57 +774,44 @@ export class KnowledgeGraph2D {
       node.color = this.styleRegistry.getColor(normalizedType);
       node.radius = Math.round(base + boost * this.degreeBoost(normalizedType));
     }
+  }
 
-    // 2. Map links to node objects or string IDs
-    const simLinks = this.linksList.map((link) => ({
-      source: typeof link.source === 'object' ? link.source.id : link.source,
-      target: typeof link.target === 'object' ? link.target.id : link.target,
-      predicate: link.predicate,
-    }));
+  private layoutLinks(): { source: string; target: string; id: string; predicate: string }[] {
+    return this.layoutLinksFor(this.linksList);
+  }
 
-    // 3. Obsidian-Grade Force Dynamics (Central Gravity + Mass-Aware Repulsion + Dynamic Springs)
-    this.simulation = forceSimulation(this.nodesList)
-      .force(
-        'link',
-        forceLink(simLinks)
-          .id((d: any) => d.id)
-          .distance((d: any) => {
-            const src = d.source as GraphNode2D;
-            const tgt = d.target as GraphNode2D;
-            const rSum = (src.radius || 8) + (tgt.radius || 8);
-            const modeScale =
-              this.distribution === 'compact' ? 0.82 : this.distribution === 'dispersed' ? 1.25 : 1;
-            if (src.type === 'author' && tgt.type === 'work') return (30 + rSum * 1.3) * modeScale;
-            if (src.type === 'author' && tgt.type === 'character')
-              return (34 + rSum * 1.4) * modeScale;
-            return (40 + rSum * 1.5) * modeScale;
-          })
-          .strength(0.42),
-      )
-      .force(
-        'charge',
-        forceManyBody()
-          .strength(
-            (d: any) => -((d.radius || 8) * 11 + (this.distribution === 'dispersed' ? 135 : 95)),
-          )
-          .distanceMax(
-            this.distribution === 'compact' ? 360 : this.distribution === 'dispersed' ? 560 : 450,
-          ),
-      )
-      .force('gravity', forceRadial(0, 0, 0).strength(0.016))
-      .force(
-        'collide',
-        forceCollide()
-          .radius(
-            (d: any) =>
-              (d.radius || 8) +
-              (this.distribution === 'compact' ? 10 : this.distribution === 'dispersed' ? 20 : 14),
-          )
-          .strength(0.7),
-      )
-      .alphaDecay(0.024)
-      .velocityDecay(0.36)
-      .stop();
+  private layoutNode(node: GraphNode2D): GraphNode {
+    const { fx, fy, ...rest } = node;
+    return {
+      ...rest,
+      ...(fx === null || fx === undefined ? {} : { fx }),
+      ...(fy === null || fy === undefined ? {} : { fy }),
+    };
+  }
+
+  private layoutLinksFor(
+    links: readonly GraphLink2D[],
+  ): { source: string; target: string; id: string; predicate: string }[] {
+    return links.map((link) => {
+      const source = typeof link.source === 'object' ? link.source.id : link.source;
+      const target = typeof link.target === 'object' ? link.target.id : link.target;
+      return {
+        source,
+        target,
+        id: `${source}|${link.predicate}|${target}`,
+        predicate: link.predicate,
+      };
+    });
+  }
+
+  private syncNodePositions(): void {
+    if (!this.layout) return;
+    for (const node of this.nodesList) {
+      const index = this.layout.getNodeIndex(node.id);
+      if (index === undefined) continue;
+      node.x = this.layout.positions[index * 2];
+      node.y = this.layout.positions[index * 2 + 1];
+    }
   }
 
   private baseRadius(type: unknown): number {
@@ -829,39 +880,41 @@ export class KnowledgeGraph2D {
   }
 
   step(): void {
-    if (this.simulation && this.simulation.alpha() >= 0.001) {
-      this.simulation.tick();
-    }
+    if (!this.layout) return;
+    this.layoutActive = this.layout.step();
+    this.syncNodePositions();
   }
 
   isSimulating(): boolean {
-    return this.simulation !== null && this.simulation.alpha() >= 0.001;
+    return this.layoutActive;
   }
 
   reheat(alpha = 0.5): void {
-    if (this.simulation) {
-      this.simulation.alpha(Math.max(this.simulation.alpha(), alpha));
-    }
+    if (!this.layout) return;
+    this.layout.reheat(alpha);
+    this.layoutActive = this.nodesList.length > 0;
   }
 
   pinNode(id: string, x: number, y: number): void {
     const node = this.nodesMap.get(id);
-    if (node) {
+    const index = this.layout?.getNodeIndex(id);
+    if (node && index !== undefined) {
       node.fx = x;
       node.fy = y;
-      node.x = x;
-      node.y = y;
-      if (this.simulation && this.simulation.alpha() < 0.25) {
-        this.simulation.alpha(0.25);
-      }
+      this.layout?.pinNode(index, x, y);
+      this.reheat(0.25);
+      this.syncNodePositions();
     }
   }
 
   unpinNode(id: string): void {
     const node = this.nodesMap.get(id);
-    if (node && !this.pinnedIds.has(id)) {
+    const index = this.layout?.getNodeIndex(id);
+    if (node && index !== undefined && !this.pinnedIds.has(id)) {
       node.fx = null;
       node.fy = null;
+      this.layout?.unpinNode(index);
+      this.reheat(0.25);
     }
   }
 
@@ -872,6 +925,8 @@ export class KnowledgeGraph2D {
     const node = this.nodesMap.get(id);
     if (!node || this.pinnedIds.has(id)) return;
     this.hoverPinState = { id, fx: node.fx ?? null, fy: node.fy ?? null };
+    const index = this.layout?.getNodeIndex(id);
+    if (index !== undefined) this.layout?.pinNode(index, node.x ?? 0, node.y ?? 0);
     node.fx = node.x ?? 0;
     node.fy = node.y ?? 0;
   }
@@ -882,6 +937,17 @@ export class KnowledgeGraph2D {
     if (node && !this.pinnedIds.has(this.hoverPinState.id)) {
       node.fx = this.hoverPinState.fx;
       node.fy = this.hoverPinState.fy;
+      const index = this.layout?.getNodeIndex(this.hoverPinState.id);
+      if (index !== undefined) {
+        if (this.hoverPinState.fx === null && this.hoverPinState.fy === null) {
+          this.layout?.unpinNode(index);
+        } else {
+          if (this.hoverPinState.fx === null) this.layout?.clearNodePin(index, { x: true });
+          else this.layout?.setNodePin(index, { x: this.hoverPinState.fx });
+          if (this.hoverPinState.fy === null) this.layout?.clearNodePin(index, { y: true });
+          else this.layout?.setNodePin(index, { y: this.hoverPinState.fy });
+        }
+      }
     }
     this.hoverPinState = null;
   }
@@ -893,11 +959,16 @@ export class KnowledgeGraph2D {
       this.pinnedIds.delete(id);
       node.fx = null;
       node.fy = null;
+      const index = this.layout?.getNodeIndex(id);
+      if (index !== undefined) this.layout?.unpinNode(index);
+      this.reheat(0.25);
       return false;
     }
     this.pinnedIds.add(id);
     node.fx = node.x ?? 0;
     node.fy = node.y ?? 0;
+    const index = this.layout?.getNodeIndex(id);
+    if (index !== undefined) this.layout?.pinNode(index, node.fx ?? 0, node.fy ?? 0);
     return true;
   }
 
@@ -934,6 +1005,9 @@ export class KnowledgeGraph2D {
       node.fx = null;
       node.fy = null;
     }
+    // ForceLayout2D owns its position and pin buffers. Rebuild from the
+    // arranged application state so the next tick cannot overwrite the ring.
+    this.rebuildSimulation();
     this.reheat(0.28);
     return neighbors.length;
   }
