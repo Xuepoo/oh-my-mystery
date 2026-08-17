@@ -1,9 +1,14 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import {
   BASELINE_REVISION,
   assembleBaselineReport,
   compareBaselineReport,
   createBaselineCaptureDependencies,
+  formatBuildDiagnostic,
+  installSnapshot,
   type BrowserRunnerPlatform,
 } from './browser-runner';
 
@@ -46,6 +51,90 @@ describe('browser capture adapter', () => {
     expect(prepared.arms?.candidate?.plan?.root).toContain('/tmp/opencode/');
   });
 
+  test('snapshots direct workspace VectoJS registry packages', () => {
+    const root = mkdtempSync(join(tmpdir(), 'omm-browser-runner-'));
+    try {
+      const webRoot = join(root, 'apps', 'web');
+      const packagePath = join(
+        root,
+        'node_modules',
+        '.bun',
+        '@vectojs+core@1.2.3',
+        'node_modules',
+        '@vectojs',
+        'core',
+      );
+      mkdirSync(packagePath, { recursive: true });
+      mkdirSync(join(webRoot, 'node_modules', '@vectojs'), { recursive: true });
+      writeFileSync(join(root, 'bun.lock'), '"@vectojs/core": ["@vectojs/core@1.2.3"]\n');
+      writeFileSync(
+        join(webRoot, 'package.json'),
+        JSON.stringify({ dependencies: { '@vectojs/core': '^1.2.3', unrelated: '1.0.0' } }),
+      );
+      writeFileSync(
+        join(packagePath, 'package.json'),
+        '{"name":"@vectojs/core","version":"1.2.3"}',
+      );
+      writeFileSync(join(packagePath, 'index.mjs'), 'export const version = "1.2.3";\n');
+      symlinkSync(packagePath, join(webRoot, 'node_modules', '@vectojs', 'core'), 'dir');
+
+      const snapshot = installSnapshot(root);
+      expect(snapshot.lockfileSha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(snapshot.dependencyVersions).toEqual({ '@vectojs/core': '1.2.3' });
+      expect(snapshot.installedPackageManifestSha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(snapshot.installedPackageManifestSha256).not.toBe('0'.repeat(64));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('renders Bun build diagnostics with message, path, and position', () => {
+    expect(
+      formatBuildDiagnostic({
+        message: 'Could not resolve package',
+        position: { file: '/arm/physics-entry.ts', line: 3, column: 17 },
+      }),
+    ).toBe(
+      'Could not resolve package /arm/physics-entry.ts:3:17 {"file":"/arm/physics-entry.ts","line":3,"column":17}',
+    );
+  });
+
+  test('removes worktrees and temporary roots when preparation fails', async () => {
+    const platform = fakePlatform({ failCandidateBuild: true });
+    const adapter = createBaselineCaptureDependencies(platform);
+    const preflight = await adapter.preflight({ mode: 'capture', repetitions: 1 });
+
+    await expect(adapter.prepare(preflight)).rejects.toThrow('build failed');
+    const worktreeCommands = platform.commands.filter(
+      (command) => command.argv.slice(0, 3).join(' ') === 'git worktree remove',
+    );
+    expect(worktreeCommands).toEqual([
+      expect.objectContaining({
+        argv: [
+          'git',
+          'worktree',
+          'remove',
+          '--force',
+          '/tmp/opencode/omm-vectojs-capture-2026-08-17T12-00-00.000Z/candidate/worktree',
+        ],
+        cwd: '/repo',
+      }),
+      expect.objectContaining({
+        argv: [
+          'git',
+          'worktree',
+          'remove',
+          '--force',
+          '/tmp/opencode/omm-vectojs-capture-2026-08-17T12-00-00.000Z/baseline/worktree',
+        ],
+        cwd: '/repo',
+      }),
+    ]);
+    expect(platform.removed).toContain(
+      '/tmp/opencode/omm-vectojs-capture-2026-08-17T12-00-00.000Z',
+    );
+  });
+
   test('assembles all report sections and compares five matching physics values', () => {
     const report = assembleBaselineReport(reportInput());
     expect(report).toMatchObject({
@@ -77,10 +166,12 @@ describe('browser capture adapter', () => {
   });
 });
 
-function fakePlatform(options: { status?: string } = {}) {
+function fakePlatform(options: { status?: string; failCandidateBuild?: boolean } = {}) {
   const commands: Array<{ argv: string[]; cwd: string; env: Record<string, string> }> = [];
-  const platform: BrowserRunnerPlatform & { commands: typeof commands } = {
+  const removed: string[] = [];
+  const platform: BrowserRunnerPlatform & { commands: typeof commands; removed: string[] } = {
     commands,
+    removed,
     cwd: () => '/repo',
     environment: {},
     now: () => new Date('2026-08-17T12:00:00.000Z'),
@@ -88,9 +179,17 @@ function fakePlatform(options: { status?: string } = {}) {
       commands.push(command);
       if (command.argv.join(' ') === 'git rev-parse HEAD') return candidateRevision + '\n';
       if (command.argv.join(' ') === 'git status --porcelain') return options.status ?? '';
+      if (
+        options.failCandidateBuild &&
+        command.cwd.includes('/candidate/') &&
+        command.argv.join(' ') === 'bun run build'
+      )
+        throw new Error('build failed');
       return '';
     },
-    async remove() {},
+    async remove(path) {
+      removed.push(path);
+    },
     async mkdir() {},
     async writeFile() {},
     async readFile(path) {
@@ -108,7 +207,7 @@ function fakePlatform(options: { status?: string } = {}) {
     bundlePhysics: async (plan) => ({
       path: `${plan.outputDir}/physics.js`,
       sha256: 'e'.repeat(64),
-      graphLayoutPackagePath: `${plan.root}/node_modules/@vectojs/graph-layout`,
+      graphLayoutPackagePath: `${plan.root}/apps/web/node_modules/@vectojs/graph-layout`,
     }),
     startPreview: async (options) => ({
       arm: options.arm,

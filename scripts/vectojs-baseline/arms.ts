@@ -148,15 +148,15 @@ export function createInstalledPackageManifest(
   root: string,
   resolutions: readonly VectoResolution[],
 ): ManifestEntry[] {
-  const nodeModulesRoot = join(resolve(root), 'node_modules');
+  const armRoot = resolve(root);
   const entries: ManifestEntry[] = [];
   const seen = new Set<string>();
   for (const resolution of [...resolutions].sort((left, right) =>
     left.packagePath.localeCompare(right.packagePath),
   )) {
     const packagePath = resolve(resolution.packagePath);
-    assertPathInside(nodeModulesRoot, packagePath, `${resolution.name} package`);
-    const prefix = toPosixPath(relative(nodeModulesRoot, packagePath));
+    assertPathInside(armRoot, packagePath, `${resolution.name} package`);
+    const prefix = `${resolution.name}@${resolution.version}`;
     for (const entry of createManifest(packagePath)) {
       const path = `${prefix}/${entry.path}`;
       if (seen.has(path)) continue;
@@ -193,9 +193,8 @@ export function validateVectoResolutions(
   const resolutions = packagePaths.map((inputPath) => {
     const packagePath = resolve(inputPath);
     assertPathInside(absoluteRoot, packagePath, 'Resolved package');
-    if (lstatSync(packagePath).isSymbolicLink()) {
-      throw new Error(`Resolved package is a symbolic link: ${packagePath}`);
-    }
+    if (!lstatSync(packagePath).isDirectory() && !lstatSync(packagePath).isSymbolicLink())
+      throw new Error(`Resolved package is not a directory: ${packagePath}`);
     const realPackagePath = realpathSync(packagePath);
     assertPathInside(absoluteRoot, realPackagePath, 'Resolved package target');
     const manifest = JSON.parse(readFileSync(join(realPackagePath, 'package.json'), 'utf8')) as {
@@ -209,6 +208,8 @@ export function validateVectoResolutions(
     ) {
       throw new Error(`Invalid @vectojs package manifest: ${realPackagePath}`);
     }
+    if (!realPackagePath.includes(`${sep}node_modules${sep}`))
+      throw new Error(`Resolved package is not an installed registry package: ${realPackagePath}`);
     if (lockVersions[manifest.name] !== manifest.version) {
       throw new Error(
         `${manifest.name}@${manifest.version} does not match lockfile version ${String(lockVersions[manifest.name])}`,

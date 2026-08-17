@@ -1,12 +1,18 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { chromium, firefox, type Browser, type Page } from 'playwright';
 import {
   buildArmPlan,
   assertRepeatedInstallEqual,
+  createInstalledPackageManifest,
+  dependencyVersionRecord,
+  hashPreparedManifest,
+  parseVectoLockVersions,
   type ArmPlan,
   type InstallSnapshot,
+  validateVectoResolutions,
 } from './arms';
 import {
   startPreview,
@@ -31,6 +37,7 @@ import type {
   ReportAssemblyInput,
 } from './runner';
 import type { ArmName, CommandSpec, PhysicsBundlePlan } from './arms';
+import { hashBytes } from './manifest';
 import type { RunningPreviews } from './runner';
 import {
   assertViewportAndBacking,
@@ -125,11 +132,7 @@ const defaultPlatform: BrowserRunnerPlatform = {
   writeFile: (path, content) => writeFile(path, content),
   readFile: (path) => readFile(path, 'utf8'),
   sourceSnapshot: (root) => ({ sha256: hashDirectoryFallback(root) }),
-  installSnapshot: () => ({
-    lockfileSha256: '0'.repeat(64),
-    dependencyVersions: {},
-    installedPackageManifestSha256: '0'.repeat(64),
-  }),
+  installSnapshot: (root) => installSnapshot(root),
   buildSnapshot: (root) => ({ sha256: hashDirectoryFallback(join(root, 'apps/web/dist')) }),
   async bundlePhysics(plan) {
     const output = join(plan.outputDir, 'physics.js');
@@ -140,11 +143,13 @@ const defaultPlatform: BrowserRunnerPlatform = {
       target: 'browser',
       minify: false,
     });
-    if (!result.success) throw new Error(result.logs.map((log) => JSON.stringify(log)).join('\n'));
+    if (!result.success) {
+      throw new Error(result.logs.map(formatBuildDiagnostic).join('\n'));
+    }
     return {
       path: output,
       sha256: hashDirectoryFallback(plan.outputDir),
-      graphLayoutPackagePath: join(plan.root, 'node_modules/@vectojs/graph-layout'),
+      graphLayoutPackagePath: join(plan.root, 'apps/web/node_modules/@vectojs/graph-layout'),
     };
   },
   startPreview: (options) => startPreview(options, defaultPreviewDependencies),
@@ -1050,37 +1055,50 @@ async function prepare(
     >
   > = {};
   const artifacts: BaselineArtifact[] = [];
-  for (const arm of ['baseline', 'candidate'] as const) {
-    const plan = buildArmPlan({
-      arm,
-      revision: arm === 'baseline' ? BASELINE_REVISION : context.candidateRevision,
-      candidateRoot: context.candidateRoot,
-      baselineSourceRoot: context.candidateRoot,
-      runId: context.runId,
-      environment: platform.environment,
-    });
-    if (plan.createWorktree) await platform.command(plan.createWorktree);
-    const first = await installAndBuild(platform, plan);
-    await platform.remove(join(plan.root, 'node_modules'));
-    await platform.remove(plan.cacheDir);
-    const second = await installAndBuild(platform, plan);
-    assertRepeatedInstallEqual(first.install, second.install);
-    await writePhysicsEntry(platform, plan);
-    const physicsBundle = await platform.bundlePhysics(plan.physicsBundle);
-    const artifact: BaselineArtifact = {
-      id: arm,
-      arm,
-      appRevision: plan.revision,
-      sourceTreeSha256: platform.sourceSnapshot(plan.root).sha256,
-      lockfileSha256: second.install.lockfileSha256,
-      dependencyVersions: second.install.dependencyVersions,
-      installedPackageManifestSha256: second.install.installedPackageManifestSha256,
-      repeatedInstallManifestSha256: second.install.installedPackageManifestSha256,
-      buildSha256: second.build.sha256,
-      buildMode: 'production-preview',
-    };
-    arms[arm] = { plan, artifact, physicsBundle };
-    artifacts.push(artifact);
+  const createdPlans: ArmPlan[] = [];
+  try {
+    for (const arm of ['baseline', 'candidate'] as const) {
+      const plan = buildArmPlan({
+        arm,
+        revision: arm === 'baseline' ? BASELINE_REVISION : context.candidateRevision,
+        candidateRoot: context.candidateRoot,
+        baselineSourceRoot: context.candidateRoot,
+        runId: context.runId,
+        environment: platform.environment,
+      });
+      if (plan.createWorktree) {
+        createdPlans.push(plan);
+        await platform.command(plan.createWorktree);
+      }
+      const first = await installAndBuild(platform, plan);
+      await platform.remove(join(plan.root, 'node_modules'));
+      await platform.remove(plan.cacheDir);
+      const second = await installAndBuild(platform, plan);
+      assertRepeatedInstallEqual(first.install, second.install);
+      await writePhysicsEntry(platform, plan);
+      const physicsBundle = await platform.bundlePhysics(plan.physicsBundle);
+      const artifact: BaselineArtifact = {
+        id: arm,
+        arm,
+        appRevision: plan.revision,
+        sourceTreeSha256: platform.sourceSnapshot(plan.root).sha256,
+        lockfileSha256: second.install.lockfileSha256,
+        dependencyVersions: second.install.dependencyVersions,
+        installedPackageManifestSha256: second.install.installedPackageManifestSha256,
+        repeatedInstallManifestSha256: second.install.installedPackageManifestSha256,
+        buildSha256: second.build.sha256,
+        buildMode: 'production-preview',
+      };
+      arms[arm] = { plan, artifact, physicsBundle };
+      artifacts.push(artifact);
+    }
+  } catch (error) {
+    try {
+      await cleanupPlans(platform, context, createdPlans);
+    } catch (cleanupError) {
+      if (isRecord(error)) error.cleanupError = cleanupError;
+    }
+    throw error;
   }
   return { context, arms, artifacts, environments: [], viewports: [], workloads: [] };
 }
@@ -1093,11 +1111,13 @@ async function writePhysicsEntry(platform: BrowserRunnerPlatform, plan: ArmPlan)
   }
   const packageEntry = join(
     plan.root,
+    'apps',
+    'web',
     'node_modules',
     '@vectojs',
     'graph-layout',
     'dist',
-    'index.js',
+    'index.mjs',
   );
   const entry = `import { ForceLayout2D } from ${JSON.stringify(packageEntry)};\nimport { runPhysicsBrowserWorkload } from ${JSON.stringify(runnerPhysics)};\n\nwindow.__VECTOJS_PHYSICS_BASELINE__ = {\n  run: (request) => runPhysicsBrowserWorkload(ForceLayout2D, request),\n};\n`;
   await platform.mkdir(dirname(plan.physicsBundle.entryPoint));
@@ -1112,6 +1132,80 @@ async function installAndBuild(
   const install = platform.installSnapshot(plan.root);
   await platform.command(plan.build);
   return { install, build: platform.buildSnapshot(plan.root) };
+}
+
+export function installSnapshot(root: string): InstallSnapshot {
+  const lockfile = readFileSync(join(root, 'bun.lock'), 'utf8');
+  const webRoot = join(root, 'apps', 'web');
+  const packageJson = JSON.parse(readFileSync(join(webRoot, 'package.json'), 'utf8')) as {
+    dependencies?: Record<string, unknown>;
+    devDependencies?: Record<string, unknown>;
+  };
+  const packageNames = [
+    ...Object.keys(packageJson.dependencies ?? {}),
+    ...Object.keys(packageJson.devDependencies ?? {}),
+  ].filter((name, index, names) => name.startsWith('@vectojs/') && names.indexOf(name) === index);
+  const resolutions = validateVectoResolutions(
+    root,
+    packageNames.map((name) => join(webRoot, 'node_modules', name)),
+    parseVectoLockVersions(lockfile),
+  );
+  return {
+    lockfileSha256: hashBytes(lockfile),
+    dependencyVersions: dependencyVersionRecord(resolutions),
+    installedPackageManifestSha256: hashPreparedManifest(
+      createInstalledPackageManifest(root, resolutions),
+    ),
+  };
+}
+
+export function formatBuildDiagnostic(log: unknown): string {
+  if (!isRecord(log)) return String(log);
+  const position = isRecord(log.position) ? log.position : undefined;
+  const path =
+    typeof log.path === 'string'
+      ? log.path
+      : typeof position?.file === 'string'
+        ? position.file
+        : undefined;
+  const line = typeof position?.line === 'number' ? position.line : undefined;
+  const column = typeof position?.column === 'number' ? position.column : undefined;
+  const location = path
+    ? `${path}${line === undefined ? '' : `:${line}${column === undefined ? '' : `:${column}`}`}`
+    : undefined;
+  const message = typeof log.message === 'string' ? log.message : JSON.stringify(log);
+  const renderedPosition = position === undefined ? undefined : JSON.stringify(position);
+  return [message, location, renderedPosition].filter(Boolean).join(' ');
+}
+
+async function cleanupPlans(
+  platform: BrowserRunnerPlatform,
+  context: PreflightContext,
+  plans: readonly ArmPlan[],
+): Promise<void> {
+  const failures: unknown[] = [];
+  for (const plan of [...plans].reverse()) {
+    try {
+      await platform.command(
+        command(
+          ['git', 'worktree', 'remove', '--force', plan.root],
+          context.candidateRoot,
+          platform.environment,
+        ),
+      );
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  const temporaryRoots = new Set(plans.map((plan) => plan.temporaryRoot));
+  for (const temporaryRoot of temporaryRoots) {
+    try {
+      await platform.remove(temporaryRoot);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) throw new AggregateError(failures, 'Baseline cleanup failed');
 }
 
 async function startPreviews(
@@ -1139,19 +1233,21 @@ async function startPreviews(
 }
 
 async function cleanup(platform: BrowserRunnerPlatform, prepared: PreparedBaseline): Promise<void> {
-  for (const arm of ['candidate', 'baseline'] as const) {
-    const root = prepared.arms?.[arm]?.plan?.root;
-    if (!root) continue;
-    await platform.command(
-      command(
-        ['git', 'worktree', 'remove', '--force', root],
-        prepared.context?.candidateRoot ?? platform.cwd(),
-        platform.environment,
-      ),
-    );
-  }
-  const temporaryRoot = prepared.arms?.baseline?.plan?.temporaryRoot;
-  if (temporaryRoot) await platform.remove(temporaryRoot);
+  const plans = (['baseline', 'candidate'] as const)
+    .map((arm) => prepared.arms?.[arm]?.plan)
+    .filter((plan): plan is ArmPlan => plan !== undefined);
+  await cleanupPlans(
+    platform,
+    prepared.context ?? {
+      candidateRoot: platform.cwd(),
+      candidateRevision: '',
+      runnerRevision: '',
+      baselineRevision: BASELINE_REVISION,
+      runId: '',
+      quotable: false,
+    },
+    plans,
+  );
 }
 
 export function assembleBaselineReport(
