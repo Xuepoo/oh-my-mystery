@@ -775,8 +775,16 @@ export async function executeScenarioStep(
     case 'clear-graph':
     case 'clear-rendered-graph':
       await activateTarget(page, 'tool.clear', context.viewport.mobile);
-      if ((await readGraphCount(page)) > 0)
-        await activateTarget(page, 'tool.clear', context.viewport.mobile);
+      await assertPageState(page, () =>
+        Boolean(
+          (
+            window as unknown as {
+              __OMM_APP__?: { instrumentation?: { tools: { clearArmed: boolean } } };
+            }
+          ).__OMM_APP__?.instrumentation?.tools.clearArmed,
+        ),
+      );
+      await activateTarget(page, 'tool.clear', context.viewport.mobile);
       await assertPageState(
         page,
         () =>
@@ -1033,18 +1041,6 @@ async function toggleTwice(page: Page, id: string, mobile: boolean): Promise<voi
   if (!(await hasTarget(page, id))) return;
   await activateTarget(page, id, mobile);
   await activateTarget(page, id, mobile);
-}
-
-async function readGraphCount(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const graph = (
-      window as unknown as {
-        __OMM_APP__?: { instrumentation?: { graph: { nodeCount: number } } };
-      }
-    ).__OMM_APP__?.instrumentation?.graph;
-    if (!graph) throw new Error('Graph instrumentation is unavailable');
-    return graph.nodeCount;
-  });
 }
 
 export function createBaselineCaptureDependencies(
