@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { chromium, firefox, type Browser, type Page } from 'playwright';
@@ -135,7 +135,6 @@ const defaultPlatform: BrowserRunnerPlatform = {
   installSnapshot: (root) => installSnapshot(root),
   buildSnapshot: (root) => ({ sha256: hashDirectoryFallback(join(root, 'apps/web/dist')) }),
   async bundlePhysics(plan) {
-    const output = join(plan.outputDir, 'physics.js');
     await mkdir(plan.outputDir, { recursive: true });
     const result = await Bun.build({
       entrypoints: [plan.entryPoint],
@@ -146,6 +145,11 @@ const defaultPlatform: BrowserRunnerPlatform = {
     if (!result.success) {
       throw new Error(result.logs.map(formatBuildDiagnostic).join('\n'));
     }
+    const outputFiles = (await readdir(plan.outputDir)).filter((file) => file.endsWith('.js'));
+    if (outputFiles.length !== 1) {
+      throw new Error(`Expected one physics bundle, found ${outputFiles.join(', ')}`);
+    }
+    const output = join(plan.outputDir, outputFiles[0]!);
     return {
       path: output,
       sha256: hashDirectoryFallback(plan.outputDir),
