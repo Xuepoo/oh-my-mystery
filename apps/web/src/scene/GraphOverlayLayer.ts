@@ -53,6 +53,9 @@ interface LabelPlacementOptions {
   occupied?: readonly { x: number; y: number; width: number; height: number }[];
   gap?: number;
   padding?: number;
+  // During active physics, pin labels to a fixed side (below) so oscillating
+  // nodes do not make labels flip between below/above/right/left each frame.
+  stable?: boolean;
 }
 
 function rectanglesOverlap(
@@ -185,14 +188,16 @@ export function placeGraphLabels(
       },
     ];
 
-    const placement = positions.find(
-      (position) =>
-        position.x >= viewport.x + padding &&
-        position.y >= viewport.y + padding &&
-        position.x + position.width <= viewport.x + viewport.width - padding &&
-        position.y + position.height <= viewport.y + viewport.height - padding &&
-        !occupied.overlaps(position),
-    );
+    const placement = options.stable
+      ? (positions[0] ?? null)
+      : positions.find(
+          (position) =>
+            position.x >= viewport.x + padding &&
+            position.y >= viewport.y + padding &&
+            position.x + position.width <= viewport.x + viewport.width - padding &&
+            position.y + position.height <= viewport.y + viewport.height - padding &&
+            !occupied.overlaps(position),
+        );
     if (!placement) continue;
 
     accepted.push(placement);
@@ -688,6 +693,7 @@ export class GraphOverlayLayer extends Entity {
     const placements = placeGraphLabels(labelCandidates, {
       viewport: { x: graphRect.x, y: graphRect.y, width: graphRect.w, height: graphRect.h },
       maxLabels: labelBudget,
+      stable: this.viewport.isPhysicsActive(),
       occupied: [
         { x: 0, y: Math.max(graphRect.y, h - 160), width: 215, height: 160 },
         { x: Math.max(0, w - 180), y: Math.max(graphRect.y, h - 100), width: 180, height: 100 },

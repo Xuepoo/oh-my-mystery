@@ -388,6 +388,41 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     graph.dispose();
   });
 
+  it('cools down quickly after expansion (damping tuning guard)', async () => {
+    const root = node('root');
+    const children = Array.from({ length: 12 }, (_, i) => node(`child-${i}`));
+    const source = {
+      async getNeighbors() {
+        return {
+          entity: root,
+          neighbors: children,
+          facts: children.map((child) => ({
+            source: root.id,
+            target: child.id,
+            predicate: 'publisher',
+          })),
+          hasMore: false,
+          total: 12,
+        };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+    for (let tick = 0; tick < 1000 && graph.isSimulating(); tick++) graph.step();
+    expect(graph.isSimulating()).toBe(false);
+
+    await graph.toggleExpansion('root');
+    expect(graph.isSimulating()).toBe(true);
+
+    let ticks = 0;
+    for (; ticks < 1000 && graph.isSimulating(); ticks++) graph.step();
+    expect(graph.isSimulating()).toBe(false);
+    // alphaDecay 0.04 from a 0.35 reheat settles in ~144 ticks; the pre-fix
+    // alphaDecay 0.024 from a 0.6 reheat took ~263 ticks.
+    expect(ticks).toBeLessThan(220);
+    graph.dispose();
+  });
+
   it('places a fetched page around the live center after the request resolves', async () => {
     const root = node('root');
     const child = node('child');

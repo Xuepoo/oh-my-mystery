@@ -109,6 +109,18 @@ describe('placeGraphLabels', () => {
     expect(labels[0]?.side).not.toBe('left');
     expect(overlaps(labels[0]!, { x: 112, y: 140, width: 16, height: 16 })).toBe(false);
   });
+
+  it('pins labels to the fixed below side in stable mode instead of flipping sides', () => {
+    const labels = placeGraphLabels([candidate('a', 160, 130), candidate('b', 160, 130)], {
+      viewport,
+      stable: true,
+    });
+
+    expect(labels.map(({ id, side }) => [id, side])).toEqual([
+      ['a', 'below'],
+      ['b', 'below'],
+    ]);
+  });
 });
 
 describe('createPillCacheKey', () => {
