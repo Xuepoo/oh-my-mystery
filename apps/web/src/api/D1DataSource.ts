@@ -31,9 +31,11 @@ export class D1DataSource {
   private cache = new Map<string, GraphNeighborhood2D>();
   private cacheOrder: string[] = [];
   private cacheMax = 200;
+  private pathTimeoutMs: number;
 
-  constructor(baseUrl = '') {
+  constructor(baseUrl = '', pathTimeoutMs = 15_000) {
     this.baseUrl = baseUrl;
+    this.pathTimeoutMs = pathTimeoutMs;
   }
 
   setTurnstileToken(token: string | null) {
@@ -59,8 +61,8 @@ export class D1DataSource {
     return headers;
   }
 
-  private async getProtectedHeaders(): Promise<HeadersInit> {
-    this.turnstileToken = await getTurnstileToken(this.turnstileSiteKey);
+  private async getProtectedHeaders(signal?: AbortSignal): Promise<HeadersInit> {
+    this.turnstileToken = await getTurnstileToken(this.turnstileSiteKey, { signal });
     return this.getHeaders();
   }
 
@@ -297,15 +299,21 @@ export class D1DataSource {
   }
 
   async findPath(source: string, target: string): Promise<PathfinderResult | null> {
+    const signal = AbortSignal.timeout(this.pathTimeoutMs);
     try {
       const res = await fetch(
         `${this.baseUrl}/api/path?source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`,
-        { headers: await this.getProtectedHeaders() },
+        {
+          headers: await this.getProtectedHeaders(signal),
+          signal,
+        },
       );
       if (!res.ok) return null;
       return (await res.json()) as PathfinderResult;
     } catch (err) {
-      console.error('Find path failed', err);
+      if (!(err instanceof DOMException && err.name === 'TimeoutError')) {
+        console.error('Find path failed', err);
+      }
       return null;
     } finally {
       this.turnstileToken = null;

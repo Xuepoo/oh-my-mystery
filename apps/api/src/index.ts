@@ -954,18 +954,22 @@ app.get('/api/path', turnstileVerify, async (c) => {
   }
 
   // Breadth-first pathfinding (Max 5 hops)
-  const path = await findShortestPath(c.env.DB, source, target, 5);
+  const pathResult = await findShortestPath(c.env.DB, source, target, 5);
 
-  if (!path) {
+  if (pathResult.status !== 'found') {
     const notFound: PathfinderResult = {
       found: false,
       nodes: [],
       edges: [],
       hops: -1,
-      explanation: '在限定跳数内未发现直接关联路径',
+      explanation:
+        pathResult.status === 'budget_exhausted'
+          ? '关系网络过于庞大，已在安全搜索上限内停止，请尝试选择关联更紧密的实体'
+          : '在限定跳数内未发现直接关联路径',
     };
     return c.json(notFound);
   }
+  const path = pathResult.path;
 
   // Fetch nodes in path
   const nodeIds = [...new Set(path.nodes)];
@@ -1173,76 +1177,179 @@ function parseJsonOrUndefined(raw: unknown): unknown {
   }
 }
 
+const PATH_FRONTIER_BATCH_SIZE = 50;
+const PATH_MAX_QUERIES = 50;
+const PATH_MAX_VISITED = 2_000;
+const PATH_MAX_EXAMINED_EDGES = 4_000;
+
+interface PathEdge {
+  source: string;
+  target: string;
+  predicate: string;
+  storedSource: string;
+  storedTarget: string;
+}
+
+type PathSearchResult =
+  | { status: 'found'; path: { nodes: string[]; edges: PathEdge[] } }
+  | { status: 'no_path' | 'budget_exhausted' };
+
 async function findShortestPath(
   db: D1Database,
   start: string,
   end: string,
   maxDepth = 5,
-): Promise<{
-  nodes: string[];
-  edges: { source: string; target: string; predicate: string }[];
-} | null> {
-  interface QueueItem {
-    id: string;
-    pathNodes: string[];
-    pathEdges: { source: string; target: string; predicate: string }[];
+): Promise<PathSearchResult> {
+  interface Parent {
+    node: string;
+    edge: PathEdge;
   }
 
-  const queue: QueueItem[] = [{ id: start, pathNodes: [start], pathEdges: [] }];
-  const visited = new Set<string>([start]);
-  let head = 0;
+  const sourceParents = new Map<string, Parent>();
+  const targetParents = new Map<string, Parent>();
+  const sourceDepths = new Map([[start, 0]]);
+  const targetDepths = new Map([[end, 0]]);
+  const sourceVisited = new Set([start]);
+  const targetVisited = new Set([end]);
+  let sourceFrontier = [start];
+  let targetFrontier = [end];
+  let queryCount = 0;
+  let examinedEdges = 0;
 
-  while (head < queue.length) {
-    const current = queue[head++];
-    if (current.pathEdges.length >= maxDepth) continue;
-
-    const rows = await db
-      .prepare(
-        `SELECT f.subject_id, f.object_ref, f.predicate
-         FROM facts f
-         JOIN entities subject_entity ON subject_entity.id = f.subject_id
-         JOIN entities object_entity ON object_entity.id = f.object_ref
-         WHERE (f.subject_id = ? OR f.object_ref = ?)
-           AND f.object_ref IS NOT NULL
-           AND TRIM(f.object_ref) <> ''
-         ORDER BY CASE WHEN f.subject_id = ? THEN f.object_ref ELSE f.subject_id END COLLATE NOCASE,
-                  f.predicate COLLATE NOCASE,
-                  f.subject_id COLLATE NOCASE,
-                  f.object_ref COLLATE NOCASE`,
-      )
-      .bind(current.id, current.id, current.id)
-      .all();
-
-    for (const r of (rows.results || []) as any[]) {
-      const neighbor = r.subject_id === current.id ? String(r.object_ref) : String(r.subject_id);
-
-      const edge = {
-        source: current.id,
-        target: neighbor,
-        predicate: r.predicate,
-        storedSource: String(r.subject_id),
-        storedTarget: String(r.object_ref),
-      };
-
-      if (neighbor === end) {
-        return {
-          nodes: [...current.pathNodes, neighbor],
-          edges: [...current.pathEdges, edge],
-        };
-      }
-
-      if (!visited.has(neighbor) && current.pathEdges.length + 1 < maxDepth) {
-        visited.add(neighbor);
-        queue.push({
-          id: neighbor,
-          pathNodes: [...current.pathNodes, neighbor],
-          pathEdges: [...current.pathEdges, edge],
-        });
+  const queryEdges = async (frontier: string[]) => {
+    const adjacency: {
+      current: string;
+      neighbor: string;
+      predicate: string;
+      storedSource: string;
+      storedTarget: string;
+    }[] = [];
+    for (let offset = 0; offset < frontier.length; offset += PATH_FRONTIER_BATCH_SIZE) {
+      const ids = frontier.slice(offset, offset + PATH_FRONTIER_BATCH_SIZE);
+      const placeholders = ids.map(() => '?').join(',');
+      for (const direction of ['outgoing', 'incoming'] as const) {
+        if (++queryCount > PATH_MAX_QUERIES) return { exhausted: true, adjacency };
+        const remaining = PATH_MAX_EXAMINED_EDGES - examinedEdges;
+        if (remaining <= 0) return { exhausted: true, adjacency };
+        const column = direction === 'outgoing' ? 'subject_id' : 'object_ref';
+        const neighborColumn = direction === 'outgoing' ? 'object_ref' : 'subject_id';
+        const rows = await db
+          .prepare(
+            `SELECT f.subject_id, f.object_ref, f.predicate
+             FROM facts f
+             JOIN entities neighbor ON neighbor.id = f.${neighborColumn}
+             WHERE f.${column} IN (${placeholders})
+             ORDER BY f.${column} COLLATE BINARY, f.predicate COLLATE BINARY,
+                      f.subject_id COLLATE BINARY, f.object_ref COLLATE BINARY
+             LIMIT ?`,
+          )
+          .bind(...ids, remaining + 1)
+          .all();
+        const results = (rows.results || []) as any[];
+        examinedEdges += Math.min(results.length, remaining);
+        if (results.length > remaining) return { exhausted: true, adjacency };
+        for (const row of results) {
+          const storedSource = String(row.subject_id);
+          const storedTarget = String(row.object_ref);
+          adjacency.push({
+            current: direction === 'outgoing' ? storedSource : storedTarget,
+            neighbor: direction === 'outgoing' ? storedTarget : storedSource,
+            predicate: String(row.predicate),
+            storedSource,
+            storedTarget,
+          });
+        }
       }
     }
+    adjacency.sort((a, b) => {
+      const left = [a.current, a.neighbor, a.predicate, a.storedSource, a.storedTarget].join('\0');
+      const right = [b.current, b.neighbor, b.predicate, b.storedSource, b.storedTarget].join('\0');
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
+    return { exhausted: false, adjacency };
+  };
+
+  const buildPath = (meeting: string): PathSearchResult => {
+    const sourceNodes = [meeting];
+    const sourceEdges: PathEdge[] = [];
+    for (let current = meeting; current !== start;) {
+      const parent = sourceParents.get(current)!;
+      sourceNodes.push(parent.node);
+      sourceEdges.push(parent.edge);
+      current = parent.node;
+    }
+    sourceNodes.reverse();
+    sourceEdges.reverse();
+
+    const targetNodes: string[] = [];
+    const targetEdges: PathEdge[] = [];
+    for (let current = meeting; current !== end;) {
+      const parent = targetParents.get(current)!;
+      targetNodes.push(parent.node);
+      targetEdges.push(parent.edge);
+      current = parent.node;
+    }
+    return {
+      status: 'found',
+      path: { nodes: [...sourceNodes, ...targetNodes], edges: [...sourceEdges, ...targetEdges] },
+    };
+  };
+
+  for (let depth = 0; depth < maxDepth; depth++) {
+    const fromSource = depth % 2 === 0;
+    const frontier = fromSource ? sourceFrontier : targetFrontier;
+    if (frontier.length === 0) continue;
+    const queried = await queryEdges(frontier);
+    if (queried.exhausted) return { status: 'budget_exhausted' };
+
+    const ownVisited = fromSource ? sourceVisited : targetVisited;
+    const otherVisited = fromSource ? targetVisited : sourceVisited;
+    const ownDepths = fromSource ? sourceDepths : targetDepths;
+    const otherDepths = fromSource ? targetDepths : sourceDepths;
+    const parents = fromSource ? sourceParents : targetParents;
+    const nextFrontier: string[] = [];
+    let meeting: string | undefined;
+    let meetingDepth = Number.POSITIVE_INFINITY;
+    for (const row of queried.adjacency) {
+      if (ownVisited.has(row.neighbor)) continue;
+      if (sourceVisited.size + targetVisited.size >= PATH_MAX_VISITED) {
+        return { status: 'budget_exhausted' };
+      }
+      ownVisited.add(row.neighbor);
+      nextFrontier.push(row.neighbor);
+      ownDepths.set(row.neighbor, ownDepths.get(row.current)! + 1);
+      parents.set(row.neighbor, {
+        node: row.current,
+        edge: fromSource
+          ? {
+              source: row.current,
+              target: row.neighbor,
+              predicate: row.predicate,
+              storedSource: row.storedSource,
+              storedTarget: row.storedTarget,
+            }
+          : {
+              source: row.neighbor,
+              target: row.current,
+              predicate: row.predicate,
+              storedSource: row.storedSource,
+              storedTarget: row.storedTarget,
+            },
+      });
+      if (otherVisited.has(row.neighbor)) {
+        const totalDepth = ownDepths.get(row.neighbor)! + otherDepths.get(row.neighbor)!;
+        if (totalDepth < meetingDepth || (totalDepth === meetingDepth && row.neighbor < meeting!)) {
+          meeting = row.neighbor;
+          meetingDepth = totalDepth;
+        }
+      }
+    }
+    if (meeting) return buildPath(meeting);
+    if (fromSource) sourceFrontier = nextFrontier;
+    else targetFrontier = nextFrontier;
   }
 
-  return null;
+  return { status: 'no_path' };
 }
 
 export default app;

@@ -110,6 +110,8 @@ export class PathfinderModal extends Entity {
   }
 
   open(initialSource?: { id: string; name: string }): void {
+    this.searchEpoch++;
+    this.searchLoading = false;
     if (initialSource) {
       this.sourceId = initialSource.id;
       this.sourceName = initialSource.name;
@@ -126,6 +128,8 @@ export class PathfinderModal extends Entity {
     this.isOpen = false;
     this.closeEpoch++;
     this.searchEpoch++;
+    this.searchLoading = false;
+    this.pathResult = null;
     this.sourceState.epoch++;
     this.targetState.epoch++;
     this.removeDomInputs();
@@ -190,6 +194,8 @@ export class PathfinderModal extends Entity {
 
   public dispose(): void {
     this.closeEpoch++;
+    this.searchEpoch++;
+    this.searchLoading = false;
     this.removeDomInputs();
   }
 

@@ -108,15 +108,80 @@ async function verifyContext(
       return { opener: window };
     }) as typeof window.open;
   });
-  await page.getByRole('link', { name: 'VectoJS GitHub' }).focus();
-  await page.keyboard.press('Enter');
+  const projectedLink = await page.getByRole('link', { name: 'VectoJS GitHub' }).boundingBox();
+  assert.ok(projectedLink);
+  await page.mouse.click(
+    projectedLink.x + projectedLink.width / 2,
+    projectedLink.y + projectedLink.height / 2,
+  );
   assert.deepEqual(await page.evaluate(() => (window as any).__OPEN_CALLS__), [
     ['https://github.com/vectojs/vectojs', '_blank', 'noopener,noreferrer'],
   ]);
 
-  await dispatchTouch(page, 'pointerdown', 12, 2, height / 2);
-  await dispatchTouch(page, 'pointerup', 12, 2, height / 2);
+  await page.mouse.click(2, height / 2);
   await page.waitForFunction(() => !(window as any).__OMM_APP__.helpModal.isModalOpen());
+  await page.keyboard.press('/');
+  assert.equal(
+    await page
+      .locator('#omm-header-search-input')
+      .evaluate((input) => input === document.activeElement),
+    true,
+  );
+
+  await page
+    .locator('#omm-header-search-input')
+    .evaluate((input: HTMLInputElement) => input.blur());
+  await page.keyboard.press('/');
+  await page.waitForTimeout(300);
+  assert.equal(
+    await page
+      .locator('#omm-header-search-input')
+      .evaluate((input) => input === document.activeElement),
+    true,
+  );
+
+  await page.evaluate(() => {
+    const textarea = document.createElement('textarea');
+    textarea.id = 'shortcut-editable';
+    document.body.appendChild(textarea);
+    textarea.focus();
+  });
+  await page.keyboard.press('/');
+  assert.equal(
+    await page.locator('#shortcut-editable').evaluate((input) => input === document.activeElement),
+    true,
+  );
+  await page.locator('#shortcut-editable').evaluate((input) => input.remove());
+
+  await page.keyboard.press('?');
+  await page.waitForFunction(() => (window as any).__OMM_APP__.helpModal.isModalOpen());
+  assert.equal(
+    await page
+      .locator('#omm-header-search-input')
+      .evaluate((input) => getComputedStyle(input).visibility),
+    'hidden',
+  );
+  await page.keyboard.press('/');
+  assert.equal(
+    await page
+      .locator('#omm-header-search-input')
+      .evaluate((input) => input === document.activeElement),
+    false,
+  );
+  const closeButton = await page.getByRole('button', { name: '关闭使用指南' }).boundingBox();
+  assert.ok(closeButton);
+  await page.mouse.click(
+    closeButton.x + closeButton.width / 2,
+    closeButton.y + closeButton.height / 2,
+  );
+  await page.waitForFunction(() => !(window as any).__OMM_APP__.helpModal.isModalOpen());
+  assert.equal(
+    await page
+      .locator('#omm-header-search-input')
+      .evaluate((input) => getComputedStyle(input).visibility),
+    'visible',
+  );
+
   await page.waitForFunction(() => !(window as any).__OMM_APP__.viewport.isCameraAnimating());
   const settledBefore = await page.evaluate(() => {
     const viewport = (window as any).__OMM_APP__.viewport;
@@ -224,6 +289,42 @@ async function verifyContext(
   await page.close();
 }
 
+async function verifyTallDesktop(context: BrowserContext): Promise<void> {
+  const page = await readyPage(context);
+  await page.keyboard.press('?');
+  await page.waitForFunction(() => {
+    const modal = (window as any).__OMM_APP__.helpModal;
+    return modal.isModalOpen() && modal.modalRect.h > 0 && modal.joinRects.length === 2;
+  });
+  const state = await page.evaluate(() => {
+    const app = (window as any).__OMM_APP__;
+    return {
+      modal: app.helpModal.modalRect,
+      links: app.helpModal.joinRects,
+    };
+  });
+  assert.equal(state.modal.h, 680);
+  assert.equal(state.links.length, 2);
+  assert.ok(state.links.every((link: any) => link.y + link.h <= state.modal.y + state.modal.h));
+  await page.mouse.click(2, 567);
+  await page.waitForFunction(() => !(window as any).__OMM_APP__.helpModal.isModalOpen());
+  await page.close();
+}
+
+async function verifyFirstVisit(context: BrowserContext): Promise<void> {
+  const page = await context.newPage();
+  await page.goto(WEB_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => Boolean((window as any).__OMM_APP__));
+  await page.keyboard.press('/');
+  assert.equal(
+    await page
+      .locator('#omm-header-search-input')
+      .evaluate((input) => input === document.activeElement),
+    true,
+  );
+  await page.close();
+}
+
 await ensureServer(
   WEB_URL,
   ['bun', 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '3000'],
@@ -250,7 +351,14 @@ try {
     await verifyContext(landscape, 640, 360);
     await landscape.close();
   }
-  console.log('UI polish E2E: DPR 1/2 portrait and landscape checks passed');
+  const desktop = await browser.newContext({ viewport: { width: 1050, height: 1134 } });
+  await verifyTallDesktop(desktop);
+  await desktop.close();
+
+  const firstVisit = await browser.newContext({ viewport: { width: 1050, height: 1134 } });
+  await verifyFirstVisit(firstVisit);
+  await firstVisit.close();
+  console.log('UI polish E2E: pointer, shortcut, DPR, tall desktop, and first-visit checks passed');
 } finally {
   await browser.close();
   for (const process of spawned) process.kill();

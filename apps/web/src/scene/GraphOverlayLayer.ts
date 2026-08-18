@@ -22,6 +22,188 @@ interface CachedPillInfo {
   pillH: number;
   isAuthor: boolean;
   typeColor: string;
+  font: string;
+}
+
+export interface LabelPlacementCandidate {
+  id: string;
+  sx: number;
+  sy: number;
+  width: number;
+  height: number;
+  radius: number;
+  hovered?: boolean;
+  selected?: boolean;
+  onPath?: boolean;
+  degree?: number;
+}
+
+export interface LabelPlacement {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  side: 'below' | 'above' | 'right' | 'left';
+}
+
+interface LabelPlacementOptions {
+  viewport: { x: number; y: number; width: number; height: number };
+  maxLabels?: number;
+  occupied?: readonly { x: number; y: number; width: number; height: number }[];
+  gap?: number;
+  padding?: number;
+}
+
+function rectanglesOverlap(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+class RectangleGrid {
+  private readonly cells = new Map<
+    string,
+    { x: number; y: number; width: number; height: number }[]
+  >();
+
+  constructor(private readonly cellSize = 64) {}
+
+  add(rect: { x: number; y: number; width: number; height: number }): void {
+    for (const key of this.keys(rect)) {
+      const cell = this.cells.get(key);
+      if (cell) cell.push(rect);
+      else this.cells.set(key, [rect]);
+    }
+  }
+
+  overlaps(rect: { x: number; y: number; width: number; height: number }): boolean {
+    for (const key of this.keys(rect)) {
+      const cell = this.cells.get(key);
+      if (cell?.some((candidate) => rectanglesOverlap(rect, candidate))) return true;
+    }
+    return false;
+  }
+
+  private keys(rect: { x: number; y: number; width: number; height: number }): string[] {
+    const minX = Math.floor(rect.x / this.cellSize);
+    const maxX = Math.floor((rect.x + rect.width) / this.cellSize);
+    const minY = Math.floor(rect.y / this.cellSize);
+    const maxY = Math.floor((rect.y + rect.height) / this.cellSize);
+    const keys: string[] = [];
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) keys.push(`${x}:${y}`);
+    }
+    return keys;
+  }
+}
+
+function labelPriority(candidate: LabelPlacementCandidate): number {
+  if (candidate.hovered) return 0;
+  if (candidate.selected) return 1;
+  if (candidate.onPath) return 2;
+  return 3;
+}
+
+/** Places labels deterministically in screen space without moving them away from their nodes. */
+export function placeGraphLabels(
+  candidates: readonly LabelPlacementCandidate[],
+  options: LabelPlacementOptions,
+): LabelPlacement[] {
+  const gap = options.gap ?? 6;
+  const padding = options.padding ?? 4;
+  const maxLabels = Math.max(0, options.maxLabels ?? candidates.length);
+  const viewport = options.viewport;
+  if (
+    !Number.isFinite(viewport.x) ||
+    !Number.isFinite(viewport.y) ||
+    !Number.isFinite(viewport.width) ||
+    !Number.isFinite(viewport.height) ||
+    viewport.width <= padding * 2 ||
+    viewport.height <= padding * 2
+  ) {
+    return [];
+  }
+
+  const occupied = new RectangleGrid();
+  for (const rect of options.occupied ?? []) occupied.add(rect);
+  const accepted: LabelPlacement[] = [];
+  const ordered = candidates
+    .filter(
+      (candidate) =>
+        Number.isFinite(candidate.sx) &&
+        Number.isFinite(candidate.sy) &&
+        Number.isFinite(candidate.width) &&
+        Number.isFinite(candidate.height) &&
+        Number.isFinite(candidate.radius) &&
+        candidate.width > 0 &&
+        candidate.height > 0,
+    )
+    .sort((a, b) => {
+      const priority = labelPriority(a) - labelPriority(b);
+      if (priority) return priority;
+      const degree = (b.degree ?? 0) - (a.degree ?? 0);
+      return degree || a.id.localeCompare(b.id);
+    });
+
+  for (const candidate of ordered) {
+    if (accepted.length >= maxLabels) break;
+    const offset = Math.max(0, candidate.radius) + gap;
+    const positions: LabelPlacement[] = [
+      {
+        id: candidate.id,
+        x: candidate.sx - candidate.width / 2,
+        y: candidate.sy + offset,
+        width: candidate.width,
+        height: candidate.height,
+        side: 'below',
+      },
+      {
+        id: candidate.id,
+        x: candidate.sx - candidate.width / 2,
+        y: candidate.sy - offset - candidate.height,
+        width: candidate.width,
+        height: candidate.height,
+        side: 'above',
+      },
+      {
+        id: candidate.id,
+        x: candidate.sx + offset,
+        y: candidate.sy - candidate.height / 2,
+        width: candidate.width,
+        height: candidate.height,
+        side: 'right',
+      },
+      {
+        id: candidate.id,
+        x: candidate.sx - offset - candidate.width,
+        y: candidate.sy - candidate.height / 2,
+        width: candidate.width,
+        height: candidate.height,
+        side: 'left',
+      },
+    ];
+
+    const placement = positions.find(
+      (position) =>
+        position.x >= viewport.x + padding &&
+        position.y >= viewport.y + padding &&
+        position.x + position.width <= viewport.x + viewport.width - padding &&
+        position.y + position.height <= viewport.y + viewport.height - padding &&
+        !occupied.overlaps(position),
+    );
+    if (!placement) continue;
+
+    accepted.push(placement);
+    occupied.add(placement);
+  }
+
+  return accepted;
+}
+
+export function createPillCacheKey(text: string, font: string, fontGeneration: number): string {
+  return `${fontGeneration}\u0000${font}\u0000${text}`;
 }
 
 export class GraphOverlayLayer extends Entity {
@@ -32,6 +214,7 @@ export class GraphOverlayLayer extends Entity {
   private nodeBadges: NodeScreenBadge[] = [];
   private badgePool: NodeScreenBadge[] = [];
   private pillCache = new Map<string, CachedPillInfo>();
+  private fontGeneration = 0;
   private activeFilters: ReadonlySet<string> | null = null;
   private activePredicates: ReadonlySet<string> | null = null;
 
@@ -40,6 +223,13 @@ export class GraphOverlayLayer extends Entity {
     this.id = 'graph-overlay-layer';
     this.interactive = false;
     this.viewport = viewport;
+    if (typeof document !== 'undefined' && document.fonts) {
+      void document.fonts.ready.then(() => {
+        this.fontGeneration++;
+        this.pillCache.clear();
+        this.scene?.markDirty();
+      });
+    }
   }
 
   isPointInside(_x: number, _y: number): boolean {
@@ -99,9 +289,6 @@ export class GraphOverlayLayer extends Entity {
 
   private getCachedPill(ctx: CanvasRenderingContext2D, e: GraphNode2D): CachedPillInfo {
     const id = String(e.id);
-    const cached = this.pillCache.get(id);
-    if (cached) return cached;
-
     const name = e.name || id;
     const type = e.type || 'author';
     const isAuthor = type === 'author';
@@ -117,7 +304,16 @@ export class GraphOverlayLayer extends Entity {
               : '🔹';
 
     const displayText = `${icon} ${name}`;
-    ctx.font = isAuthor ? `700 12px ${Theme.fonts.serif}` : `600 11px ${Theme.fonts.sans}`;
+    const font = isAuthor ? `700 12px ${Theme.fonts.serif}` : `600 11px ${Theme.fonts.sans}`;
+    const cacheKey = createPillCacheKey(
+      `${id}\u0000${displayText}\u0000${e.color ?? ''}`,
+      font,
+      this.fontGeneration,
+    );
+    const cached = this.pillCache.get(cacheKey);
+    if (cached) return cached;
+
+    ctx.font = font;
     const textMetrics = ctx.measureText(displayText);
     const pillW = Math.round(textMetrics.width + 20);
     const pillH = isAuthor ? 26 : 22;
@@ -131,8 +327,9 @@ export class GraphOverlayLayer extends Entity {
       pillH,
       isAuthor,
       typeColor,
+      font,
     };
-    this.pillCache.set(id, info);
+    this.pillCache.set(cacheKey, info);
     return info;
   }
 
@@ -160,14 +357,12 @@ export class GraphOverlayLayer extends Entity {
     } else {
       this.ripplePhase = 0;
     }
+    this.nodeBadges.length = 0;
     if (nodes.length === 0) return;
 
     const w = this.scene.width;
     const h = this.scene.height;
     const nodeCount = nodes.length;
-
-    // Reset badge list
-    this.nodeBadges.length = 0;
     let badgeIndex = 0;
 
     // 1. Calculate Screen Coordinates inline to avoid allocations
@@ -403,9 +598,30 @@ export class GraphOverlayLayer extends Entity {
       ctx.stroke();
     }
 
-    // 5. Draw Badges & Labels with Smart LOD (Skip corner regions under Minimap and Controls)
+    // 5. Place labels in screen space, highest priority first.
     let hoveredData: { entity: GraphNode2D; sx: number; sy: number } | null = null;
-
+    const highlightNodes = this.viewport.getHighlightNodes();
+    const graphRect = this.viewport.getGraphScreenRect();
+    const requiresLod = this.viewport.zoom < 0.7 || nodeCount > 60;
+    const labelBudget = requiresLod
+      ? Math.max(
+          4,
+          Math.floor(
+            ((graphRect.w * graphRect.h) / 12_000) *
+              Math.min(1, Math.max(0.35, this.viewport.zoom)),
+          ),
+        )
+      : nodeCount;
+    const visibleNodes: {
+      node: GraphNode2D;
+      sx: number;
+      sy: number;
+      radius: number;
+      hovered: boolean;
+      onPath: boolean;
+    }[] = [];
+    const labelCandidates: LabelPlacementCandidate[] = [];
+    const labelData = new Map<string, { node: GraphNode2D; pillInfo: CachedPillInfo }>();
     for (let i = 0; i < nodeCount; i++) {
       const node = nodes[i]!;
       if (
@@ -418,91 +634,137 @@ export class GraphOverlayLayer extends Entity {
       )
         continue;
 
-      // Skip rendering pills that fall directly behind bottom-left Minimap or bottom-right Controls
-      if ((node.sx < 215 && node.sy > h - 160) || (node.sx > w - 180 && node.sy > h - 100)) {
-        continue;
-      }
-
       const isHovered = this.hoveredEntity && this.hoveredEntity.id === node.id;
       if (isHovered) {
         hoveredData = { entity: node, sx: node.sx, sy: node.sy };
       }
 
-      const pillInfo = this.getCachedPill(ctx, node);
       const matchesFilter = !this.activeFilters || this.activeFilters.has(node.type);
-      const showFullBadge =
-        (pillInfo.isAuthor || isHovered || this.viewport.zoom >= 0.7 || nodeCount <= 60) &&
-        matchesFilter;
+      if (!matchesFilter && !isHovered) continue;
 
-      if (showFullBadge) {
-        const pillW = pillInfo.pillW;
-        const pillH = pillInfo.pillH;
-        const nodeR =
-          (node.radius || (node.type === 'author' ? 12 : 7)) *
-          Math.min(1.3, Math.max(0.65, this.viewport.zoom));
-        const pillX = Math.round(node.sx - pillW / 2);
-        const pillY = Math.round(node.sy + nodeR + 6);
+      const nodeR =
+        (node.radius || (node.type === 'author' ? 12 : 7)) *
+        Math.min(1.3, Math.max(0.65, this.viewport.zoom));
+      visibleNodes.push({
+        node,
+        sx: node.sx,
+        sy: node.sy,
+        radius: nodeR,
+        hovered: Boolean(isHovered),
+        onPath: highlightNodes.has(String(node.id)),
+      });
+    }
 
-        let badge = this.badgePool[badgeIndex];
-        if (!badge) {
-          badge = {
-            id: node.id,
-            entity: node,
-            sx: node.sx,
-            sy: node.sy,
-            pillX,
-            pillY,
-            pillW,
-            pillH,
-          };
-          this.badgePool[badgeIndex] = badge;
-        } else {
-          badge.id = node.id;
-          badge.entity = node;
-          badge.sx = node.sx;
-          badge.sy = node.sy;
-          badge.pillX = pillX;
-          badge.pillY = pillY;
-          badge.pillW = pillW;
-          badge.pillH = pillH;
-        }
-        this.nodeBadges.push(badge);
-        badgeIndex++;
+    const measuredNodes = requiresLod
+      ? [...visibleNodes]
+          .sort((a, b) => {
+            const priority =
+              Number(b.hovered) - Number(a.hovered) || Number(b.onPath) - Number(a.onPath);
+            return (
+              priority ||
+              (b.node.degree ?? 0) - (a.node.degree ?? 0) ||
+              a.node.id.localeCompare(b.node.id)
+            );
+          })
+          .slice(0, Math.min(visibleNodes.length, Math.max(labelBudget * 4, labelBudget + 8)))
+      : visibleNodes;
+    for (const visible of measuredNodes) {
+      const { node, sx, sy, radius, hovered, onPath } = visible;
+      const pillInfo = this.getCachedPill(ctx, node);
+      labelCandidates.push({
+        id: String(node.id),
+        sx,
+        sy,
+        width: pillInfo.pillW,
+        height: pillInfo.pillH,
+        radius,
+        hovered,
+        onPath,
+        degree: node.degree ?? 0,
+      });
+      labelData.set(String(node.id), { node, pillInfo });
+    }
 
-        // Pill Fill
-        ctx.fillStyle = isHovered
-          ? 'rgba(64, 51, 42, 0.98)'
-          : pillInfo.isAuthor
-            ? 'rgba(40, 31, 25, 0.94)'
-            : 'rgba(32, 25, 20, 0.88)';
-        ctx.beginPath();
-        ctx.roundRect(pillX, pillY, pillW, pillH, 5);
-        ctx.fill();
+    const placements = placeGraphLabels(labelCandidates, {
+      viewport: { x: graphRect.x, y: graphRect.y, width: graphRect.w, height: graphRect.h },
+      maxLabels: labelBudget,
+      occupied: [
+        { x: 0, y: Math.max(graphRect.y, h - 160), width: 215, height: 160 },
+        { x: Math.max(0, w - 180), y: Math.max(graphRect.y, h - 100), width: 180, height: 100 },
+        ...visibleNodes.map((visible) => ({
+          x: visible.sx - visible.radius,
+          y: visible.sy - visible.radius,
+          width: visible.radius * 2,
+          height: visible.radius * 2,
+        })),
+      ],
+    });
 
-        // Pill Border
-        ctx.strokeStyle = isHovered
-          ? '#FFE066'
-          : pillInfo.isAuthor
-            ? Theme.colors.borderHighlight
-            : Theme.colors.border;
-        ctx.lineWidth = isHovered ? 1.5 : 1;
-        ctx.stroke();
+    for (const placement of placements) {
+      const data = labelData.get(placement.id);
+      if (!data) continue;
+      const { node, pillInfo } = data;
+      const isHovered = this.hoveredEntity?.id === node.id;
+      const pillX = placement.x;
+      const pillY = placement.y;
 
-        // Left Category Color Pill Accent
-        ctx.fillStyle = pillInfo.typeColor;
-        ctx.beginPath();
-        ctx.roundRect(pillX + 3, pillY + 3, 3, pillH - 6, 2);
-        ctx.fill();
-
-        // Label Text
-        ctx.font = pillInfo.isAuthor
-          ? `700 12px ${Theme.fonts.serif}`
-          : `600 11px ${Theme.fonts.sans}`;
-        ctx.fillStyle = isHovered ? '#FFFDF9' : Theme.colors.textHigh;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(pillInfo.displayText, pillX + pillW / 2 + 2, pillY + pillH / 2);
+      let badge = this.badgePool[badgeIndex];
+      if (!badge) {
+        badge = {
+          id: node.id,
+          entity: node,
+          sx: node.sx!,
+          sy: node.sy!,
+          pillX,
+          pillY,
+          pillW: placement.width,
+          pillH: placement.height,
+        };
+        this.badgePool[badgeIndex] = badge;
+      } else {
+        badge.id = node.id;
+        badge.entity = node;
+        badge.sx = node.sx!;
+        badge.sy = node.sy!;
+        badge.pillX = pillX;
+        badge.pillY = pillY;
+        badge.pillW = placement.width;
+        badge.pillH = placement.height;
       }
+      this.nodeBadges.push(badge);
+      badgeIndex++;
+
+      ctx.fillStyle = isHovered
+        ? 'rgba(64, 51, 42, 0.98)'
+        : pillInfo.isAuthor
+          ? 'rgba(40, 31, 25, 0.94)'
+          : 'rgba(32, 25, 20, 0.88)';
+      ctx.beginPath();
+      ctx.roundRect(pillX, pillY, placement.width, placement.height, 5);
+      ctx.fill();
+
+      ctx.strokeStyle = isHovered
+        ? '#FFE066'
+        : pillInfo.isAuthor
+          ? Theme.colors.borderHighlight
+          : Theme.colors.border;
+      ctx.lineWidth = isHovered ? 1.5 : 1;
+      ctx.stroke();
+
+      ctx.fillStyle = pillInfo.typeColor;
+      ctx.beginPath();
+      ctx.roundRect(pillX + 3, pillY + 3, 3, placement.height - 6, 2);
+      ctx.fill();
+
+      ctx.font = pillInfo.font;
+      ctx.fillStyle = isHovered ? '#FFFDF9' : Theme.colors.textHigh;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        pillInfo.displayText,
+        pillX + placement.width / 2 + 2,
+        pillY + placement.height / 2,
+      );
     }
 
     // 6. Draw Hovered Entity Tooltip Card

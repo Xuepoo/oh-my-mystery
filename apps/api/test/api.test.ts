@@ -6,7 +6,10 @@ import { join } from 'node:path';
 import { app, SEED_AUTHOR_IDS } from '../src/index';
 
 // Create a D1Database mock wrapper around bun:sqlite
-function createMockD1(db: Database): D1Database {
+function createMockD1(
+  db: Database,
+  onQuery?: (query: string, rowCount: number) => void,
+): D1Database {
   return {
     prepare(query: string) {
       return {
@@ -21,6 +24,7 @@ function createMockD1(db: Database): D1Database {
             async all() {
               const stmt = db.query(query);
               const res = stmt.all(...args);
+              onQuery?.(query, res.length);
               return { results: res, success: true, meta: {} };
             },
             async run() {
@@ -39,6 +43,7 @@ function createMockD1(db: Database): D1Database {
         async all() {
           const stmt = db.query(query);
           const res = stmt.all();
+          onQuery?.(query, res.length);
           return { results: res, success: true, meta: {} };
         },
         async run() {
@@ -479,6 +484,56 @@ describe('OMM Backend API Endpoints', () => {
       expect(body.edges[i].target).toBe(body.nodes[i + 1].id);
       expect(body.edges[i].storedSource).toBeDefined();
       expect(body.edges[i].storedTarget).toBeDefined();
+    }
+  });
+
+  it('GET /api/path distinguishes an exhausted search from no path within five hops', async () => {
+    const res = await app.request('/api/path?source=wd:Q35610&target=wd:Q35064', {}, mockEnv);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      found: false,
+      hops: -1,
+      explanation: '在限定跳数内未发现直接关联路径',
+    });
+  });
+
+  it('GET /api/path stops within explicit budgets on a synthetic high-degree graph', async () => {
+    const db = new Database(':memory:');
+    db.run(readFileSync(join(import.meta.dir, '../schema.sql'), 'utf8'));
+    const insertEntity = db.prepare(
+      'INSERT INTO entities (id, type, names_json, source) VALUES (?, ?, ?, ?)',
+    );
+    const insertFact = db.prepare(
+      'INSERT INTO facts (subject_id, predicate, object_ref, source) VALUES (?, ?, ?, ?)',
+    );
+    insertEntity.run('test:start', 'author', names('起点'), 'test');
+    insertEntity.run('test:end', 'author', names('终点'), 'test');
+    for (let index = 0; index < 4_100; index++) {
+      const id = `test:fan-${index.toString().padStart(4, '0')}`;
+      insertEntity.run(id, 'work', names(id), 'test');
+      insertFact.run('test:start', 'related_to', id, 'test');
+    }
+
+    let pathQueries = 0;
+    let returnedPathRows = 0;
+    const env = {
+      DB: createMockD1(db, (query, rowCount) => {
+        if (query.includes('FROM facts') && query.includes(' IN (')) {
+          pathQueries++;
+          returnedPathRows += rowCount;
+        }
+      }),
+    };
+    try {
+      const res = await app.request('/api/path?source=test:start&target=test:end', {}, env);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.found).toBe(false);
+      expect(body.explanation).toContain('安全搜索上限');
+      expect(pathQueries).toBeLessThanOrEqual(2);
+      expect(returnedPathRows).toBeLessThanOrEqual(4_001);
+    } finally {
+      db.close();
     }
   });
 
