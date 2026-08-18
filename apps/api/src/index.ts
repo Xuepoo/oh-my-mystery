@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { formatWikidataDate } from '@omm/shared';
 import {
   neighborQuerySchema,
   parseQuery,
@@ -541,9 +542,16 @@ app.get('/api/entity/:id/profile', async (c) => {
   addField('name', '名称', getReadableName(entityRow.names_json));
   addField('type', '类型', getEntityTypeLabel(entity.type));
   addField('bio', '简介', entity.bio);
-  addField('birth', '出生', entity.birth);
-  addField('death', '逝世', entity.death);
-  addField('country', '国家/地区', getCountryLabel(entity.country));
+  addField('birth', '出生', formatWikidataDate(entity.birth));
+  addField('death', '逝世', formatWikidataDate(entity.death));
+  let country = getCountryLabel(entity.country);
+  if (entity.country?.startsWith('Q')) {
+    const countryRow = await c.env.DB.prepare('SELECT names_json FROM entities WHERE id = ?')
+      .bind(`wd:${entity.country}`)
+      .first();
+    country = getReadableName(countryRow?.names_json) || country;
+  }
+  addField('country', '国家/地区', country);
   for (const row of (rows.results || []) as any[]) {
     const value = getReadableName(row.names_json) || String(row.object_value || '').trim();
     if (!value) continue;
@@ -587,7 +595,7 @@ app.get('/api/entity/:id/relations', async (c) => {
 
   const rows = await c.env.DB.prepare(
     `WITH connected AS (
-       SELECT f.id AS fact_id, f.predicate, f.object_value,
+       SELECT f.id AS fact_id, f.predicate, f.object_value, f.qualifiers_json, f.source,
               CASE WHEN f.subject_id = ? THEN 'outgoing' ELSE 'incoming' END AS direction,
               CASE WHEN f.subject_id = ? THEN f.object_ref ELSE f.subject_id END AS target_id
          FROM facts f
@@ -609,7 +617,8 @@ app.get('/api/entity/:id/relations', async (c) => {
          FROM connected
          LEFT JOIN entities e ON e.id = connected.target_id
      )
-     SELECT fact_id, predicate, direction, value, resolved_target_id AS target_id
+     SELECT fact_id, predicate, direction, value, resolved_target_id AS target_id,
+            qualifiers_json, source
        FROM resolved
       WHERE value IS NOT NULL AND trim(value) <> ''
         ${cursorClause}
@@ -620,15 +629,23 @@ app.get('/api/entity/:id/relations', async (c) => {
     .bind(...bindings)
     .all();
   const pageRows = (rows.results || []).slice(0, parsedQuery.data.limit) as any[];
-  const items: RelationItem[] = pageRows.map((row) => ({
-    factId: Number(row.fact_id),
-    predicate: String(row.predicate),
-    label: PREDICATE_LABELS[String(row.predicate)] || String(row.predicate),
-    value: String(row.value),
-    copyValue: String(row.value),
-    ...(row.target_id ? { targetId: String(row.target_id) } : {}),
-    direction: row.direction,
-  }));
+  const items: RelationItem[] = pageRows.map((row) => {
+    const evidence = safeParseJson<{ assertions?: Record<string, unknown>[] }>(
+      row.qualifiers_json,
+      {},
+    );
+    return {
+      factId: Number(row.fact_id),
+      predicate: String(row.predicate),
+      label: PREDICATE_LABELS[String(row.predicate)] || String(row.predicate),
+      value: String(row.value),
+      copyValue: String(row.value),
+      ...(row.target_id ? { targetId: String(row.target_id) } : {}),
+      ...(evidence.assertions?.length ? { assertions: evidence.assertions } : {}),
+      ...(row.source ? { source: String(row.source) } : {}),
+      direction: row.direction,
+    };
+  });
   const last = pageRows.at(-1);
   const response: EntityRelationsResponse = {
     entityId: id,
@@ -692,6 +709,7 @@ app.get('/api/entity/:id/publications', async (c) => {
   const publications: PublicationEvent[] = (rows.results || []).map((row: any) => ({
     id: Number(row.id),
     work_id: row.work_id,
+    work_group_id: row.work_group_id || null,
     publisher_id: row.publisher_id || null,
     translator_ids: safeParseJson<string[]>(row.translator_ids_json, []),
     publication_date: row.publication_date || null,

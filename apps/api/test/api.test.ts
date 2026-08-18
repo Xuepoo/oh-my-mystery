@@ -95,6 +95,7 @@ function buildTestDatabase(): Database {
   insertEntity.run('wd:Q710681', 'Q710681', 'work', names('白夜行'), 'test');
   insertEntity.run('test:publisher', null, 'publisher', names('南海出版公司'), 'test');
   insertEntity.run('test:award', null, 'award', names('测试推理奖'), 'test');
+  insertEntity.run('wd:Q17', 'Q17', 'other', names('日本'), 'test');
   insertEntity.run('wd:Q586362', 'Q586362', 'author', names('埃勒里·奎因'), 'test');
   insertEntity.run('test:work-2', null, 'work', names('第二部作品'), 'test');
   insertEntity.run('test:A', null, 'work', names('A作品'), 'test');
@@ -102,11 +103,15 @@ function buildTestDatabase(): Database {
 
   const insertPublication = db.prepare(
     `INSERT INTO publication_events
-      (work_id, publisher_id, translator_ids_json, publication_date, isbn, language, region, edition_type, source, provenance_json, fingerprint)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (work_id, work_group_id, publisher_id, translator_ids_json, publication_date, isbn, language, region, edition_type, source, provenance_json, fingerprint)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  db.run(
+    "UPDATE entities SET birth = '+1958-02-04T00:00:00Z', country = 'Q17' WHERE id = 'wd:Q125970'",
   );
   insertPublication.run(
     'wd:Q710681',
+    null,
     'test:publisher',
     JSON.stringify(['test:translator']),
     '1999-01-01',
@@ -126,7 +131,13 @@ function buildTestDatabase(): Database {
   insertFact.run('wd:Q710681', 'publisher', 'test:publisher', null, 'test');
   insertFact.run('test:work-2', 'publisher', 'test:publisher', null, 'test');
   insertFact.run('test:publisher', 'related_to', 'test:award', null, 'test');
-  insertFact.run('wd:Q125970', 'award_received', 'test:award', null, 'test');
+  insertFact.run(
+    'wd:Q125970',
+    'award_received',
+    'test:award',
+    JSON.stringify({ assertions: [{ source: 'wikidata', year: 1985 }] }),
+    'wikidata',
+  );
   insertFact.run('wd:Q125970', 'author', 'test:a', null, 'wikidata');
   insertFact.run('wd:Q125970', 'author', 'test:A', null, 'wikidata');
   insertFact.run('test:work-2', 'author', 'wd:Q125970', null, 'douban');
@@ -349,6 +360,18 @@ describe('OMM Backend API Endpoints', () => {
       copyValue: '作者',
     });
     expect(body.fields).toContainEqual({
+      key: 'birth',
+      label: '出生',
+      value: '1958-02-04',
+      copyValue: '1958-02-04',
+    });
+    expect(body.fields).toContainEqual({
+      key: 'country',
+      label: '国家/地区',
+      value: '日本',
+      copyValue: '日本',
+    });
+    expect(body.fields).toContainEqual({
       key: 'author:test:A',
       label: '作者',
       value: 'A作品',
@@ -401,6 +424,31 @@ describe('OMM Backend API Endpoints', () => {
       direction: 'outgoing',
     });
     expect(ordered.every((item) => Number.isInteger(item.factId))).toBe(true);
+    const award = ordered.find((item) => item.predicate === 'award_received');
+    expect(award).toMatchObject({
+      value: '测试推理奖',
+      targetId: 'test:award',
+      assertions: [{ source: 'wikidata', year: 1985 }],
+      source: 'wikidata',
+      direction: 'outgoing',
+    });
+  });
+
+  it('exposes readable incoming award recipients with source evidence', async () => {
+    const res = await app.request('/api/entity/test:award/relations', {}, mockEnv);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.items).toContainEqual({
+      factId: expect.any(Number),
+      predicate: 'award_received',
+      label: '奖项',
+      value: '东野圭吾',
+      copyValue: '东野圭吾',
+      targetId: 'wd:Q125970',
+      assertions: [{ source: 'wikidata', year: 1985 }],
+      source: 'wikidata',
+      direction: 'incoming',
+    });
   });
 
   it('validates relation limits and opaque cursors strictly', async () => {
