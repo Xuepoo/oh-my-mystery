@@ -112,7 +112,9 @@ just deploy
   <img src="https://cdn.xuepoo.xyz/omm/community/omm-discussion-group.webp" alt="OMM QQ 群二维码" width="280">
 </p>
 
-爬虫数据目前由项目维护流程持续整理。后续计划在完成清理、文档和脱敏工作后，开放 `mystery-clawer` 爬虫代码，方便社区共同维护数据来源与采集规则。
+爬虫数据目前由项目维护流程持续整理。采集管线位于本地相邻目录 `../mystery-clawer`，这是协作时使用的本地项目概念链接；当前没有可确认的公开 GitHub 地址，因此不要把它当作公共仓库链接。爬虫数据库与 OMM 数据不是同一个快照：`mystery-clawer/data/mystery.db` 是采集层数据库，`scripts/build-d1-db.ts` 会筛选、清理、合并实体并生成 `data/omm-d1.sqlite`，再用于 D1 和公开发布快照。
+
+公开数据库快照的固定入口、版本清单、下载地址和校验方式见 [`docs/data-releases.md`](docs/data-releases.md)。
 
 ---
 

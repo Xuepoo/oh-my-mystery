@@ -1,4 +1,4 @@
-import { Entity } from '@vectojs/core';
+import { Entity, type A11yAttributes } from '@vectojs/core';
 import type { ChronicleStep, ChronicleTrail } from '@omm/shared';
 import { getCanvasCtx, Theme } from './theme';
 import { truncateText, wrapText, withClip } from './text-layout';
@@ -6,6 +6,67 @@ import { truncateText, wrapText, withClip } from './text-layout';
 export interface ChroniclePanelOptions {
   onClose: () => void;
   onStepChange: (step: ChronicleStep) => void;
+}
+
+export function getChronicleLayout(
+  width: number,
+  height: number,
+  trailCount = 6,
+): {
+  modal: { x: number; y: number; w: number; h: number };
+  columns: number;
+  tabs: { x: number; y: number; w: number; h: number; itemH: number; gap: number };
+  intro: { x: number; y: number; w: number; h: number } | null;
+  progress: { x: number; y: number; w: number; h: number } | null;
+  card: { x: number; y: number; w: number; h: number };
+  nav: { x: number; y: number; w: number; h: number };
+} {
+  const modalW = Math.max(0, Math.min(560, width - 24));
+  const modalH = Math.max(0, Math.min(520, height - 24));
+  const columns = modalW < 420 ? 2 : 3;
+  const modal = { x: (width - modalW) / 2, y: (height - modalH) / 2, w: modalW, h: modalH };
+  const compact = modalH < 400;
+  const tabH = compact ? 24 : 32;
+  const tabGap = compact ? 4 : 8;
+  const tabRows = Math.max(1, Math.ceil(trailCount / columns));
+  const tabs = {
+    x: modal.x + 24,
+    y: modal.y + 58,
+    w: Math.max(0, modal.w - 48),
+    h: tabRows * tabH + (tabRows - 1) * tabGap,
+    itemH: tabH,
+    gap: tabGap,
+  };
+  const nav = {
+    x: modal.x + 24,
+    y: modal.y + modal.h - 56,
+    w: Math.max(0, modal.w - 48),
+    h: 36,
+  };
+  let bodyY = tabs.y + tabs.h + (compact ? 8 : 12);
+  let available = Math.max(0, nav.y - 12 - bodyY);
+  const intro = available >= 170 ? { x: tabs.x, y: bodyY, w: tabs.w, h: 48 } : null;
+  if (intro) {
+    bodyY += intro.h;
+    available -= intro.h;
+  }
+  const progress = available >= 110 ? { x: tabs.x, y: bodyY, w: tabs.w, h: 28 } : null;
+  if (progress) bodyY += progress.h;
+  const card = {
+    x: tabs.x,
+    y: bodyY,
+    w: tabs.w,
+    h: Math.max(0, Math.min(160, nav.y - 12 - bodyY)),
+  };
+  return {
+    modal,
+    columns,
+    tabs,
+    intro,
+    progress,
+    card,
+    nav,
+  };
 }
 
 export class ChroniclePanel extends Entity {
@@ -56,6 +117,18 @@ export class ChroniclePanel extends Entity {
     return this.isOpen;
   }
 
+  getA11yAttributes(): A11yAttributes {
+    return { role: 'dialog', label: '推理演进编年史', ariaModal: 'true' };
+  }
+
+  getLayout(): ReturnType<typeof getChronicleLayout> {
+    return getChronicleLayout(
+      this.scene?.width ?? 0,
+      this.scene?.height ?? 0,
+      Math.max(1, this.trails.length),
+    );
+  }
+
   private notifyStep(): void {
     this.scene?.markDirty();
     const currentTrail = this.trails[this.currentTrailIndex];
@@ -68,10 +141,8 @@ export class ChroniclePanel extends Entity {
     if (!this.isOpen || this.trails.length === 0) return;
 
     const ctx = getCanvasCtx(r);
-    const modalWidth = Math.min(560, this.scene.width * 0.9);
-    const modalHeight = Math.min(460, this.scene.height * 0.85);
-    const modalX = (this.scene.width - modalWidth) / 2;
-    const modalY = (this.scene.height - modalHeight) / 2;
+    const layout = this.getLayout();
+    const { x: modalX, y: modalY, w: modalWidth, h: modalHeight } = layout.modal;
 
     // Dim Background Overlay
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
@@ -115,12 +186,12 @@ export class ChroniclePanel extends Entity {
     ctx.fillText('✕', this.closeBtnRect.x + 16, this.closeBtnRect.y + 16);
 
     // Trail Tabs
-    const tabY = modalY + 58;
+    const tabY = layout.tabs.y;
     this.trailTabRects = [];
-    const tabColumns = modalWidth < 520 ? 2 : 3;
-    const tabGap = 8;
+    const tabColumns = layout.columns;
+    const tabGap = layout.tabs.gap;
     const tabW = (modalWidth - 48 - tabGap * (tabColumns - 1)) / tabColumns;
-    const tabH = 32;
+    const tabH = layout.tabs.itemH;
     for (let i = 0; i < this.trails.length; i++) {
       const trail = this.trails[i]!;
       const isSelected = i === this.currentTrailIndex;
@@ -148,68 +219,68 @@ export class ChroniclePanel extends Entity {
 
     // Current Trail Details
     const trail = this.trails[this.currentTrailIndex]!;
-    const tabRows = Math.ceil(this.trails.length / tabColumns);
-    let curY = tabY + tabRows * (tabH + tabGap) + 12;
+    let curY = layout.intro?.y ?? layout.progress?.y ?? layout.card.y;
 
     // Trail Intro
-    ctx.fillStyle = Theme.colors.textMid;
-    ctx.font = `400 13px ${Theme.fonts.serif}`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    const introLines = wrapText(
-      ctx,
-      trail.description.zh || trail.description.en || '',
-      modalWidth - 48,
-    );
-    for (const l of introLines.slice(0, 2)) {
-      ctx.fillText(l, modalX + 24, curY);
-      curY += 18;
+    if (layout.intro) {
+      ctx.fillStyle = Theme.colors.textMid;
+      ctx.font = `400 13px ${Theme.fonts.serif}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      const introLines = wrapText(
+        ctx,
+        trail.description.zh || trail.description.en || '',
+        modalWidth - 48,
+      );
+      for (const l of introLines.slice(0, 2)) {
+        ctx.fillText(l, modalX + 24, curY);
+        curY += 18;
+      }
+      curY = layout.progress?.y ?? layout.card.y;
     }
-    curY += 12;
 
     // Step Progress Dots
-    const dotStartX = modalX + 24;
-    const dotSpacing = (modalWidth - 48) / Math.max(1, trail.steps.length - 1);
-    ctx.strokeStyle = Theme.colors.border;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(dotStartX, curY + 6);
-    ctx.lineTo(modalX + modalWidth - 24, curY + 6);
-    ctx.stroke();
+    if (layout.progress) {
+      const dotStartX = modalX + 24;
+      const dotSpacing = (modalWidth - 48) / Math.max(1, trail.steps.length - 1);
+      ctx.strokeStyle = Theme.colors.border;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(dotStartX, curY + 6);
+      ctx.lineTo(modalX + modalWidth - 24, curY + 6);
+      ctx.stroke();
 
-    for (let s = 0; s < trail.steps.length; s++) {
-      const dx = dotStartX + s * dotSpacing;
-      const dy = curY + 6;
-      const isPast = s <= this.currentStepIndex;
-      const isCurrent = s === this.currentStepIndex;
+      for (let s = 0; s < trail.steps.length; s++) {
+        const dx = dotStartX + s * dotSpacing;
+        const dy = curY + 6;
+        const isPast = s <= this.currentStepIndex;
+        const isCurrent = s === this.currentStepIndex;
 
-      if (isCurrent) {
-        ctx.save();
-        ctx.shadowColor = Theme.colors.borderActive;
-        ctx.shadowBlur = 12;
-        ctx.fillStyle = Theme.colors.borderActive;
-        ctx.beginPath();
-        ctx.arc(dx, dy, 8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      } else {
-        ctx.fillStyle = isPast ? Theme.colors.author : Theme.colors.bgCard;
-        ctx.beginPath();
-        ctx.arc(dx, dy, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = Theme.colors.border;
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
+        if (isCurrent) {
+          ctx.save();
+          ctx.shadowColor = Theme.colors.borderActive;
+          ctx.shadowBlur = 12;
+          ctx.fillStyle = Theme.colors.borderActive;
+          ctx.beginPath();
+          ctx.arc(dx, dy, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else {
+          ctx.fillStyle = isPast ? Theme.colors.author : Theme.colors.bgCard;
+          ctx.beginPath();
+          ctx.arc(dx, dy, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = Theme.colors.border;
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        }
       }
+      curY = layout.card.y;
     }
-    curY += 28;
 
     // Current Step Highlight Card (Illuminated Manuscript Style)
     const step = trail.steps[Math.min(this.currentStepIndex, Math.max(0, trail.steps.length - 1))];
-    const cardW = modalWidth - 48;
-    const cardH = 160;
-    const cardX = modalX + 24;
-    const cardY = curY;
+    const { x: cardX, y: cardY, w: cardW, h: cardH } = layout.card;
 
     if (!step) {
       ctx.fillStyle = Theme.colors.textMid;
@@ -253,45 +324,54 @@ export class ChroniclePanel extends Entity {
     // Chapter Pill
     ctx.fillStyle = Theme.colors.borderHighlight;
     ctx.beginPath();
-    ctx.roundRect(cardX + 16, cardY + 16, 92, 22, 4);
+    const titleY = cardH < 90 ? cardY + 12 : cardY + 18;
+    ctx.roundRect(cardX + 16, cardY + (cardH < 90 ? 8 : 16), 92, 22, 4);
     ctx.fill();
 
     ctx.fillStyle = '#1A1715';
     ctx.font = `700 11px ${Theme.fonts.sans}`;
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`第 ${this.currentStepIndex + 1} 幕 · ${step.year || ''}`, cardX + 62, cardY + 27);
+    ctx.textBaseline = 'top';
+    ctx.fillText(
+      `第 ${this.currentStepIndex + 1} 幕 · ${step.year || ''}`,
+      cardX + 62,
+      cardY + (cardH < 90 ? 12 : 20),
+    );
 
     // Step Title
     ctx.fillStyle = Theme.colors.textHigh;
     ctx.font = `700 16px ${Theme.fonts.serif}`;
     ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
+    ctx.textBaseline = 'top';
     ctx.fillText(
       truncateText(ctx, step.title.zh || step.title.en || '', Math.max(0, cardW - 144)),
       cardX + 120,
-      cardY + 27,
+      titleY,
     );
 
     // Step Summary
     ctx.fillStyle = Theme.colors.textHigh;
     ctx.font = `400 13px ${Theme.fonts.serif}`;
     const stepLines = wrapText(ctx, step.summary.zh || step.summary.en || '', cardW - 32, 4);
-    let stepY = cardY + 54;
-    withClip(ctx, { x: cardX + 12, y: cardY + 50, w: cardW - 24, h: cardH - 80 }, () => {
-      for (const l of stepLines) {
-        ctx.fillText(l, cardX + 16, stepY);
-        stepY += 20;
-      }
-    });
+    let stepY = cardY + 52;
+    if (cardH >= 90) {
+      withClip(ctx, { x: cardX + 12, y: cardY + 48, w: cardW - 24, h: cardH - 62 }, () => {
+        for (const l of stepLines) {
+          ctx.fillText(l, cardX + 16, stepY);
+          stepY += 20;
+        }
+      });
+    }
 
     // Step Action Notice
     ctx.fillStyle = Theme.colors.borderHighlight;
     ctx.font = `500 11px ${Theme.fonts.sans}`;
-    ctx.fillText('💡 图谱镜头已自动聚焦至该时期核心线索', cardX + 16, cardY + cardH - 22);
+    if (cardH >= 120) {
+      ctx.fillText('💡 图谱镜头已聚焦该时期核心线索', cardX + 16, cardY + cardH - 22);
+    }
 
     // Bottom Navigation Buttons [Prev Step] [Next Step]
-    const navY = modalY + modalHeight - 56;
+    const navY = layout.nav.y;
     this.prevBtnRect = { x: modalX + 24, y: navY, w: 120, h: 36 };
     this.nextBtnRect = { x: modalX + modalWidth - 144, y: navY, w: 120, h: 36 };
 

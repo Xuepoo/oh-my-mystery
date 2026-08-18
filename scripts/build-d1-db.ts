@@ -624,7 +624,7 @@ const trails: ChronicleTrail[] = [
       ja: '本格ミステリ黄金時代',
     },
     description: {
-      zh: '从阿瑟·柯南·道尔开辟神探传统，到阿加莎、卡尔确立密室讲义、读者挑战书与严密逻辑解谜的巅峰时代。',
+      zh: '从柯南·道尔树立神探传统，到阿加莎与卡尔把密室诡计、读者挑战和严密推理推向黄金时代。',
       en: 'From Arthur Conan Doyle to Agatha Christie and John Dickson Carr, the golden era of classical puzzle plots.',
       ja: 'コナン・ドイルからクリスティ、カーへと続く古典本格の黄金期。',
     },
@@ -644,7 +644,7 @@ const trails: ChronicleTrail[] = [
         id: 'step-christie',
         title: { zh: '谋杀女王：阿加莎·克里斯蒂', en: 'Queen of Crime: Agatha Christie' },
         summary: {
-          zh: '赫尔克里·波洛与马普尔小姐，暴风雪山庄与《无人生还》孤岛模式集大成。',
+          zh: '波洛与马普尔小姐登场，封闭空间、全员嫌疑与读者挑战在此汇成经典范式。',
           en: 'Poirot, Miss Marple, and And Then There Were None.',
         },
         primaryEntityId: 'wd:Q35064',
@@ -690,7 +690,7 @@ const trails: ChronicleTrail[] = [
       ja: '日本推理小説の百年と新本格',
     },
     description: {
-      zh: '从江户川乱步的怪异本格、松本清张的社会派现实巨浪，到岛田庄司引领的新本格狂潮。',
+      zh: '从江户川乱步的怪诞本格，经松本清张的社会派转折，走到岛田庄司引领的新本格复兴。',
       en: 'From Edogawa Ranpo to Seicho Matsumoto, Soji Shimada and the Shin-Honkaku revival.',
       ja: '江戸川乱歩から松本清張の社会派、島田荘司らの新本格ムーブメントまで。',
     },
@@ -721,7 +721,7 @@ const trails: ChronicleTrail[] = [
         id: 'step-seicho',
         title: { zh: '社会派浪潮：松本清张', en: 'Social School: Seicho Matsumoto' },
         summary: {
-          zh: '《点与线》和《零的焦点》，破除虚妄密室，将推理扎根于社会现实与人性黑暗。',
+          zh: '《点与线》与《零的焦点》把谜案放回社会现场，让推理直面制度缝隙与人性阴影。',
           en: 'Points and Lines transforms the genre with social realism.',
         },
         primaryEntityId: 'wd:Q201580',

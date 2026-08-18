@@ -133,6 +133,20 @@ export class GraphViewport {
     };
   }
 
+  getGraphScreenRect(): { x: number; y: number; w: number; h: number } {
+    return { x: 0, y: 64, w: this.width, h: Math.max(0, this.height - 64) };
+  }
+
+  centerWorldAt(x: number, y: number): void {
+    const graphRect = this.getGraphScreenRect();
+    this.animateCameraTo(
+      graphRect.x + graphRect.w / 2 - x * this.zoom,
+      graphRect.y + graphRect.h / 2 - y * this.zoom,
+      this.zoom,
+      350,
+    );
+  }
+
   pan(dx: number, dy: number): void {
     this.cameraAnimating = false;
     this.panX += dx;

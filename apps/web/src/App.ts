@@ -176,6 +176,7 @@ export class App {
         this.pathfinderModal.close();
         this.chroniclePanel.close();
         this.drawer.close();
+        this.cancelActiveGesture();
         this.helpModal.open();
       },
       onSelectSearchResult: (id) => {
@@ -208,8 +209,7 @@ export class App {
     this.chroniclePanel = new ChroniclePanel({
       onClose: () => {},
       onStepChange: (step: ChronicleStep) => {
-        this.viewport.focusNode(step.primaryEntityId);
-        void this.viewport.expandNode(step.primaryEntityId);
+        void this.focusChronicleStep(step);
       },
     });
     this.scene.add(this.chroniclePanel);
@@ -226,7 +226,7 @@ export class App {
     });
     this.scene.add(this.pathfinderModal);
 
-    this.helpModal = new HelpModal();
+    this.helpModal = new HelpModal((open) => this.setBackgroundA11yHidden(open));
     this.scene.add(this.helpModal);
 
     this.welcomeLayer = new WelcomeLayer({
@@ -238,6 +238,7 @@ export class App {
         this.pathfinderModal.close();
         this.chroniclePanel.close();
         this.drawer.close();
+        this.cancelActiveGesture();
         this.helpModal.open();
       },
       onVisibilityChange: () => this.syncWelcomeBarrier(),
@@ -332,6 +333,7 @@ export class App {
 
   private isEventOverUI(x: number, y: number): boolean {
     return (
+      this.helpModal.isPointInside(x, y) ||
       this.headerBar.isPointInside(x, y) ||
       this.welcomeLayer.isPointInside(x, y) ||
       this.drawer.isPointInside(x, y) ||
@@ -354,6 +356,10 @@ export class App {
     this.canvas.addEventListener('pointerdown', (e) => {
       if (e.button === 2) return;
       const { x, y } = getEventCoords(e);
+      if (this.helpModal.isModalOpen()) {
+        this.helpModal.handleClick(x, y);
+        return;
+      }
       const modified = (e.ctrlKey || e.metaKey) && e.button === 0;
       const modifiedNode =
         modified && !this.isEventOverUI(x, y) ? this.overlayLayer.getNodeAtScreenPoint(x, y) : null;
@@ -406,10 +412,6 @@ export class App {
       this.pinchState = null;
 
       if (this.welcomeLayer.isVisible() && this.welcomeLayer.isPointInside(x, y)) {
-        if (this.helpModal.isModalOpen()) {
-          this.helpModal.handleClick(x, y);
-          return;
-        }
         if (this.headerBar.isPointInside(x, y)) {
           this.headerBar.handleClick(x, y);
           return;
@@ -564,6 +566,7 @@ export class App {
 
   private onCanvasDoubleClick = (e: MouseEvent): void => {
     const { x, y } = getEventCoords(e);
+    if (this.helpModal.isModalOpen()) return;
     if (this.isEventOverUI(x, y)) return;
     const node = this.overlayLayer.getNodeAtScreenPoint(x, y);
     if (!node) return;
@@ -660,6 +663,7 @@ export class App {
         this.pathfinderModal.close();
         this.chroniclePanel.close();
         this.drawer.close();
+        this.cancelActiveGesture();
         this.helpModal.open();
       }
     }
@@ -667,6 +671,7 @@ export class App {
 
   private onPointerMove = (e: PointerEvent): void => {
     const { x, y } = getEventCoords(e);
+    if (this.helpModal.isModalOpen()) return;
     if (this.radialMenu.isMenuOpen()) {
       this.radialMenu.handlePointerMove(x, y);
     }
@@ -751,6 +756,10 @@ export class App {
 
   private onPointerUp = (e: PointerEvent): void => {
     const { x, y } = getEventCoords(e);
+    if (this.helpModal.isModalOpen()) {
+      this.cancelActiveGesture();
+      return;
+    }
     this.cancelLongPress();
     this.activePointers.delete(e.pointerId);
     if (this.modifiedPointerDown) {
@@ -965,6 +974,28 @@ export class App {
     this.pendingNodeGesture = null;
   }
 
+  private cancelActiveGesture(): void {
+    this.cancelLongPress();
+    if (this.pendingNodeClick) {
+      clearTimeout(this.pendingNodeClick);
+      this.pendingNodeClick = null;
+    }
+    this.cancelPendingNodeGesture();
+    if (this.drawerPointerId !== null) {
+      this.drawer.handlePointerCancel();
+      this.releasePointerCapture(this.drawerPointerId);
+      this.drawerPointerId = null;
+    }
+    for (const pointerId of this.activePointers.keys()) this.releasePointerCapture(pointerId);
+    this.activePointers.clear();
+    this.pinchState = null;
+    this.isPointerDown = false;
+    this.isPanning = false;
+    this.modifiedPointerDown = false;
+    this.touchGestureConsumed = true;
+    this.panVelocity = { vx: 0, vy: 0 };
+  }
+
   private syncWelcomeBarrier(): void {
     // Welcome is an informational card, not a modal barrier. Only its own
     // bounds own pointer events; the graph and all other tools remain usable.
@@ -977,6 +1008,30 @@ export class App {
     this.minimap.setEnabled(true);
     this.controls.setVisible(!this.drawer.isDrawerOpen());
     this.scene.markDirty();
+  }
+
+  private setBackgroundA11yHidden(hidden: boolean): void {
+    for (const entity of [
+      this.background,
+      this.overlayLayer,
+      this.headerBar,
+      this.drawer,
+      this.chroniclePanel,
+      this.pathfinderModal,
+      this.welcomeLayer,
+      this.minimap,
+      this.controls,
+      this.radialMenu,
+      this.renderSettingsModal,
+      this.relationshipFilterBar,
+      this.graphHistoryControls,
+      this.visibilityManager,
+      this.graphStatsPanel,
+      this.nodeAppearanceModal,
+      this.graphClearControl,
+    ]) {
+      entity.a11yHidden = hidden;
+    }
   }
 
   async start(): Promise<void> {
@@ -1066,6 +1121,16 @@ export class App {
     }
     this.drawer.close();
     this.viewport.ensureNodeVisible(id);
+  }
+
+  private async focusChronicleStep(step: ChronicleStep): Promise<void> {
+    this.viewport.focusNode(step.primaryEntityId);
+    await this.viewport.expandNode(step.primaryEntityId);
+    await Promise.all(
+      step.focusEntityIds
+        .filter((id) => id !== step.primaryEntityId)
+        .map((id) => this.viewport.expandNode(id)),
+    );
   }
 
   private async selectPathEndpoint(id: string, name: string): Promise<void> {
