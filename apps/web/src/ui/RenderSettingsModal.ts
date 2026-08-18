@@ -126,7 +126,7 @@ export class RenderSettingsModal extends Entity {
     ctx.fillText('渲染设置', x + 24, y + 34);
     ctx.fillStyle = Theme.colors.textMid;
     ctx.font = `400 11px ${Theme.fonts.sans}`;
-    ctx.fillText(`检测到显示器约 ${this.displayHz} Hz · 空闲时仍保持零绘制`, x + 24, y + 58);
+    ctx.fillText(`保守估算刷新率 ${this.displayHz} Hz · 空闲时仍保持零绘制`, x + 24, y + 58);
     this.optionRects = [];
     this.drawGroup(
       ctx,
@@ -138,7 +138,7 @@ export class RenderSettingsModal extends Entity {
       [
         ['60', '60 FPS'],
         ['120', '120 FPS'],
-        ['max', `Max (${this.displayHz} Hz)`],
+        ['max', `Max FPS (${this.displayHz})`],
       ],
       String(this.settings.fps),
     );

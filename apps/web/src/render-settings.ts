@@ -35,6 +35,30 @@ export function saveRenderSettings(settings: RenderSettings): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
+const COMMON_REFRESH_RATES = [30, 48, 50, 60, 72, 75, 90, 100, 120, 144, 165, 180, 200, 240, 360];
+
+export function estimateDisplayRefresh(intervals: readonly number[]): number {
+  const valid = intervals.filter((value) => Number.isFinite(value) && value >= 2.5 && value <= 40);
+  if (valid.length < 5) return 60;
+
+  const sorted = [...valid].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)]!;
+  const shortCount = sorted.filter((value) => value < median * 0.75).length;
+  const includeShortCadence = shortCount / sorted.length >= 0.3;
+  const stable = sorted.filter(
+    (value) => value <= median * 1.6 && (includeShortCadence || value >= median * 0.75),
+  );
+  const mean = stable.reduce((sum, value) => sum + value, 0) / stable.length;
+  const measured = 1000 / mean;
+  const nearest = COMMON_REFRESH_RATES.reduce((best, rate) =>
+    Math.abs(rate - measured) < Math.abs(best - measured) ? rate : best,
+  );
+
+  // Aggregate intervals preserve quantized cadence mixtures (for example
+  // 8/8/4 ms at 144 Hz), while the common-mode snap removes timer jitter.
+  return Math.abs(nearest - measured) / nearest <= 0.08 ? nearest : 60;
+}
+
 export async function measureDisplayRefresh(durationMs = 700): Promise<number> {
   const samples: number[] = [];
   let previous = 0;
@@ -47,9 +71,7 @@ export async function measureDisplayRefresh(durationMs = 700): Promise<number> {
         requestAnimationFrame(sample);
         return;
       }
-      samples.sort((a, b) => a - b);
-      const median = samples[Math.floor(samples.length / 2)] || 1000 / 60;
-      resolve(Math.max(30, Math.min(360, Math.round(1000 / median))));
+      resolve(estimateDisplayRefresh(samples));
     };
     requestAnimationFrame(sample);
   });

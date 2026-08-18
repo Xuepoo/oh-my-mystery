@@ -22,6 +22,7 @@
     "lint": "oxlint --deny-warnings",
     "test": "bun test",
     "test:e2e": "bun run scripts/graph-regression-e2e.ts",
+    "test:e2e:ui": "bun run scripts/ui-polish-e2e.ts",
     "audit:detectives": "bun scripts/audit-detective-data.ts",
     "publish:database": "bun scripts/publish-database-release.ts",
     "prepare": "lefthook install",
