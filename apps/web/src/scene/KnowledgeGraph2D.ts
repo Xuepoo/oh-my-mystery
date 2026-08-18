@@ -459,7 +459,7 @@ export class KnowledgeGraph2D {
     } else {
       this.rebuildSimulation();
     }
-    this.reheat(0.6);
+    this.reheat(0.35);
 
     if (typeof neighborhood.total === 'number') this.expansionTotal.set(nodeId, neighborhood.total);
     this.expansionPredicates.set(nodeId, [...(predicates ?? [])]);
@@ -705,8 +705,8 @@ export class KnowledgeGraph2D {
       },
       linkStrength: 0.42,
       centerStrength: 0.016,
-      velocityDecay: 0.64,
-      alphaDecay: 0.024,
+      velocityDecay: 0.5,
+      alphaDecay: 0.04,
       repulsionDistanceMax:
         this.distribution === 'compact' ? 360 : this.distribution === 'dispersed' ? 560 : 450,
       seed: 7,
