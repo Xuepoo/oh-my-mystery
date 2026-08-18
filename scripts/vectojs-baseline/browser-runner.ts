@@ -85,7 +85,7 @@ import type { FixtureManifest } from './fixture';
 import { graphFixtureDirectory, graphSpecs } from './generate-graphs';
 import type { PhysicsBrowserRequest, PhysicsBrowserResult } from './physics-browser';
 
-export const BASELINE_REVISION = '63d7f9acccd741aae2553d1d1f44c86577a9a81e';
+export const BASELINE_REVISION = 'd183a100c0fb0a26a74067a7b805e8ac8f322d97';
 
 export interface SnapshotHash {
   sha256: string;
