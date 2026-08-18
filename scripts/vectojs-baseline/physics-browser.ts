@@ -71,6 +71,36 @@ export function createProductionLayoutOptions(
   };
 }
 
+async function resolveTimerResolution(
+  now: () => number,
+  yieldTask: () => Promise<void>,
+  reads: number,
+): Promise<number> {
+  try {
+    return measureTimerResolution(now, reads);
+  } catch {
+    return measureTimerResolutionAcrossTasks(now, yieldTask);
+  }
+}
+
+async function measureTimerResolutionAcrossTasks(
+  now: () => number,
+  yieldTask: () => Promise<void>,
+  samples = 200,
+): Promise<number> {
+  let minimum = Number.POSITIVE_INFINITY;
+  let previous = now();
+  for (let index = 0; index < samples; index += 1) {
+    await yieldTask();
+    const current = now();
+    const delta = current - previous;
+    if (delta > 0 && Number.isFinite(delta)) minimum = Math.min(minimum, delta);
+    previous = current;
+  }
+  if (Number.isFinite(minimum)) return minimum;
+  throw new Error('Timer did not produce a positive timer delta across asynchronous samples');
+}
+
 export async function runPhysicsBrowserWorkload(
   Layout: ForceLayoutConstructor,
   request: PhysicsBrowserRequest,
@@ -83,7 +113,11 @@ export async function runPhysicsBrowserWorkload(
   const now = dependencies.now ?? (() => performance.now());
   const yieldTask =
     dependencies.yieldTask ?? (() => new Promise((resolve) => setTimeout(resolve, 0)));
-  const timerResolutionMilliseconds = measureTimerResolution(now, dependencies.timerReads ?? 10000);
+  const timerResolutionMilliseconds = await resolveTimerResolution(
+    now,
+    yieldTask,
+    dependencies.timerReads ?? 10000,
+  );
   const appendedNodes =
     request.kind === 'graph' ? createAppendPayload(request.graph, request.appendRootId).nodes : [];
   const layoutOptions = createProductionLayoutOptions(request.graph, appendedNodes);
