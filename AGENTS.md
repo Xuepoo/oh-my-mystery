@@ -137,5 +137,4 @@ Key rules:
 - Build D1 from repo root: `bun scripts/build-d1-db.ts`. In a git worktree, symlink `.worktrees/mystery-clawer -> ../../mystery-clawer` first (the script resolves `scripts/../../mystery-clawer/data/mystery.db`).
 - Remote D1 access requires the proxy: `HTTPS_PROXY=$NETWORK_PROXY wrangler d1 execute omm-db --remote ...` (without proxy, wrangler fetch fails).
 - Worker deploy: `cd apps/api && HTTPS_PROXY=$NETWORK_PROXY wrangler deploy`.
-- Verify prod from snow (local network proxy blocks workers.dev):
-  `ssh snow 'curl -s https://omm-api.ven3428set.workers.dev/api/health'`.
+- Verify prod from snow: `ssh snow 'curl -s https://api.omm.xuepoo.xyz/api/health'`.
