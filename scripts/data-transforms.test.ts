@@ -75,6 +75,16 @@ describe('buildWorkGroups', () => {
       'wd:Q1',
     ]);
   });
+
+  test('assigns distinct IDs to keys that collide under the legacy 32-bit hash', () => {
+    const groups = buildWorkGroups([
+      { id: 'work:7526', names_json: '{"labels":{"en":"title7526"}}', author_ids: [] },
+      { id: 'work:16413', names_json: '{"labels":{"en":"title16413"}}', author_ids: [] },
+    ]);
+
+    expect(groups).toHaveLength(2);
+    expect(new Set(groups.map((group) => group.id)).size).toBe(2);
+  });
 });
 
 describe('recommendation signals', () => {

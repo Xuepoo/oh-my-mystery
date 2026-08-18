@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export interface SourceFact {
   subject_id: string;
   predicate: string;
@@ -124,9 +126,7 @@ function normalizeWorkTitle(title: string): string {
 }
 
 function hashString(value: string): string {
-  let hash = 5381;
-  for (let index = 0; index < value.length; index++) hash = (hash * 33) ^ value.charCodeAt(index);
-  return (hash >>> 0).toString(16).padStart(8, '0');
+  return createHash('sha256').update(value).digest('hex');
 }
 
 export function buildWorkGroups(candidates: WorkCandidate[]): WorkGroup[] {
