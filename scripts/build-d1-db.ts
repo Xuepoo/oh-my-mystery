@@ -3,8 +3,16 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ChronicleTrail } from '../packages/shared/src/types';
 import { applyOverrides, cleanNames, isJunkNames, namesToJson } from './clean-labels';
+import { buildCountryLabelMap, normalizeCountryReference } from './country-labels';
+import {
+  addRecommendationSignal,
+  aggregateFacts,
+  buildWorkGroups,
+  type RecommendationScore,
+} from './data-transforms';
 
-const SOURCE_DB_PATH = join(import.meta.dir, '../../mystery-clawer/data/mystery.db');
+const SOURCE_DB_PATH =
+  process.env.OMM_SOURCE_DB || join(import.meta.dir, '../../mystery-clawer/data/mystery.db');
 const OUT_DIR = join(import.meta.dir, '../data');
 
 if (!existsSync(OUT_DIR)) {
@@ -36,6 +44,34 @@ for (const row of linkRows) {
   }
 }
 console.log(`✓ Loaded ${linkMap.size} entity links`);
+
+const countryLabels = new Map<string, string>();
+const countryQids = (
+  srcDb
+    .query(
+      "SELECT DISTINCT country FROM entities WHERE country IS NOT NULL AND trim(country) <> ''",
+    )
+    .all() as { country: string }[]
+)
+  .map((row) => normalizeCountryReference(row.country))
+  .filter((value): value is string => Boolean(value))
+  .filter((value) => /^Q\d+$/u.test(value));
+if (countryQids.length) {
+  const placeholders = countryQids.map(() => '?').join(', ');
+  const rows = srcDb
+    .query(`SELECT qid, names_json FROM entities WHERE qid IN (${placeholders})`)
+    .all(...countryQids) as { qid: string; names_json: string }[];
+  for (const [qid, label] of buildCountryLabelMap(rows)) {
+    countryLabels.set(qid, label);
+  }
+}
+
+function resolveCountry(rawCountry: string | null | undefined): string | null {
+  if (!rawCountry) return null;
+  const normalized = normalizeCountryReference(rawCountry);
+  if (normalized && countryLabels.has(normalized)) return countryLabels.get(normalized)!;
+  return rawCountry;
+}
 
 function resolveLink(id: string): string {
   let cur = id;
@@ -226,7 +262,7 @@ db.transaction(() => {
       e.bio || null,
       e.birth || null,
       e.death || null,
-      e.country || null,
+      resolveCountry(e.country),
       e.source || 'wikidata',
       e.quality || 1,
     );
@@ -379,28 +415,33 @@ let publisherSynthesized = 0;
   }
 }
 
-db.transaction(() => {
-  for (const f of factsRows) {
-    // Canonicalize IDs if linked
-    const sub = resolveLink(f.subject_id);
-    let obj = f.object_ref ? resolveLink(f.object_ref) : f.object_ref;
-
-    // Rewrite publisher_name string facts into publisher entity edges
-    if (f.predicate === 'publisher_name' && f.object_value) {
-      const pubId = matchPublisher(f.object_value);
-      if (pubId && entityMap.has(pubId)) {
-        f.predicate = 'publisher';
-        f.object_value = null;
-        obj = pubId;
-        publisherMatched += 1;
-      } else {
-        obj = '';
-        publisherUnmatched += 1;
-      }
+const rewrittenFacts = factsRows.map((sourceFact) => {
+  const f = { ...sourceFact };
+  let obj = f.object_ref ? resolveLink(f.object_ref) : f.object_ref;
+  // Rewrite publisher_name string facts into publisher entity edges
+  if (f.predicate === 'publisher_name' && f.object_value) {
+    const pubId = matchPublisher(f.object_value);
+    if (pubId && entityMap.has(pubId)) {
+      f.predicate = 'publisher';
+      f.object_value = null;
+      obj = pubId;
+      publisherMatched += 1;
+    } else {
+      obj = '';
+      publisherUnmatched += 1;
     }
+  }
+  return { ...f, object_ref: obj };
+});
+
+const canonicalFacts = aggregateFacts(rewrittenFacts, resolveLink);
+db.transaction(() => {
+  for (const f of canonicalFacts) {
+    const sub = f.subject_id;
+    const obj = f.object_ref;
 
     if (entityMap.has(sub) && (entityMap.has(obj) || !f.object_ref)) {
-      validFacts.push({ ...f, subject_id: sub, object_ref: obj });
+      validFacts.push(f);
       insertFact.run(
         sub,
         f.predicate,
@@ -424,10 +465,54 @@ db.transaction(() => {
 })();
 
 console.log(
-  `✓ Inserted ${validFacts.length} connected facts (publisher entity-ized: ${publisherMatched} matched, ${publisherUnmatched} unmatched)`,
+  `✓ Inserted ${validFacts.length} canonical facts from ${factsRows.length} source assertions (publisher entity-ized: ${publisherMatched} matched, ${publisherUnmatched} unmatched)`,
 );
 
-// 4. Normalize bibliographic facts into deduplicated publication events.
+// 4. Group source-specific entities that represent editions of one logical work.
+const workGroups = buildWorkGroups(
+  [...entityMap.values()]
+    .filter((entity) => entity.type === 'work')
+    .map((entity) => ({
+      id: entity.id,
+      names_json: entity.names_json,
+      author_ids: validFacts
+        .filter(
+          (fact) =>
+            fact.subject_id === entity.id &&
+            (fact.predicate === 'author' || fact.predicate === 'P50'),
+        )
+        .map((fact) => fact.object_ref),
+    })),
+);
+const workGroupByMember = new Map<string, string>();
+const workRepresentativeByMember = new Map<string, string>();
+const insertWorkGroup = db.prepare(`
+  INSERT INTO work_groups (id, representative_id, normalized_title, author_ids_json)
+  VALUES (?, ?, ?, ?)
+`);
+const insertWorkGroupMember = db.prepare(`
+  INSERT INTO work_group_members (work_group_id, entity_id) VALUES (?, ?)
+`);
+db.transaction(() => {
+  for (const group of workGroups) {
+    insertWorkGroup.run(
+      group.id,
+      group.representativeId,
+      group.normalizedTitle,
+      JSON.stringify(group.authorIds),
+    );
+    for (const memberId of group.memberIds) {
+      insertWorkGroupMember.run(group.id, memberId);
+      workGroupByMember.set(memberId, group.id);
+      workRepresentativeByMember.set(memberId, group.representativeId);
+    }
+  }
+})();
+console.log(
+  `✓ Grouped ${workGroupByMember.size} edition entities into ${workGroups.length} logical works`,
+);
+
+// 5. Normalize bibliographic facts into deduplicated publication events.
 // Source-level grouping preserves separate publishers/reprints while the
 // fingerprint prevents exact duplicate facts from creating duplicate events.
 console.log('📚 Building publication events...');
@@ -452,8 +537,8 @@ for (const fact of validFacts) {
 
 const insertPublication = db.prepare(`
   INSERT OR IGNORE INTO publication_events
-    (work_id, publisher_id, translator_ids_json, publication_date, isbn, language, region, edition_type, source, provenance_json, fingerprint)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (work_id, work_group_id, publisher_id, translator_ids_json, publication_date, isbn, language, region, edition_type, source, provenance_json, fingerprint)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 let publicationCount = 0;
 db.transaction(() => {
@@ -505,6 +590,7 @@ db.transaction(() => {
       ]);
       insertPublication.run(
         group.subject,
+        workGroupByMember.get(group.subject) || null,
         publisher,
         JSON.stringify(translators),
         date,
@@ -522,7 +608,7 @@ db.transaction(() => {
 })();
 console.log(`✓ Inserted ${publicationCount} deduplicated publication events`);
 
-// 5. Compute Top-N Recommendations
+// 6. Compute Top-N Recommendations
 console.log('🧠 Computing Graph-based Recommendations...');
 const insertRec = db.prepare(`
   INSERT OR REPLACE INTO recommendations (entity_id, target_id, score, reason, rank)
@@ -531,32 +617,39 @@ const insertRec = db.prepare(`
 
 db.transaction(() => {
   for (const [id, entity] of entityMap.entries()) {
-    const scores = new Map<string, { score: number; reason: string }>();
+    const scores = new Map<string, RecommendationScore>();
+    const addSignal = (targetId: string, score: number, reason: string) =>
+      addRecommendationSignal(
+        scores,
+        workRepresentativeByMember.get(targetId) || targetId,
+        score,
+        reason,
+      );
 
     // Direct connections
     const outs = outEdges.get(id) || [];
     for (const edge of outs) {
       if (edge.predicate === 'author' || edge.predicate === 'P50') {
-        scores.set(edge.target, { score: 0.95, reason: '原著作者' });
+        addSignal(edge.target, 0.95, '原著作者');
       } else if (
         edge.predicate === 'award' ||
         edge.predicate === 'award_received' ||
         edge.predicate === 'P166'
       ) {
-        scores.set(edge.target, { score: 0.85, reason: '相关推理奖项' });
+        addSignal(edge.target, 0.85, '相关推理奖项');
       } else if (edge.predicate === 'character' || edge.predicate === 'P674') {
-        scores.set(edge.target, { score: 0.8, reason: '登场名侦探/角色' });
+        addSignal(edge.target, 0.8, '登场名侦探/角色');
       } else if (edge.predicate === 'series' || edge.predicate === 'P179') {
-        scores.set(edge.target, { score: 0.85, reason: '同系列作品' });
+        addSignal(edge.target, 0.85, '同系列作品');
       }
     }
 
     const inns = inEdges.get(id) || [];
     for (const edge of inns) {
       if (edge.predicate === 'author' || edge.predicate === 'P50') {
-        scores.set(edge.source, { score: 0.9, reason: '代表名作' });
+        addSignal(edge.source, 0.9, '代表名作');
       } else if (edge.predicate === 'character' || edge.predicate === 'P674') {
-        scores.set(edge.source, { score: 0.85, reason: '登场名作' });
+        addSignal(edge.source, 0.85, '登场名作');
       }
     }
 
@@ -586,13 +679,7 @@ db.transaction(() => {
               (e) => e.predicate === 'author' || e.predicate === 'P50',
             );
             if (coAuthorEdge && coAuthorEdge.target !== id) {
-              const current = scores.get(coAuthorEdge.target);
-              if (!current || current.score < 0.75) {
-                scores.set(coAuthorEdge.target, {
-                  score: 0.75,
-                  reason: '共同入围/斩获推理大奖',
-                });
-              }
+              addSignal(coAuthorEdge.target, 0.75, '共同入围/斩获推理大奖');
             }
           }
         }
@@ -601,13 +688,18 @@ db.transaction(() => {
 
     // Sort and take top 10
     const sorted = [...scores.entries()]
-      .filter(([targetId]) => entityMap.has(targetId))
+      .filter(
+        ([targetId]) =>
+          entityMap.has(targetId) &&
+          targetId !== id &&
+          targetId !== workRepresentativeByMember.get(id),
+      )
       .sort((a, b) => b[1].score - a[1].score)
       .slice(0, 10);
 
     let rank = 1;
     for (const [targetId, item] of sorted) {
-      insertRec.run(id, targetId, item.score, item.reason, rank++);
+      insertRec.run(id, targetId, item.score, item.reasons.join('；'), rank++);
     }
   }
 })();

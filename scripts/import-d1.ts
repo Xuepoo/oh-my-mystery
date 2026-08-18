@@ -105,7 +105,7 @@ function chunkAndImport(tableName: string, cols: string[], batchSize = 10000): v
 if (!skipClear) {
   console.log('\n🧹 Clearing remote mutable tables...');
   runRemote(
-    'DELETE FROM facts; DELETE FROM recommendations; DELETE FROM search_fts; DELETE FROM search_index; DELETE FROM entities;',
+    'DELETE FROM facts; DELETE FROM recommendations; DELETE FROM publication_events; DELETE FROM work_group_members; DELETE FROM work_groups; DELETE FROM search_fts; DELETE FROM search_index; DELETE FROM entities;',
   );
 } else {
   console.log('\n♻️ Resuming without clearing remote tables.');
@@ -143,7 +143,36 @@ try {
 // 3. Recommendations
 chunkAndImport('recommendations', ['entity_id', 'target_id', 'score', 'reason', 'rank'], 15000);
 
-// 4. Facts
+// 4. Logical work groups and source-specific members
+chunkAndImport(
+  'work_groups',
+  ['id', 'representative_id', 'normalized_title', 'author_ids_json'],
+  15000,
+);
+chunkAndImport('work_group_members', ['work_group_id', 'entity_id'], 15000);
+
+// 5. Publication editions
+chunkAndImport(
+  'publication_events',
+  [
+    'id',
+    'work_id',
+    'work_group_id',
+    'publisher_id',
+    'translator_ids_json',
+    'publication_date',
+    'isbn',
+    'language',
+    'region',
+    'edition_type',
+    'source',
+    'provenance_json',
+    'fingerprint',
+  ],
+  15000,
+);
+
+// 6. Facts
 chunkAndImport(
   'facts',
   ['id', 'subject_id', 'predicate', 'object_ref', 'object_value', 'qualifiers_json', 'source'],

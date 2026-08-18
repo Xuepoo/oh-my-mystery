@@ -41,6 +41,7 @@ export interface OmmFact {
 export interface PublicationEvent {
   id: number;
   work_id: string;
+  work_group_id?: string | null;
   publisher_id?: string | null;
   translator_ids: string[];
   publication_date?: string | null;
@@ -92,6 +93,8 @@ export interface RelationItem {
   value: string;
   copyValue: string;
   targetId?: string;
+  assertions?: Record<string, unknown>[];
+  source?: string;
   direction: 'outgoing' | 'incoming';
 }
 
@@ -177,4 +180,14 @@ export function getEntityDisplayName(names: EntityNames, lang = 'zh'): string {
   if (labels['']) return labels['']!;
   const first = Object.values(labels)[0];
   return first || 'Unknown';
+}
+
+export function formatWikidataDate(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const match = value.match(/^\+?(\d{1,6})-(\d{2})-(\d{2})T/u);
+  if (!match) return value;
+  const [, year, month, day] = match;
+  if (month === '00') return year;
+  if (day === '00') return `${year}-${month}`;
+  return `${year}-${month}-${day}`;
 }

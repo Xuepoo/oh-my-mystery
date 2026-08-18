@@ -31,11 +31,30 @@ CREATE TABLE IF NOT EXISTS facts (
 CREATE INDEX IF NOT EXISTS idx_facts_sub ON facts(subject_id, predicate, object_ref);
 CREATE INDEX IF NOT EXISTS idx_facts_obj ON facts(object_ref, predicate, subject_id);
 CREATE INDEX IF NOT EXISTS idx_facts_pred ON facts(predicate);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_logical_assertion
+  ON facts(subject_id, predicate, object_ref, IFNULL(object_value, ''));
 
--- 3. Normalized publication events / work editions
+-- 3. Logical works and their source-specific edition entities
+CREATE TABLE IF NOT EXISTS work_groups (
+  id TEXT PRIMARY KEY,
+  representative_id TEXT NOT NULL,
+  normalized_title TEXT NOT NULL,
+  author_ids_json TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS work_group_members (
+  work_group_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL UNIQUE,
+  PRIMARY KEY (work_group_id, entity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_work_group_members_group ON work_group_members(work_group_id);
+
+-- 4. Normalized publication events / work editions
 CREATE TABLE IF NOT EXISTS publication_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   work_id TEXT NOT NULL,
+  work_group_id TEXT,
   publisher_id TEXT,
   translator_ids_json TEXT NOT NULL DEFAULT '[]',
   publication_date TEXT,
@@ -49,9 +68,10 @@ CREATE TABLE IF NOT EXISTS publication_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_publication_events_work ON publication_events(work_id);
+CREATE INDEX IF NOT EXISTS idx_publication_events_group ON publication_events(work_group_id);
 CREATE INDEX IF NOT EXISTS idx_publication_events_publisher ON publication_events(publisher_id);
 
--- 4. Top-N Precomputed Recommendations
+-- 5. Top-N Precomputed Recommendations
 CREATE TABLE IF NOT EXISTS recommendations (
   entity_id TEXT NOT NULL,
   target_id TEXT NOT NULL,
