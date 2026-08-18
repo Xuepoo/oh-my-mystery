@@ -157,6 +157,36 @@ export function validateReport(value: unknown): OmmBaselineReportV1 {
     }
   }
 
+  for (const [index, environment] of value.environments.entries()) {
+    if (!isRecord(environment)) throw new TypeError(`environments[${index}] must be an object`);
+    assertString(environment.id, `environments[${index}].id`);
+    assertString(environment.browser, `environments[${index}].browser`);
+    assertPattern(environment.executableSha256, SHA256, `environments[${index}].executableSha256`);
+    assertString(environment.userAgent, `environments[${index}].userAgent`);
+    assertNonNegativeInteger(
+      environment.hardwareConcurrency,
+      `environments[${index}].hardwareConcurrency`,
+    );
+    assertString(environment.os, `environments[${index}].os`);
+    assertString(environment.cpu, `environments[${index}].cpu`);
+    assertPositiveNumber(environment.memoryBytes, `environments[${index}].memoryBytes`);
+    assertString(environment.browserExecutable, `environments[${index}].browserExecutable`);
+    assertString(environment.browserVersion, `environments[${index}].browserVersion`);
+    assertString(environment.playwrightVersion, `environments[${index}].playwrightVersion`);
+    assertString(environment.bunVersion, `environments[${index}].bunVersion`);
+  }
+
+  for (const [index, viewport] of value.viewports.entries()) {
+    if (!isRecord(viewport)) throw new TypeError(`viewports[${index}] must be an object`);
+    assertString(viewport.id, `viewports[${index}].id`);
+    assertPositiveInteger(viewport.width, `viewports[${index}].width`);
+    assertPositiveInteger(viewport.height, `viewports[${index}].height`);
+    assertPositiveNumber(
+      viewport.requestedDeviceScaleFactor,
+      `viewports[${index}].requestedDeviceScaleFactor`,
+    );
+  }
+
   canonicalize(value);
   return value as unknown as OmmBaselineReportV1;
 }
@@ -190,4 +220,19 @@ function assertPattern(value: unknown, pattern: RegExp, path: string): asserts v
 
 function assertArray(value: unknown, path: string): asserts value is unknown[] {
   if (!Array.isArray(value)) throw new TypeError(`${path} must be an array`);
+}
+
+function assertPositiveInteger(value: unknown, path: string): asserts value is number {
+  if (!Number.isInteger(value) || Number(value) <= 0)
+    throw new TypeError(`${path} must be a positive integer`);
+}
+
+function assertNonNegativeInteger(value: unknown, path: string): asserts value is number {
+  if (!Number.isInteger(value) || Number(value) < 0)
+    throw new TypeError(`${path} must be a non-negative integer`);
+}
+
+function assertPositiveNumber(value: unknown, path: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
+    throw new TypeError(`${path} must be a finite positive number`);
 }

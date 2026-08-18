@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { cpus, platform as osPlatform, release as osRelease, totalmem } from 'node:os';
 import { dirname, join } from 'node:path';
 import { chromium, firefox, type Browser, type Page } from 'playwright';
 import {
@@ -20,12 +22,29 @@ import {
   type PreviewDependencies,
   type PreviewProcess,
 } from './process';
-import { compareFiveRuns } from './metrics';
+import {
+  compareFiveRuns,
+  compareZeroRequired,
+  medianOfFive,
+  nearestRank,
+  type CorrectnessFailure,
+} from './metrics';
+import {
+  classifyEscapeFinding,
+  classifyOverlapFinding,
+  classifyTargetFinding,
+  type EdgeDepths,
+  type FindingClassification,
+  type OverlapFinding,
+  type TargetState,
+} from './geometry';
 import {
   hashReport,
   type BaselineArtifact,
   type BaselineEnvironment,
+  type BaselineRun,
   type BaselineViewport,
+  type JsonObject,
   type OmmBaselineReportV1,
 } from './report';
 import type {
@@ -43,15 +62,23 @@ import {
   assertViewportAndBacking,
   browserContextOptions,
   browserExecutableMetadata,
+  headedLaunchArgs,
+  mergeLaunchEnvironment,
   readObservedViewport,
   resolveBrowserExecutable,
   runInNewContext,
   waitForApplicationReady,
   waitForStablePredicate,
+  type BrowserExecutableMetadata,
   type BrowserName,
   type ViewportSpec,
 } from './browser';
-import { collectGeometryFromPage, collectIdleAudit } from './audits';
+import {
+  collectGeometryFromPage,
+  collectIdleAudit,
+  type EscapeAuditFinding,
+  type TargetAuditFinding,
+} from './audits';
 import { runScenario, scenarioIds, type ScenarioId } from './interactions';
 import { createFixtureRouter, installFixtureRoutes } from './routes';
 import type { FixtureManifest } from './fixture';
@@ -193,7 +220,12 @@ const physicsViewport: ViewportSpec = { width: 1280, height: 800, dpr: 1, mobile
 
 interface BrowserTypeAdapter {
   executablePath(): string;
-  launch(options: { executablePath: string; headless: boolean }): Promise<Browser>;
+  launch(options: {
+    executablePath: string;
+    headless: boolean;
+    args?: string[];
+    env?: Record<string, string>;
+  }): Promise<Browser>;
 }
 
 export interface LaunchBrowserDependencies {
@@ -209,6 +241,44 @@ const defaultLaunchBrowserDependencies: LaunchBrowserDependencies = {
   readExecutable: async (path) => readFile(path),
   readText: async (path) => readFile(path, 'utf8'),
 };
+
+const require = createRequire(import.meta.url);
+
+interface BrowserRuntimeInfo {
+  userAgent: string;
+  hardwareConcurrency: number;
+}
+
+function collectNodeEnvironment(): { os: string; cpu: string; memoryBytes: number } {
+  return {
+    os: `${osPlatform()} ${osRelease()}`,
+    cpu: cpus()[0]?.model ?? 'unknown',
+    memoryBytes: totalmem(),
+  };
+}
+
+function installedPlaywrightVersion(): string {
+  return require('playwright/package.json').version as string;
+}
+
+function buildEnvironment(
+  browser: BrowserName,
+  metadata: BrowserExecutableMetadata,
+  runtime: BrowserRuntimeInfo,
+): BaselineEnvironment {
+  return {
+    id: browser,
+    browser,
+    executableSha256: metadata.executableSha256,
+    userAgent: runtime.userAgent,
+    hardwareConcurrency: runtime.hardwareConcurrency,
+    ...collectNodeEnvironment(),
+    browserExecutable: metadata.executablePath,
+    browserVersion: metadata.version,
+    playwrightVersion: installedPlaywrightVersion(),
+    bunVersion: Bun.version,
+  };
+}
 
 export async function launchBrowsers(
   input: Parameters<BrowserRunnerPlatform['launchBrowsers']>[0],
@@ -232,21 +302,29 @@ export async function launchBrowsers(
       let browser = launched.get(request.browser);
       if (!browser) {
         const executablePath = resolveBrowserExecutable(request.browser, browserType);
-        browser = await browserType.launch({ executablePath, headless: true });
+        browser = await browserType.launch({
+          executablePath,
+          headless: false,
+          args: headedLaunchArgs(request.browser),
+          env: mergeLaunchEnvironment(process.env, request.browser),
+        });
         launched.set(request.browser, browser);
         const metadata = await browserExecutableMetadata(request.browser, executablePath, {
           readFile: dependencies.readExecutable,
           version: async () => browser!.version(),
         });
+        const runtime = await runInNewContext(
+          browser,
+          browserContextOptions(physicsViewport),
+          async (page) =>
+            page.evaluate(() => ({
+              userAgent: navigator.userAgent,
+              hardwareConcurrency: navigator.hardwareConcurrency,
+            })),
+        );
         const prepared = input.prepared as PreparedBaseline & PreparedReportData;
         prepared.environments ??= [];
-        prepared.environments.push({
-          id: request.browser,
-          browser: request.browser,
-          executableSha256: metadata.executableSha256,
-          browserExecutable: metadata.executablePath,
-          browserVersion: metadata.version,
-        } as BaselineEnvironment);
+        prepared.environments.push(buildEnvironment(request.browser, metadata, runtime));
       }
       if (!browser) throw new Error(`Unable to launch ${request.browser}`);
 
@@ -331,7 +409,7 @@ export async function launchBrowsers(
         viewportId: viewportId(physicsViewport),
         workloadId: physicsWorkloads[index].id,
         timerResolutionMilliseconds: result.timerResolutionMilliseconds,
-        metrics: result,
+        metrics: result.metrics,
       }));
       return { request, runs, interaction, layout, audits, physics } as unknown as CaptureResult;
     },
@@ -676,10 +754,25 @@ export async function executeScenarioStep(
         { timeout: 5000 },
       );
       return;
-    case 'open-root':
-      await activatePoint(page, await nodeCenter(page, root), context.viewport.mobile);
+    case 'open-root': {
+      const point = await nodeCenter(page, root);
+      await page.evaluate(
+        ({ nodeId, anchor }) => {
+          const app = (
+            window as unknown as {
+              __OMM_APP__?: {
+                handleSelectNode(id: string, anchor?: { x: number; y: number }): Promise<void>;
+              };
+            }
+          ).__OMM_APP__;
+          if (!app?.handleSelectNode) throw new Error('App handleSelectNode is unavailable');
+          return app.handleSelectNode(nodeId, anchor);
+        },
+        { nodeId: root, anchor: point },
+      );
       await assertDrawer(page, 'open', true);
       return;
+    }
     case 'await-profile':
       await assertDrawer(page, 'profileStatus', 'ready');
       return;
@@ -700,6 +793,7 @@ export async function executeScenarioStep(
       return;
     case 'copy-first-field':
       await activateDrawerTarget(page, 'casefile.tab.profile');
+      await waitForProfileCopyTargets(page);
       await activateDrawerTarget(page, 'casefile.copy.first');
       await page
         .waitForFunction(
@@ -890,6 +984,24 @@ async function targetCenter(page: Page, id: string): Promise<Point> {
   }, id);
 }
 
+async function waitForProfileCopyTargets(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const target = (
+        window as unknown as {
+          __OMM_APP__?: {
+            instrumentation?: {
+              targets: readonly { id: string; rect: { feedbackKey?: string } }[];
+            };
+          };
+        }
+      ).__OMM_APP__?.instrumentation?.targets.find(({ id }) => id === 'casefile.copy.first');
+      return target?.rect.feedbackKey?.startsWith('profile:') === true;
+    },
+    { timeout: 5000 },
+  );
+}
+
 async function nodeCenter(page: Page, id: string): Promise<Point> {
   return page.evaluate((nodeId) => {
     const node = (
@@ -978,6 +1090,7 @@ async function activateClearControl(page: Page): Promise<void> {
 }
 
 async function activateDrawerTarget(page: Page, id: string): Promise<void> {
+  await waitForTarget(page, id);
   const point = await targetCenter(page, id);
   await page.evaluate(({ x, y }) => {
     const drawer = (
@@ -1100,6 +1213,21 @@ async function hasTarget(page: Page, id: string): Promise<boolean> {
         ).__OMM_APP__?.instrumentation?.targets.some(({ id }) => id === targetId),
       ),
     id,
+  );
+}
+
+async function waitForTarget(page: Page, id: string): Promise<void> {
+  await page.waitForFunction(
+    (targetId) =>
+      Boolean(
+        (
+          window as unknown as {
+            __OMM_APP__?: { instrumentation?: { targets: readonly { id: string }[] } };
+          }
+        ).__OMM_APP__?.instrumentation?.targets.some(({ id }) => id === targetId),
+      ),
+    id,
+    { timeout: 5000 },
   );
 }
 
@@ -1444,48 +1572,758 @@ export function assembleBaselineReport(
 }
 
 export function compareBaselineReport(report: OmmBaselineReportV1): OmmBaselineReportV1 {
-  const runs = report.runs;
-  const byWorkload = new Map<string, { baseline: number[]; candidate: number[] }>();
-  for (const run of runs) {
+  const comparison: ComparisonOutcome[] = [
+    ...compareWorkloadMetrics(report),
+    ...compareGeometryFindings(report),
+  ];
+  return {
+    ...report,
+    comparison: comparison as unknown as JsonObject[],
+    comparisonInputs: {
+      baselineReportSha256: hashReport(reportForArm(report, 'baseline')),
+      candidateReportSha256: hashReport(reportForArm(report, 'candidate')),
+    },
+  };
+}
+
+type ComparisonMode = 'percentage' | 'bounded' | 'zero-required' | null;
+
+type ComparisonOutcome = {
+  kind: 'metric' | 'finding';
+  workloadId?: string;
+  metricId?: string;
+  phase?: string;
+  environmentId: string;
+  viewportId: string;
+  baselineArtifactId: string;
+  candidateArtifactId: string;
+  baselineRunIds: string[];
+  candidateRunIds: string[];
+  baselineValues: number[];
+  candidateValues: number[];
+  baselineMedian: number | null;
+  candidateMedian: number | null;
+  absoluteDelta: number | null;
+  mode: ComparisonMode;
+  percentage: number | null;
+  tolerance: number | null;
+  regressionLimit: number | null;
+  passed: boolean;
+  status: 'pass' | 'fail' | 'informational';
+  correctnessFailures?: CorrectnessFailure[];
+  unavailableReason?: string;
+  findingKey?: string;
+  findingType?: 'target' | 'overlap' | 'escape';
+  classification?: FindingClassification;
+};
+
+interface MetricInstance {
+  metricId: string;
+  phase: string;
+  path: readonly string[];
+  tolerance: number | 'timer';
+  regressionLimit: number | null;
+  isCorrect: (value: number) => boolean;
+  zeroRequired: boolean;
+  informational: boolean;
+}
+
+const finiteMetric = (value: number): boolean => Number.isFinite(value);
+const under50 = (value: number): boolean => value < 50;
+const under2000 = (value: number): boolean => value < 2000;
+const atMost1 = (value: number): boolean => value <= 1;
+const atMost20 = (value: number): boolean => Number.isFinite(value) && value <= 20;
+const exactly0 = (value: number): boolean => value === 0;
+
+const METRIC_INSTANCES: readonly MetricInstance[] = [
+  {
+    metricId: 'tick-p50',
+    phase: 'measured',
+    path: ['measured', 'tickP50Milliseconds'],
+    tolerance: 'timer',
+    regressionLimit: null,
+    isCorrect: finiteMetric,
+    zeroRequired: false,
+    informational: true,
+  },
+  {
+    metricId: 'tick-p95',
+    phase: 'measured',
+    path: ['measured', 'tickP95Milliseconds'],
+    tolerance: 'timer',
+    regressionLimit: 10,
+    isCorrect: under50,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'tick-max',
+    phase: 'measured',
+    path: ['measured', 'tickMaximumMilliseconds'],
+    tolerance: 'timer',
+    regressionLimit: 10,
+    isCorrect: under50,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'synchronous-steps-above-50',
+    phase: 'measured',
+    path: ['measured', 'synchronousStepsAbove50Milliseconds'],
+    tolerance: 0,
+    regressionLimit: null,
+    isCorrect: exactly0,
+    zeroRequired: true,
+    informational: false,
+  },
+  {
+    metricId: 'append-mutation',
+    phase: 'append',
+    path: ['appendMutationMilliseconds'],
+    tolerance: 'timer',
+    regressionLimit: 15,
+    isCorrect: finiteMetric,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'first-post-append',
+    phase: 'post-append',
+    path: ['firstPostAppendMilliseconds'],
+    tolerance: 'timer',
+    regressionLimit: 10,
+    isCorrect: under50,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'settling-ticks',
+    phase: 'initial',
+    path: ['initial', 'settlingTicks'],
+    tolerance: 1,
+    regressionLimit: 10,
+    isCorrect: under2000,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'settling-ticks',
+    phase: 'post-append',
+    path: ['postAppend', 'settlingTicks'],
+    tolerance: 1,
+    regressionLimit: 10,
+    isCorrect: under2000,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'settling-ticks',
+    phase: 'post-drag',
+    path: ['postDrag', 'settlingTicks'],
+    tolerance: 1,
+    regressionLimit: 10,
+    isCorrect: under2000,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'settling-wall',
+    phase: 'initial',
+    path: ['initial', 'settlingWallMilliseconds'],
+    tolerance: 'timer',
+    regressionLimit: 10,
+    isCorrect: finiteMetric,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'settling-wall',
+    phase: 'post-append',
+    path: ['postAppend', 'settlingWallMilliseconds'],
+    tolerance: 'timer',
+    regressionLimit: 10,
+    isCorrect: finiteMetric,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'settling-wall',
+    phase: 'post-drag',
+    path: ['postDrag', 'settlingWallMilliseconds'],
+    tolerance: 'timer',
+    regressionLimit: 10,
+    isCorrect: finiteMetric,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'old-node-rms-displacement',
+    phase: 'post-append',
+    path: ['postAppend', 'oldNodeRmsDisplacement'],
+    tolerance: 0.01,
+    regressionLimit: 10,
+    isCorrect: finiteMetric,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'old-node-rms-displacement',
+    phase: 'post-drag',
+    path: ['postDrag', 'oldNodeRmsDisplacement'],
+    tolerance: 0.01,
+    regressionLimit: 10,
+    isCorrect: finiteMetric,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'far-node-maximum-displacement',
+    phase: 'post-append',
+    path: ['postAppend', 'farNodeMaximumDisplacement'],
+    tolerance: 0.01,
+    regressionLimit: 10,
+    isCorrect: finiteMetric,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'far-node-maximum-displacement',
+    phase: 'post-drag',
+    path: ['postDrag', 'farNodeMaximumDisplacement'],
+    tolerance: 0.01,
+    regressionLimit: 10,
+    isCorrect: finiteMetric,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'peak-link-ratio',
+    phase: 'post-append',
+    path: ['postAppend', 'peakLinkRatio'],
+    tolerance: 0.001,
+    regressionLimit: 10,
+    isCorrect: atMost20,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'peak-link-ratio',
+    phase: 'post-drag',
+    path: ['postDrag', 'peakLinkRatio'],
+    tolerance: 0.001,
+    regressionLimit: 10,
+    isCorrect: atMost20,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'late-velocity-direction-changes',
+    phase: 'post-drag',
+    path: ['postDrag', 'lateVelocityDirectionChanges'],
+    tolerance: 1,
+    regressionLimit: 10,
+    isCorrect: finiteMetric,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'drag-pointer-error',
+    phase: 'drag',
+    path: ['dragPointerError'],
+    tolerance: 0.01,
+    regressionLimit: 10,
+    isCorrect: atMost1,
+    zeroRequired: false,
+    informational: false,
+  },
+  {
+    metricId: 'non-finite-position-count',
+    phase: 'initial',
+    path: ['initial', 'nonFinitePositionCount'],
+    tolerance: 0,
+    regressionLimit: null,
+    isCorrect: exactly0,
+    zeroRequired: true,
+    informational: false,
+  },
+  {
+    metricId: 'non-finite-position-count',
+    phase: 'post-append',
+    path: ['postAppend', 'nonFinitePositionCount'],
+    tolerance: 0,
+    regressionLimit: null,
+    isCorrect: exactly0,
+    zeroRequired: true,
+    informational: false,
+  },
+  {
+    metricId: 'non-finite-position-count',
+    phase: 'post-drag',
+    path: ['postDrag', 'nonFinitePositionCount'],
+    tolerance: 0,
+    regressionLimit: null,
+    isCorrect: exactly0,
+    zeroRequired: true,
+    informational: false,
+  },
+  {
+    metricId: 'collision-overlap-count',
+    phase: 'initial',
+    path: ['initial', 'collisionOverlapCount'],
+    tolerance: 0,
+    regressionLimit: null,
+    isCorrect: exactly0,
+    zeroRequired: true,
+    informational: false,
+  },
+  {
+    metricId: 'collision-overlap-count',
+    phase: 'post-append',
+    path: ['postAppend', 'collisionOverlapCount'],
+    tolerance: 0,
+    regressionLimit: null,
+    isCorrect: exactly0,
+    zeroRequired: true,
+    informational: false,
+  },
+  {
+    metricId: 'collision-overlap-count',
+    phase: 'post-drag',
+    path: ['postDrag', 'collisionOverlapCount'],
+    tolerance: 0,
+    regressionLimit: null,
+    isCorrect: exactly0,
+    zeroRequired: true,
+    informational: false,
+  },
+];
+
+interface WorkloadRunGroup {
+  workloadId: string;
+  environmentId: string;
+  viewportId: string;
+  baseline: BaselineRun[];
+  candidate: BaselineRun[];
+}
+
+interface FindingGroup<T> {
+  browser: BrowserName;
+  viewport: string;
+  key: string;
+  baseline: T[];
+  candidate: T[];
+}
+
+const knownViewportIds = interactionViewports.map(viewportId);
+
+function compareWorkloadMetrics(report: OmmBaselineReportV1): ComparisonOutcome[] {
+  const outcomes: ComparisonOutcome[] = [];
+  const artifactIds = artifactIdsByArm(report);
+  for (const group of groupWorkloadRuns(report).values()) {
+    if (group.baseline.length !== 5 || group.candidate.length !== 5) continue;
+    const baselineRuns = group.baseline.sort(byRunId);
+    const candidateRuns = group.candidate.sort(byRunId);
+    const timerResolution = Math.max(
+      ...baselineRuns.map(timerResolutionOf),
+      ...candidateRuns.map(timerResolutionOf),
+    );
+    for (const instance of METRIC_INSTANCES) {
+      const baselineValues = baselineRuns.map((run) => extractRunMetric(run, instance.path));
+      const candidateValues = candidateRuns.map((run) => extractRunMetric(run, instance.path));
+      if (baselineValues.every(isUndefined) && candidateValues.every(isUndefined)) continue;
+      if (baselineValues.some(isUndefined) || candidateValues.some(isUndefined)) {
+        outcomes.push(
+          unavailableMetricOutcome(group, instance, baselineRuns, candidateRuns, artifactIds),
+        );
+        continue;
+      }
+      const tolerance = instance.tolerance === 'timer' ? timerResolution : instance.tolerance;
+      outcomes.push(
+        metricOutcome(
+          group,
+          instance,
+          baselineRuns,
+          candidateRuns,
+          baselineValues as number[],
+          candidateValues as number[],
+          tolerance,
+          artifactIds,
+        ),
+      );
+    }
+  }
+  return outcomes;
+}
+
+function metricOutcome(
+  group: WorkloadRunGroup,
+  instance: MetricInstance,
+  baselineRuns: BaselineRun[],
+  candidateRuns: BaselineRun[],
+  baselineValues: number[],
+  candidateValues: number[],
+  tolerance: number,
+  artifactIds: { baseline: string; candidate: string },
+): ComparisonOutcome {
+  const base = {
+    kind: 'metric' as const,
+    workloadId: group.workloadId,
+    metricId: instance.metricId,
+    phase: instance.phase,
+    environmentId: group.environmentId,
+    viewportId: group.viewportId,
+    baselineArtifactId: artifactIds.baseline,
+    candidateArtifactId: artifactIds.candidate,
+    baselineRunIds: baselineRuns.map((run) => run.id),
+    candidateRunIds: candidateRuns.map((run) => run.id),
+    baselineValues,
+    candidateValues,
+    tolerance,
+    regressionLimit: instance.regressionLimit,
+  };
+
+  if (instance.informational) {
+    const baselineMedian = medianOfFive(baselineValues);
+    const candidateMedian = medianOfFive(candidateValues);
+    return {
+      ...base,
+      baselineMedian,
+      candidateMedian,
+      absoluteDelta: candidateMedian - baselineMedian,
+      mode: null,
+      percentage: null,
+      passed: true,
+      status: 'informational' as const,
+    };
+  }
+
+  if (instance.zeroRequired) {
+    const result = compareZeroRequired(baselineValues, candidateValues);
+    return {
+      ...base,
+      baselineMedian: null,
+      candidateMedian: null,
+      absoluteDelta: null,
+      mode: result.mode,
+      percentage: null,
+      passed: result.passed,
+      status: result.passed ? 'pass' : 'fail',
+      correctnessFailures: collectFailures(baselineValues, candidateValues, instance.isCorrect),
+    };
+  }
+
+  const result = compareFiveRuns({
+    baseline: baselineValues,
+    candidate: candidateValues,
+    tolerance,
+    regressionLimit: instance.regressionLimit ?? 0,
+    isCorrect: instance.isCorrect,
+  });
+  return {
+    ...base,
+    baselineMedian: result.baselineMedian,
+    candidateMedian: result.candidateMedian,
+    absoluteDelta: result.absoluteDelta,
+    mode: result.mode,
+    percentage: result.percentage,
+    passed: result.passed,
+    status: result.passed ? 'pass' : 'fail',
+    correctnessFailures: result.correctnessFailures,
+  };
+}
+
+function unavailableMetricOutcome(
+  group: WorkloadRunGroup,
+  instance: MetricInstance,
+  baselineRuns: BaselineRun[],
+  candidateRuns: BaselineRun[],
+  artifactIds: { baseline: string; candidate: string },
+): ComparisonOutcome {
+  return {
+    kind: 'metric',
+    workloadId: group.workloadId,
+    metricId: instance.metricId,
+    phase: instance.phase,
+    environmentId: group.environmentId,
+    viewportId: group.viewportId,
+    baselineArtifactId: artifactIds.baseline,
+    candidateArtifactId: artifactIds.candidate,
+    baselineRunIds: baselineRuns.map((run) => run.id),
+    candidateRunIds: candidateRuns.map((run) => run.id),
+    baselineValues: [],
+    candidateValues: [],
+    baselineMedian: null,
+    candidateMedian: null,
+    absoluteDelta: null,
+    mode: null,
+    percentage: null,
+    tolerance: null,
+    regressionLimit: null,
+    passed: false,
+    status: 'fail',
+    unavailableReason: 'metric value missing across baseline or candidate runs',
+  };
+}
+
+function collectFailures(
+  baseline: readonly number[],
+  candidate: readonly number[],
+  isCorrect: (value: number) => boolean,
+): CorrectnessFailure[] {
+  const failures: CorrectnessFailure[] = [];
+  for (const arm of ['baseline', 'candidate'] as const) {
+    (arm === 'baseline' ? baseline : candidate).forEach((value, index) => {
+      if (!isCorrect(value)) failures.push({ arm, repetition: index + 1, value });
+    });
+  }
+  return failures;
+}
+
+function groupWorkloadRuns(report: OmmBaselineReportV1): Map<string, WorkloadRunGroup> {
+  const groups = new Map<string, WorkloadRunGroup>();
+  for (const run of report.runs) {
     const workloadId = typeof run.workloadId === 'string' ? run.workloadId : undefined;
-    const metrics = run.metrics;
-    if (!workloadId || !isRecord(metrics) || !isRecord(metrics.measured)) continue;
-    const value = metrics.measured.tickP95Milliseconds;
-    if (typeof value !== 'number') continue;
+    const environmentId = typeof run.environmentId === 'string' ? run.environmentId : undefined;
+    const viewportId = typeof run.viewportId === 'string' ? run.viewportId : undefined;
+    if (!workloadId || !environmentId || !viewportId) continue;
     const arm =
       typeof run.artifactId === 'string' && run.artifactId.includes('baseline')
         ? 'baseline'
         : 'candidate';
-    const values = byWorkload.get(workloadId) ?? { baseline: [], candidate: [] };
-    values[arm].push(value);
-    byWorkload.set(workloadId, values);
-  }
-  const comparison: Record<string, unknown>[] = [];
-  for (const [workloadId, values] of byWorkload) {
-    if (values.baseline.length !== 5 || values.candidate.length !== 5) continue;
-    const result = compareFiveRuns({
-      baseline: values.baseline,
-      candidate: values.candidate,
-      tolerance: 0.01,
-      regressionLimit: 10,
-      isCorrect: (value) => value < 50,
-    });
-    comparison.push({
+    const key = `${workloadId}\0${environmentId}`;
+    const group = groups.get(key) ?? {
       workloadId,
-      metricId: 'tick-p95',
-      ...result,
-      baselineValues: values.baseline,
-      candidateValues: values.candidate,
-    });
+      environmentId,
+      viewportId,
+      baseline: [],
+      candidate: [],
+    };
+    (arm === 'baseline' ? group.baseline : group.candidate).push(run);
+    groups.set(key, group);
   }
+  return groups;
+}
+
+function extractRunMetric(run: BaselineRun, path: readonly string[]): number | undefined {
+  if (!isRecord(run.metrics)) return undefined;
+  let current: unknown = run.metrics;
+  for (const segment of path) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return typeof current === 'number' && Number.isFinite(current) ? current : undefined;
+}
+
+function timerResolutionOf(run: BaselineRun): number {
+  const value = run.timerResolutionMilliseconds;
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function byRunId(left: BaselineRun, right: BaselineRun): number {
+  return left.id.localeCompare(right.id);
+}
+
+function isUndefined(value: unknown): value is undefined {
+  return value === undefined;
+}
+
+function artifactIdsByArm(report: OmmBaselineReportV1): { baseline: string; candidate: string } {
+  const byArm = { baseline: 'baseline', candidate: 'candidate' };
+  for (const artifact of report.artifacts) {
+    if (artifact.arm === 'baseline' || artifact.arm === 'candidate')
+      byArm[artifact.arm] = artifact.id;
+  }
+  return byArm;
+}
+
+function compareGeometryFindings(report: OmmBaselineReportV1): ComparisonOutcome[] {
+  const outcomes: ComparisonOutcome[] = [];
+  const artifactIds = artifactIdsByArm(report);
+  const targets = report.layout.filter(isTargetFinding) as unknown as TargetAuditFinding[];
+  for (const group of groupFindings(targets).values()) {
+    const classification = classifyTargetFinding(
+      aggregateTargetState(group.baseline),
+      aggregateTargetState(group.candidate),
+    );
+    outcomes.push(findingOutcome(group, 'target', classification, artifactIds));
+  }
+  const overlaps = report.audits.filter(isOverlapFinding) as unknown as Array<
+    OverlapFinding & { runId: string }
+  >;
+  for (const group of groupFindings(overlaps).values()) {
+    const classification = classifyOverlapFinding(
+      aggregateEdgeDepths(group.baseline),
+      aggregateEdgeDepths(group.candidate),
+    );
+    outcomes.push(findingOutcome(group, 'overlap', classification, artifactIds));
+  }
+  const escapes = report.audits.filter(isEscapeFinding) as unknown as EscapeAuditFinding[];
+  for (const group of groupFindings(escapes).values()) {
+    const classification = classifyEscapeFinding(
+      aggregateEdgeDepths(group.baseline),
+      aggregateEdgeDepths(group.candidate),
+    );
+    outcomes.push(findingOutcome(group, 'escape', classification, artifactIds));
+  }
+  return outcomes;
+}
+
+function findingOutcome(
+  group: FindingGroup<{ runId: string; key: string }>,
+  findingType: 'target' | 'overlap' | 'escape',
+  classification: FindingClassification,
+  artifactIds: { baseline: string; candidate: string },
+): ComparisonOutcome {
+  const passed =
+    classification === 'grandfathered' ||
+    classification === 'improved' ||
+    classification === 'unchanged';
+  return {
+    kind: 'finding',
+    environmentId: group.browser,
+    viewportId: group.viewport,
+    baselineArtifactId: artifactIds.baseline,
+    candidateArtifactId: artifactIds.candidate,
+    baselineRunIds: group.baseline.map((finding) => finding.runId).sort(),
+    candidateRunIds: group.candidate.map((finding) => finding.runId).sort(),
+    baselineValues: [],
+    candidateValues: [],
+    baselineMedian: null,
+    candidateMedian: null,
+    absoluteDelta: null,
+    mode: null,
+    percentage: null,
+    tolerance: null,
+    regressionLimit: null,
+    passed,
+    status: passed ? 'pass' : 'fail',
+    findingKey: group.key,
+    findingType,
+    classification,
+  };
+}
+
+function aggregateTargetState(findings: readonly TargetAuditFinding[]): TargetState | undefined {
+  if (findings.length === 0) return undefined;
+  return {
+    width: nearestRank(
+      findings.map((finding) => finding.width),
+      0.5,
+    ),
+    height: nearestRank(
+      findings.map((finding) => finding.height),
+      0.5,
+    ),
+    activatable: findings.every((finding) => finding.activatable),
+  };
+}
+
+function aggregateEdgeDepths(
+  findings: readonly { edgeDepths: EdgeDepths }[],
+): EdgeDepths | undefined {
+  if (findings.length === 0) return undefined;
+  return {
+    left: Math.max(...findings.map((finding) => finding.edgeDepths.left)),
+    right: Math.max(...findings.map((finding) => finding.edgeDepths.right)),
+    top: Math.max(...findings.map((finding) => finding.edgeDepths.top)),
+    bottom: Math.max(...findings.map((finding) => finding.edgeDepths.bottom)),
+  };
+}
+
+function groupFindings<T extends { runId: string; key: string }>(
+  findings: readonly T[],
+): Map<string, FindingGroup<T>> {
+  const groups = new Map<string, FindingGroup<T>>();
+  for (const finding of findings) {
+    const context = findingRunContext(finding.runId);
+    if (!context) continue;
+    const key = `${context.browser}\0${context.viewport}\0${finding.key}`;
+    const group = groups.get(key) ?? {
+      browser: context.browser,
+      viewport: context.viewport,
+      key: finding.key,
+      baseline: [],
+      candidate: [],
+    };
+    (context.arm === 'baseline' ? group.baseline : group.candidate).push(finding);
+    groups.set(key, group);
+  }
+  return groups;
+}
+
+function findingRunContext(
+  runId: string,
+): { arm: ArmName; browser: BrowserName; viewport: string } | undefined {
+  const arm = runId.startsWith('baseline-')
+    ? 'baseline'
+    : runId.startsWith('candidate-')
+      ? 'candidate'
+      : undefined;
+  if (!arm) return undefined;
+  const browser = runId.includes('-chrome-')
+    ? 'chrome'
+    : runId.includes('-firefox-')
+      ? 'firefox'
+      : undefined;
+  if (!browser) return undefined;
+  const viewport = knownViewportIds.find((id) => runId.includes(id));
+  if (!viewport) return undefined;
+  return { arm, browser, viewport };
+}
+
+function isTargetFinding(value: unknown): value is TargetAuditFinding {
+  return (
+    isRecord(value) &&
+    typeof value.runId === 'string' &&
+    typeof value.key === 'string' &&
+    typeof value.width === 'number' &&
+    typeof value.height === 'number' &&
+    typeof value.activatable === 'boolean'
+  );
+}
+
+function isOverlapFinding(value: unknown): value is OverlapFinding & { runId: string } {
+  return (
+    isRecord(value) &&
+    typeof value.runId === 'string' &&
+    typeof value.key === 'string' &&
+    Array.isArray(value.controlIds) &&
+    isRecord(value.edgeDepths)
+  );
+}
+
+function isEscapeFinding(value: unknown): value is EscapeAuditFinding {
+  return (
+    isRecord(value) &&
+    typeof value.runId === 'string' &&
+    typeof value.key === 'string' &&
+    typeof value.controlId === 'string' &&
+    isRecord(value.edgeDepths) &&
+    !('width' in value)
+  );
+}
+
+function reportForArm(report: OmmBaselineReportV1, arm: ArmName): OmmBaselineReportV1 {
   return {
     ...report,
-    comparison,
-    comparisonInputs: {
-      baselineReportSha256: hashReport(report),
-      candidateReportSha256: hashReport(report),
-    },
+    artifacts: report.artifacts.filter((artifact) => artifact.arm === arm),
+    runs: report.runs.filter(
+      (run) => typeof run.artifactId === 'string' && run.artifactId.includes(arm),
+    ),
+    interaction: report.interaction.filter((record) => armOfRunId(runIdOf(record)) === arm),
+    layout: report.layout.filter((record) => armOfRunId(runIdOf(record)) === arm),
+    audits: report.audits.filter((record) => armOfRunId(runIdOf(record)) === arm),
   };
+}
+
+function runIdOf(record: Record<string, unknown>): string {
+  return typeof record.runId === 'string' ? record.runId : '';
+}
+
+function armOfRunId(runId: string): ArmName | undefined {
+  if (runId.startsWith('baseline-')) return 'baseline';
+  if (runId.startsWith('candidate-')) return 'candidate';
+  return undefined;
 }
 
 function command(

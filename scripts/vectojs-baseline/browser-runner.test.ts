@@ -163,6 +163,68 @@ describe('browser capture adapter', () => {
       ]),
     );
     expect(compared.comparisonInputs?.baselineReportSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(compared.comparisonInputs?.candidateReportSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(compared.comparisonInputs?.baselineReportSha256).not.toBe(
+      compared.comparisonInputs?.candidateReportSha256,
+    );
+  });
+
+  test('classifies geometry findings and gates regressions per arm', () => {
+    const base = assembleBaselineReport(reportInput());
+    const report: typeof base = {
+      ...base,
+      layout: [
+        targetFinding(
+          'baseline-chrome-1-desktop-1280x800-dpr1-desktop-tools',
+          'desktop-tools:search',
+          60,
+          40,
+          true,
+        ),
+        targetFinding(
+          'candidate-chrome-1-desktop-1280x800-dpr1-desktop-tools',
+          'desktop-tools:search',
+          58,
+          40,
+          true,
+        ),
+        targetFinding(
+          'baseline-chrome-1-desktop-1280x800-dpr1-desktop-tools',
+          'desktop-tools:logo',
+          40,
+          40,
+          true,
+        ),
+        targetFinding(
+          'candidate-chrome-1-desktop-1280x800-dpr1-desktop-tools',
+          'desktop-tools:logo',
+          40,
+          40,
+          true,
+        ),
+        targetFinding(
+          'candidate-chrome-1-desktop-1280x800-dpr1-desktop-tools',
+          'desktop-tools:extra',
+          30,
+          30,
+          true,
+        ),
+      ],
+    };
+    const compared = compareBaselineReport(report);
+
+    const search = compared.comparison?.find(
+      (entry) => entry.findingKey === 'desktop-tools:search',
+    );
+    const logo = compared.comparison?.find((entry) => entry.findingKey === 'desktop-tools:logo');
+    const extra = compared.comparison?.find((entry) => entry.findingKey === 'desktop-tools:extra');
+
+    expect(search?.classification).toBe('worsened');
+    expect(search?.passed).toBe(false);
+    expect(logo?.classification).toBe('grandfathered');
+    expect(logo?.passed).toBe(true);
+    expect(extra?.classification).toBe('new');
+    expect(extra?.passed).toBe(false);
   });
 });
 
@@ -311,5 +373,24 @@ function artifact(arm: 'baseline' | 'candidate') {
     repeatedInstallManifestSha256: '3'.repeat(64),
     buildSha256: '4'.repeat(64),
     buildMode: 'production-preview' as const,
+  };
+}
+
+function targetFinding(
+  runId: string,
+  key: string,
+  width: number,
+  height: number,
+  activatable: boolean,
+) {
+  return {
+    runId,
+    key,
+    controlId: key.split(':')[1],
+    rect: { x: 0, y: 0, width, height },
+    width,
+    height,
+    activatable,
+    hitOwnerId: null,
   };
 }

@@ -3,6 +3,9 @@ import {
   assertViewportAndBacking,
   browserContextOptions,
   browserExecutableMetadata,
+  headedLaunchArgs,
+  headedLaunchEnv,
+  mergeLaunchEnvironment,
   resolveBrowserExecutable,
   runInNewContext,
   waitForStablePredicate,
@@ -45,6 +48,23 @@ describe('browser helpers', () => {
     expect(
       resolveBrowserExecutable('firefox', { executablePath: () => '/playwright/firefox' }),
     ).toBe('/playwright/firefox');
+  });
+
+  test('configures headed Wayland launch args and environment per engine', () => {
+    expect(headedLaunchArgs('chrome')).toEqual(['--ozone-platform=wayland']);
+    expect(headedLaunchArgs('firefox')).toEqual([]);
+    expect(headedLaunchEnv('chrome')).toBeUndefined();
+    expect(headedLaunchEnv('firefox')).toEqual({ MOZ_ENABLE_WAYLAND: '1' });
+  });
+
+  test('merges inherited process environment into the headed Firefox launch env', () => {
+    expect(
+      mergeLaunchEnvironment(
+        { DISPLAY: ':1', WAYLAND_DISPLAY: 'wayland-1', UNSET: undefined },
+        'firefox',
+      ),
+    ).toEqual({ DISPLAY: ':1', WAYLAND_DISPLAY: 'wayland-1', MOZ_ENABLE_WAYLAND: '1' });
+    expect(mergeLaunchEnvironment({ DISPLAY: ':1' }, 'chrome')).toBeUndefined();
   });
 
   test('creates and always closes a fresh context', async () => {
@@ -96,5 +116,28 @@ describe('browser helpers', () => {
         { width: 390, height: 844, dpr: 2 },
       ),
     ).toThrow('Firefox DPR 2 assertion failed: devicePixelRatio expected 2, received 1');
+  });
+
+  test('tolerates headed GPU device-pixel-ratio float error', () => {
+    expect(() =>
+      assertViewportAndBacking(
+        'chrome',
+        {
+          width: 390,
+          height: 844,
+          dpr: 2.0000000298023224,
+          backingWidth: 780,
+          backingHeight: 1688,
+        },
+        { width: 390, height: 844, dpr: 2 },
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertViewportAndBacking(
+        'chrome',
+        { width: 390, height: 844, dpr: 2.1, backingWidth: 780, backingHeight: 1688 },
+        { width: 390, height: 844, dpr: 2 },
+      ),
+    ).toThrow('devicePixelRatio expected 2, received 2.1');
   });
 });

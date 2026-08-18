@@ -50,6 +50,50 @@ test('validates the report envelope and rejects malformed revisions and hashes',
   ).toThrow('fixture.sha256');
 });
 
+test('validates environment and viewport fields', () => {
+  const report = {
+    ...validReport(),
+    environments: [environment()],
+    viewports: [{ id: 'desktop', width: 1280, height: 800, requestedDeviceScaleFactor: 1 }],
+  };
+  expect(validateReport(report)).toEqual(report);
+  expect(() =>
+    validateReport({
+      ...validReport(),
+      environments: [{ ...environment(), executableSha256: 'bad' }],
+    }),
+  ).toThrow('environments[0].executableSha256');
+  expect(() =>
+    validateReport({
+      ...validReport(),
+      environments: [{ ...environment(), memoryBytes: -1 }],
+    }),
+  ).toThrow('environments[0].memoryBytes');
+  expect(() =>
+    validateReport({
+      ...validReport(),
+      viewports: [{ id: 'desktop', width: 0, height: 800, requestedDeviceScaleFactor: 1 }],
+    }),
+  ).toThrow('viewports[0].width');
+});
+
+function environment() {
+  return {
+    id: 'chrome',
+    browser: 'chrome',
+    executableSha256: 'e'.repeat(64),
+    userAgent: 'Chrome',
+    hardwareConcurrency: 8,
+    os: 'linux',
+    cpu: 'cpu',
+    memoryBytes: 1024,
+    browserExecutable: '/chrome',
+    browserVersion: '1',
+    playwrightVersion: '1.62.1',
+    bunVersion: '1.3.14',
+  };
+}
+
 function validReport() {
   return {
     schemaVersion: 1 as const,

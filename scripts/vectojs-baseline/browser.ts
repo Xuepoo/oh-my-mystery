@@ -4,6 +4,8 @@ import type { Browser, BrowserContextOptions, Page } from 'playwright';
 
 export type BrowserName = 'chrome' | 'firefox';
 
+const DPR_TOLERANCE = 1e-4;
+
 export interface ViewportSpec {
   width: number;
   height: number;
@@ -29,6 +31,29 @@ export function resolveBrowserExecutable(
   return browser === 'chrome'
     ? '/usr/bin/google-chrome-stable'
     : playwrightBrowserType.executablePath();
+}
+
+const HEADED_CHROMIUM_ARGS = ['--ozone-platform=wayland'] as const;
+
+export function headedLaunchArgs(browser: BrowserName): string[] {
+  return browser === 'chrome' ? [...HEADED_CHROMIUM_ARGS] : [];
+}
+
+export function headedLaunchEnv(browser: BrowserName): Record<string, string> | undefined {
+  return browser === 'firefox' ? { MOZ_ENABLE_WAYLAND: '1' } : undefined;
+}
+
+export function mergeLaunchEnvironment(
+  inherited: Record<string, string | undefined>,
+  browser: BrowserName,
+): Record<string, string> | undefined {
+  const headed = headedLaunchEnv(browser);
+  if (!headed) return undefined;
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(inherited)) {
+    if (value !== undefined) result[name] = value;
+  }
+  return { ...result, ...headed };
 }
 
 export function browserContextOptions(
@@ -160,15 +185,15 @@ export function assertViewportAndBacking(
 ): void {
   const prefix =
     browser === 'firefox' && expected.dpr === 2 ? 'Firefox DPR 2 assertion failed: ' : '';
-  const checks: Array<[string, number, number]> = [
-    ['innerWidth', observed.width, expected.width],
-    ['innerHeight', observed.height, expected.height],
-    ['devicePixelRatio', observed.dpr, expected.dpr],
-    ['Canvas backing width', observed.backingWidth, expected.width * expected.dpr],
-    ['Canvas backing height', observed.backingHeight, expected.height * expected.dpr],
+  const checks: Array<[string, number, number, number]> = [
+    ['innerWidth', observed.width, expected.width, 0],
+    ['innerHeight', observed.height, expected.height, 0],
+    ['devicePixelRatio', observed.dpr, expected.dpr, DPR_TOLERANCE],
+    ['Canvas backing width', observed.backingWidth, expected.width * expected.dpr, 0],
+    ['Canvas backing height', observed.backingHeight, expected.height * expected.dpr, 0],
   ];
-  for (const [label, actual, wanted] of checks) {
-    if (actual !== wanted)
+  for (const [label, actual, wanted, tolerance] of checks) {
+    if (Math.abs(actual - wanted) > tolerance)
       throw new Error(`${prefix}${label} expected ${wanted}, received ${actual}`);
   }
 }
