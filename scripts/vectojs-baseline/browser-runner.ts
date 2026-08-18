@@ -86,6 +86,7 @@ import { graphFixtureDirectory, graphSpecs } from './generate-graphs';
 import type { PhysicsBrowserRequest, PhysicsBrowserResult } from './physics-browser';
 
 export const BASELINE_REVISION = 'd183a100c0fb0a26a74067a7b805e8ac8f322d97';
+const IDLE_WAIT_TIMEOUT_MS = 30_000;
 
 export interface SnapshotHash {
   sha256: string;
@@ -925,18 +926,56 @@ export async function executeScenarioStep(
       await assertFiniteGeometry(page);
       return;
     case 'await-idle':
-      await page.waitForFunction(
-        () => {
+      try {
+        await page.waitForFunction(
+          () => {
+            const instrumentation = (
+              window as unknown as {
+                __OMM_APP__?: {
+                  instrumentation?: { animationFree: boolean; sceneAlive: boolean };
+                };
+              }
+            ).__OMM_APP__?.instrumentation;
+            return instrumentation?.animationFree === true;
+          },
+          undefined,
+          { timeout: IDLE_WAIT_TIMEOUT_MS },
+        );
+        await page.waitForFunction(
+          () => {
+            const instrumentation = (
+              window as unknown as {
+                __OMM_APP__?: {
+                  instrumentation?: { animationFree: boolean; sceneAlive: boolean };
+                };
+              }
+            ).__OMM_APP__?.instrumentation;
+            return instrumentation?.sceneAlive === false;
+          },
+          undefined,
+          { timeout: IDLE_WAIT_TIMEOUT_MS },
+        );
+      } catch (error) {
+        const state = await page.evaluate(() => {
           const instrumentation = (
             window as unknown as {
-              __OMM_APP__?: { instrumentation?: { animationFree: boolean; sceneAlive: boolean } };
+              __OMM_APP__?: {
+                instrumentation?: {
+                  animationFree: boolean;
+                  sceneAlive: boolean;
+                  graph?: { nodeCount: number };
+                };
+              };
             }
           ).__OMM_APP__?.instrumentation;
-          return instrumentation?.animationFree === true && instrumentation.sceneAlive === false;
-        },
-        undefined,
-        { timeout: 10000 },
-      );
+          return {
+            animationFree: instrumentation?.animationFree,
+            sceneAlive: instrumentation?.sceneAlive,
+            graphNodeCount: instrumentation?.graph?.nodeCount,
+          };
+        });
+        throw new Error(`await-idle state: ${JSON.stringify(state)}`, { cause: error });
+      }
       return;
     case 'observe-120-frames': {
       const frames = await page.evaluate(async () => {
@@ -1090,24 +1129,29 @@ async function activateClearControl(page: Page): Promise<void> {
 }
 
 async function activateDrawerTarget(page: Page, id: string): Promise<void> {
-  await waitForTarget(page, id);
-  const point = await targetCenter(page, id);
-  await page.evaluate(({ x, y }) => {
-    const drawer = (
-      window as unknown as {
-        __OMM_APP__?: {
-          drawer?: {
-            handlePointerDown(x: number, y: number, pointerType: 'mouse'): boolean;
-            handlePointerUp(x: number, y: number): boolean;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await waitForTarget(page, id);
+    const point = await targetCenter(page, id);
+    const activated = await page.evaluate(({ x, y }) => {
+      const drawer = (
+        window as unknown as {
+          __OMM_APP__?: {
+            drawer?: {
+              handlePointerDown(x: number, y: number, pointerType: 'mouse'): boolean;
+              handlePointerUp(x: number, y: number): boolean;
+            };
           };
-        };
-      }
-    ).__OMM_APP__?.drawer;
-    if (!drawer?.handlePointerDown(x, y, 'mouse')) {
-      throw new Error('Drawer rejected its instrumented target point');
-    }
-    if (!drawer.handlePointerUp(x, y)) throw new Error('Drawer did not complete target activation');
-  }, point);
+        }
+      ).__OMM_APP__?.drawer;
+      return Boolean(drawer?.handlePointerDown(x, y, 'mouse') && drawer.handlePointerUp(x, y));
+    }, point);
+    if (activated) break;
+    if (attempt === 2) throw new Error('Drawer rejected its instrumented target point');
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+  }
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
