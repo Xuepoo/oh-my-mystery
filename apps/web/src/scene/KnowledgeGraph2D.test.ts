@@ -8,9 +8,11 @@ function node(id: string): GraphNode2D {
 }
 
 describe('KnowledgeGraph2D paginated expansion', () => {
-  it('accumulates pages, deduplicates facts, then collapses after exhaustion', async () => {
+  it('loads at most one of four pages per action, then collapses after exhaustion', async () => {
     const root = node('root');
     const shared = node('shared');
+    const second = node('second');
+    const third = node('third');
     const last = node('last');
     const pages: GraphNeighborhood2D[] = [
       {
@@ -22,11 +24,25 @@ describe('KnowledgeGraph2D paginated expansion', () => {
       },
       {
         entity: root,
-        neighbors: [shared, last],
+        neighbors: [shared, second],
         facts: [
           { source: 'root', target: 'shared', predicate: 'publisher' },
-          { source: 'root', target: 'last', predicate: 'publisher' },
+          { source: 'root', target: 'second', predicate: 'publisher' },
         ],
+        nextCursor: '0:2',
+        hasMore: true,
+      },
+      {
+        entity: root,
+        neighbors: [third],
+        facts: [{ source: 'root', target: 'third', predicate: 'publisher' }],
+        nextCursor: '0:3',
+        hasMore: true,
+      },
+      {
+        entity: root,
+        neighbors: [last],
+        facts: [{ source: 'root', target: 'last', predicate: 'publisher' }],
         hasMore: false,
       },
     ];
@@ -41,13 +57,24 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     await graph.bootstrap([root]);
 
     expect(await graph.toggleExpansion('root')).toBe(1);
+    expect(requestedCursors).toEqual([undefined]);
     expect(graph.canLoadMore('root')).toBe(true);
-    // Explicit "more" now chases remaining pages progressively.
-    expect(await graph.toggleExpansion('root')).toBe(0);
-    await graph.whenExpansionIdle('root');
+    expect(await graph.toggleExpansion('root')).toBe(1);
     expect(requestedCursors).toEqual([undefined, '0:1']);
-    expect(graph.nodes.map(({ id }) => id).sort()).toEqual(['last', 'root', 'shared']);
-    expect(graph.links).toHaveLength(2);
+    expect(graph.canLoadMore('root')).toBe(true);
+    expect(await graph.toggleExpansion('root')).toBe(1);
+    expect(requestedCursors).toEqual([undefined, '0:1', '0:2']);
+    expect(graph.canLoadMore('root')).toBe(true);
+    expect(await graph.toggleExpansion('root')).toBe(1);
+    expect(requestedCursors).toEqual([undefined, '0:1', '0:2', '0:3']);
+    expect(graph.nodes.map(({ id }) => id).sort()).toEqual([
+      'last',
+      'root',
+      'second',
+      'shared',
+      'third',
+    ]);
+    expect(graph.links).toHaveLength(4);
     expect(graph.canLoadMore('root')).toBe(false);
 
     expect(await graph.toggleExpansion('root')).toBe(0);
@@ -104,7 +131,7 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     restored.dispose();
   });
 
-  it('ignores stale concurrent responses and preserves cursors after failures', async () => {
+  it('deduplicates concurrent initial expansions and preserves cursors after failures', async () => {
     const root = node('root');
     let resolveFirst!: (page: GraphNeighborhood2D) => void;
     const first = new Promise<GraphNeighborhood2D>((resolve) => {
@@ -129,20 +156,28 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     } as D1DataSource;
     const graph = new KnowledgeGraph2D({ source });
     await graph.bootstrap([root]);
-    const stale = graph.toggleExpansion('root', ['author']);
-    await graph.toggleExpansion('root', ['publisher']);
+    const initial = graph.toggleExpansion('root', ['author']);
+    expect(graph.isNodeLoading('root')).toBe(true);
+    expect(await graph.toggleExpansion('root', ['publisher'])).toBe(0);
+    expect(call).toBe(1);
     resolveFirst({
       entity: root,
-      neighbors: [node('stale')],
-      facts: [{ source: 'root', target: 'stale', predicate: 'author' }],
-      hasMore: false,
+      neighbors: [node('first')],
+      facts: [{ source: 'root', target: 'first', predicate: 'author' }],
+      nextCursor: '0:1',
+      hasMore: true,
     });
-    await stale;
-    expect(graph.nodes.some(({ id }) => id === 'stale')).toBe(false);
+    await initial;
+    expect(graph.isNodeLoading('root')).toBe(false);
+    expect(graph.nodes.some(({ id }) => id === 'first')).toBe(true);
     expect(graph.canLoadMore('root')).toBe(true);
 
     await graph.toggleExpansion('root', ['publisher']);
+    expect(graph.nodes.some(({ id }) => id === 'new')).toBe(true);
     expect(graph.canLoadMore('root')).toBe(true);
+
+    await graph.toggleExpansion('root', ['publisher']);
+    expect(graph.isNodeLoading('root')).toBe(false);
     graph.dispose();
   });
 
@@ -208,7 +243,7 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     graph.dispose();
   });
 
-  it('auto-chases small neighborhoods and stops after the first page for large ones', async () => {
+  it('never auto-chases a neighborhood regardless of its reported total', async () => {
     const root = node('root');
     const smallCalls: string[] = [];
     const smallSource = {
@@ -227,11 +262,10 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     const small = new KnowledgeGraph2D({ source: smallSource });
     await small.bootstrap([root]);
     await small.toggleExpansion('root');
-    await small.whenExpansionIdle('root');
-    expect(smallCalls).toEqual(['', '0:1']);
+    expect(smallCalls).toEqual(['']);
     expect(small.isNodeLoading('root')).toBe(false);
-    expect(small.canLoadMore('root')).toBe(false);
-    expect(small.nodes.map(({ id }) => id).sort()).toEqual(['root', 'small-1', 'small-2']);
+    expect(small.canLoadMore('root')).toBe(true);
+    expect(small.nodes.map(({ id }) => id).sort()).toEqual(['root', 'small-1']);
     small.dispose();
 
     const largeCalls: string[] = [];
@@ -251,14 +285,13 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     const large = new KnowledgeGraph2D({ source: largeSource });
     await large.bootstrap([root]);
     await large.toggleExpansion('root');
-    await large.whenExpansionIdle('root');
     expect(largeCalls).toEqual(['']);
     expect(large.canLoadMore('root')).toBe(true);
     expect(large.getExpansionProgress('root')).toEqual({ loaded: 1, total: 500 });
     large.dispose();
   });
 
-  it('cancels an in-flight chase when the expansion collapses', async () => {
+  it('ignores an in-flight page when the expansion collapses', async () => {
     const root = node('root');
     let calls = 0;
     let release: (() => void) | null = null;
@@ -283,14 +316,12 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     const graph = new KnowledgeGraph2D({ source });
     await graph.bootstrap([root]);
     await graph.toggleExpansion('root');
-    await new Promise<void>((resolve) => {
-      const check = () => (graph.isNodeLoading('root') ? resolve() : setTimeout(check, 0));
-      check();
-    });
+    const nextPage = graph.toggleExpansion('root');
+    expect(graph.isNodeLoading('root')).toBe(true);
     graph.collapse('root');
     release();
     release = null;
-    await graph.whenExpansionIdle('root');
+    await nextPage;
     expect(graph.isExpanded('root')).toBe(false);
     expect(graph.isNodeLoading('root')).toBe(false);
     expect(graph.nodes.map(({ id }) => id)).toEqual(['root']);
@@ -354,6 +385,38 @@ describe('KnowledgeGraph2D paginated expansion', () => {
       expect(Number.isFinite(current.x)).toBe(true);
       expect(Number.isFinite(current.y)).toBe(true);
     }
+    graph.dispose();
+  });
+
+  it('places a fetched page around the live center after the request resolves', async () => {
+    const root = node('root');
+    const child = node('child');
+    let release!: () => void;
+    const source = {
+      async getNeighbors() {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return {
+          entity: root,
+          neighbors: [child],
+          facts: [{ source: 'root', target: 'child', predicate: 'publisher' }],
+          hasMore: false,
+        };
+      },
+    } as D1DataSource;
+    const graph = new KnowledgeGraph2D({ source });
+    await graph.bootstrap([root]);
+
+    const expansion = graph.toggleExpansion('root');
+    root.x = 420;
+    root.y = -180;
+    release();
+    await expansion;
+
+    const linkLength = Math.hypot((child.x ?? 0) - 420, (child.y ?? 0) + 180);
+    expect(linkLength).toBeGreaterThanOrEqual(45);
+    expect(linkLength).toBeLessThanOrEqual(80);
     graph.dispose();
   });
 
@@ -528,15 +591,16 @@ describe('KnowledgeGraph2D paginated expansion', () => {
     expect(graph.beginNodeDrag('root')).toBe(true);
     expect(graph.isSimulating()).toBe(true);
     expect(graph.updateNodeDrag('root', 100, 100)).toBe(true);
+    expect(graph.updateNodeDrag('root', 110, 90)).toBe(true);
+    expect(reheats).toEqual([0.25]);
     expect(graph.togglePinned('root')).toBe(true);
-    reheats.length = 0;
 
     expect(graph.endNodeDrag('root')).toBe(true);
-    expect(reheats).toEqual([0.08]);
+    expect(reheats).toEqual([0.25, 0.08]);
     expect(graph.isPinned('root')).toBe(true);
     graph.clearHoverPin();
     graph.step();
-    expect({ x: root.x, y: root.y }).toEqual({ x: 100, y: 100 });
+    expect({ x: root.x, y: root.y }).toEqual({ x: 110, y: 90 });
     graph.dispose();
   });
 

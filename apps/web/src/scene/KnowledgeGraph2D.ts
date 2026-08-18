@@ -6,7 +6,7 @@ import {
   NodeStyleRegistry,
   normalizeNodeType,
 } from '../node-style-settings';
-import type { GraphLink2D, GraphNode2D } from './types';
+import type { GraphLink2D, GraphNeighborhood2D, GraphNode2D } from './types';
 
 export interface KnowledgeGraph2DOptions {
   source: D1DataSource;
@@ -64,14 +64,12 @@ export class KnowledgeGraph2D {
   private expansionLoading = new Set<string>();
   private expansionCancelled = new Set<string>();
   private expansionFailed = new Set<string>();
-  private expansionChases = new Map<string, Promise<void>>();
   private hoverPinnedId: string | null = null;
   private dragPins = new Map<
     string,
     { originalX: number; originalY: number; wasPermanentlyPinned: boolean }
   >();
   private onChangeCb: (() => void) | undefined;
-  private readonly AUTO_CHASE_LIMIT = 100;
   private rootIds = new Set<string>();
   private manualIds = new Set<string>();
   private expansionNodes = new Map<string, Set<string>>();
@@ -275,7 +273,6 @@ export class KnowledgeGraph2D {
     this.expansionLoading.clear();
     this.expansionCancelled.clear();
     this.expansionFailed.clear();
-    this.expansionChases.clear();
     this.hoverPinnedId = null;
     this.dragPins.clear();
     this.rootIds.clear();
@@ -314,31 +311,33 @@ export class KnowledgeGraph2D {
     nodeId: string,
     neighborLimit?: number,
     predicates?: readonly string[],
-    options?: { chase?: boolean },
+    _options?: { chase?: boolean },
   ): Promise<number> {
     const generation = this.generation;
     const centerNode = this.nodesMap.get(nodeId);
     if (!centerNode) return 0;
-    // Single-flight: a chase already owns this node's page fetches. Direct
-    // callers (chronicles, init expansion) must not interleave, or their
-    // responses invalidate each other and the chase never advances.
-    if (!options?.chase && this.expansionLoading.has(nodeId)) return 0;
+    if (this.expansionLoading.has(nodeId)) return 0;
     const filterKey = [...(predicates ?? [])].sort().join(',');
     const filterChanged =
       this.expandedSet.has(nodeId) && this.expansionFilters.get(nodeId) !== filterKey;
     if (this.expandedSet.has(nodeId) && !filterChanged && !this.expansionCursors.has(nodeId)) {
       return 0;
     }
-    const cx = centerNode.x ?? 0;
-    const cy = centerNode.y ?? 0;
     const request = (this.expansionRequests.get(nodeId) ?? 0) + 1;
     this.expansionRequests.set(nodeId, request);
-
-    const neighborhood = await this.source.getNeighbors(nodeId, {
-      limit: neighborLimit,
-      cursor: filterChanged ? undefined : this.expansionCursors.get(nodeId),
-      predicates,
-    });
+    this.expansionLoading.add(nodeId);
+    this.onChangeCb?.();
+    let neighborhood: GraphNeighborhood2D;
+    try {
+      neighborhood = await this.source.getNeighbors(nodeId, {
+        limit: neighborLimit,
+        cursor: filterChanged ? undefined : this.expansionCursors.get(nodeId),
+        predicates,
+      });
+    } finally {
+      this.expansionLoading.delete(nodeId);
+      this.onChangeCb?.();
+    }
     if (
       generation !== this.generation ||
       !this.nodesMap.has(nodeId) ||
@@ -350,6 +349,9 @@ export class KnowledgeGraph2D {
       }
       return 0;
     }
+    const liveCenter = this.nodesMap.get(nodeId)!;
+    const cx = liveCenter.x ?? 0;
+    const cy = liveCenter.y ?? 0;
     this.expansionFailed.delete(nodeId);
     if (filterChanged) this.collapse(nodeId);
     const firstPage = !this.expandedSet.has(nodeId);
@@ -462,58 +464,20 @@ export class KnowledgeGraph2D {
     if (typeof neighborhood.total === 'number') this.expansionTotal.set(nodeId, neighborhood.total);
     this.expansionPredicates.set(nodeId, [...(predicates ?? [])]);
 
-    const shouldAutoChase =
-      !options?.chase &&
-      neighborhood.hasMore &&
-      Boolean(neighborhood.nextCursor) &&
-      typeof neighborhood.total === 'number' &&
-      neighborhood.total <= this.AUTO_CHASE_LIMIT &&
-      !this.expansionCancelled.has(nodeId) &&
-      !this.expansionChases.has(nodeId);
-    if (shouldAutoChase) {
-      this.expansionChases.set(nodeId, this.chasePages(nodeId));
-    }
-
     this.onChangeCb?.();
     return addedCount;
   }
 
-  private chasePages(nodeId: string): Promise<void> {
-    const generation = this.generation;
-    let settle: () => void = () => {};
-    const promise = new Promise<void>((resolve) => {
-      settle = resolve;
-    });
-    void (async () => {
-      this.expansionLoading.add(nodeId);
-      try {
-        while (this.generation === generation && this.expansionCursors.has(nodeId)) {
-          if (
-            this.expansionCancelled.has(nodeId) ||
-            this.expansionFailed.has(nodeId) ||
-            !this.expandedSet.has(nodeId)
-          ) {
-            break;
-          }
-          await this.expand(nodeId, undefined, this.expansionPredicates.get(nodeId), {
-            chase: true,
-          });
-          // Yield to the event loop so pages render progressively and input stays responsive.
-          await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-      } finally {
-        this.expansionLoading.delete(nodeId);
-        if (this.expansionChases.get(nodeId) === promise) this.expansionChases.delete(nodeId);
-        this.expansionCancelled.delete(nodeId);
-        this.onChangeCb?.();
-        settle();
-      }
-    })();
-    return promise;
-  }
-
   whenExpansionIdle(nodeId: string): Promise<void> {
-    return this.expansionChases.get(nodeId) ?? Promise.resolve();
+    return this.expansionLoading.has(nodeId)
+      ? new Promise((resolve) => {
+          const check = () => {
+            if (this.expansionLoading.has(nodeId)) setTimeout(check, 0);
+            else resolve();
+          };
+          check();
+        })
+      : Promise.resolve();
   }
 
   isNodeLoading(id: string): boolean {
@@ -638,7 +602,6 @@ export class KnowledgeGraph2D {
     this.expansionLoading.clear();
     this.expansionCancelled.clear();
     this.expansionFailed.clear();
-    this.expansionChases.clear();
     this.hoverPinnedId = null;
     this.dragPins.clear();
     this.rootIds.clear();
@@ -664,11 +627,7 @@ export class KnowledgeGraph2D {
           return 0;
         }
         if (this.expansionCursors.has(nodeId)) {
-          // Explicit "more": chase all remaining pages without the auto cap.
-          this.expansionCancelled.delete(nodeId);
-          this.expansionFailed.delete(nodeId);
-          this.expansionChases.set(nodeId, this.chasePages(nodeId));
-          return 0;
+          return this.expand(nodeId, undefined, predicates);
         }
         return this.expand(nodeId, undefined, predicates);
       }
@@ -923,7 +882,6 @@ export class KnowledgeGraph2D {
     const index = this.layout?.getNodeIndex(id);
     if (!node || index === undefined) return false;
     this.applyPhysicalPin(id, x, y);
-    this.reheat(0.25);
     return true;
   }
 

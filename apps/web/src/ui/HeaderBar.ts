@@ -30,7 +30,8 @@ export class HeaderBar extends Entity {
   private activeFilters = new Set<string>();
   private welcomeMode = false;
   private domInput: HTMLInputElement | null = null;
-  private debounceTimer: any = null;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private blurTimer: ReturnType<typeof setTimeout> | null = null;
   private searchEpoch = 0;
 
   private searchInputRect = { x: 0, y: 0, w: 0, h: 0 };
@@ -82,23 +83,14 @@ export class HeaderBar extends Entity {
     this.onOpenSettingsCb = options.onOpenSettings;
 
     this.initDomInput();
-
-    // Native text input shortcut for searching
-    window.addEventListener('keydown', this.onWindowKeydown);
   }
 
-  private onWindowKeydown = (e: KeyboardEvent): void => {
-    if (e.key === '/' && document.activeElement !== this.domInput) {
-      e.preventDefault();
-      this.domInput?.focus();
-      this.showSearchDropdown = true;
-      this.scene?.markDirty();
-    }
-  };
-
   public dispose(): void {
-    window.removeEventListener('keydown', this.onWindowKeydown);
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    if (this.blurTimer) clearTimeout(this.blurTimer);
+    this.searchEpoch++;
     this.domInput?.remove();
+    this.domInput = null;
   }
 
   private initDomInput(): void {
@@ -130,10 +122,15 @@ export class HeaderBar extends Entity {
     });
 
     this.domInput.addEventListener('focus', () => {
+      if (this.blurTimer) {
+        clearTimeout(this.blurTimer);
+        this.blurTimer = null;
+      }
       if (this.domInput) {
         this.domInput.style.borderColor = Theme.colors.borderHighlight;
       }
       this.showSearchDropdown = true;
+      this.scene?.markDirty();
     });
 
     this.domInput.addEventListener('blur', () => {
@@ -141,14 +138,16 @@ export class HeaderBar extends Entity {
         this.domInput.style.borderColor = Theme.colors.border;
       }
       // Delay hide slightly so clicks on dropdown items trigger
-      setTimeout(() => {
+      if (this.blurTimer) clearTimeout(this.blurTimer);
+      this.blurTimer = setTimeout(() => {
+        this.blurTimer = null;
         this.showSearchDropdown = false;
-        this.scene.markDirty();
+        this.scene?.markDirty();
       }, 250);
     });
 
     this.domInput.addEventListener('input', () => {
-      clearTimeout(this.debounceTimer);
+      if (this.debounceTimer) clearTimeout(this.debounceTimer);
       this.debounceTimer = setTimeout(() => {
         this.setSearchQuery(this.domInput?.value || '');
       }, 150);
@@ -179,6 +178,27 @@ export class HeaderBar extends Entity {
     this.showSearchDropdown = false;
     this.scene?.markDirty();
     return true;
+  }
+
+  public focusSearch(): boolean {
+    if (!this.domInput) return false;
+    if (this.blurTimer) {
+      clearTimeout(this.blurTimer);
+      this.blurTimer = null;
+    }
+    this.domInput.focus();
+    this.showSearchDropdown = true;
+    this.scene?.markDirty();
+    return true;
+  }
+
+  public setSearchObscured(obscured: boolean): void {
+    if (!this.domInput) return;
+    this.domInput.style.visibility = obscured ? 'hidden' : 'visible';
+    if (obscured) {
+      this.hideDropdown();
+      this.domInput.blur();
+    }
   }
 
   setWelcomeMode(enabled: boolean): void {

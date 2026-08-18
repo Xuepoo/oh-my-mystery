@@ -226,7 +226,10 @@ export class App {
     });
     this.scene.add(this.pathfinderModal);
 
-    this.helpModal = new HelpModal((open) => this.setBackgroundA11yHidden(open));
+    this.helpModal = new HelpModal((open) => {
+      this.setBackgroundA11yHidden(open);
+      this.headerBar.setSearchObscured(open);
+    });
     this.scene.add(this.helpModal);
 
     this.welcomeLayer = new WelcomeLayer({
@@ -599,6 +602,7 @@ export class App {
   // Also implements app-level keyboard navigation: Escape closes topmost
   // panel, '?' / 'h' toggles the help modal.
   private onWindowKeydown = (e: KeyboardEvent): void => {
+    if (e.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
     if (mod) {
       const key = e.key.toLowerCase();
@@ -608,12 +612,16 @@ export class App {
       return;
     }
 
+    const target = e.target;
+    const editableTarget =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      (target instanceof HTMLElement && target.isContentEditable);
+
     if (e.key === 'Escape') {
       // The search input handles its own Escape (blur + hide dropdown).
-      const target = e.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        return;
-      }
+      if (editableTarget) return;
       if (this.headerBar.hideDropdown()) return;
       if (this.radialMenu.isMenuOpen()) {
         this.radialMenu.close();
@@ -651,8 +659,12 @@ export class App {
       return;
     }
 
-    const target = e.target;
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    if (editableTarget) return;
+    if (e.key === '/') {
+      if (e.altKey || e.shiftKey) return;
+      if (this.isKeyboardSurfaceOpen()) return;
+      e.preventDefault();
+      this.headerBar.focusSearch();
       return;
     }
     if (e.key === '?' || e.key === 'h' || e.key === 'H') {
@@ -668,6 +680,20 @@ export class App {
       }
     }
   };
+
+  private isKeyboardSurfaceOpen(): boolean {
+    return (
+      this.helpModal.isModalOpen() ||
+      this.renderSettingsModal.isModalOpen() ||
+      this.nodeAppearanceModal.isModalOpen() ||
+      this.pathfinderModal.isModalOpen() ||
+      this.chroniclePanel.isModalOpen() ||
+      this.visibilityManager.isPanelOpen() ||
+      this.graphStatsPanel.isPanelOpen() ||
+      this.drawer.isDrawerOpen() ||
+      this.radialMenu.isMenuOpen()
+    );
+  }
 
   private onPointerMove = (e: PointerEvent): void => {
     const { x, y } = getEventCoords(e);

@@ -41,7 +41,7 @@ export function getHelpModalLayout(
   const joinH = compact ? 42 : h < 500 ? 50 : contentW < 390 ? 84 : 56;
   const contentBottom = footerY ?? modal.y + modal.h - 10;
   const available = contentBottom - 10 - joinH - 8 - sectionsY - sectionGap * (rows - 1);
-  const sectionHeight = Math.max(28, Math.min(120, available / rows));
+  const sectionHeight = Math.max(28, Math.min(132, available / rows));
   const joinY = sectionsY + rows * sectionHeight + (rows - 1) * sectionGap + 8;
   return {
     modal,
@@ -127,9 +127,9 @@ class HelpTarget extends Entity {
           label: this.label,
           href: this.url,
           target: '_blank',
-          pointerEvents: 'none',
+          pointerEvents: 'auto',
         }
-      : { tag: 'button', role: 'button', label: this.label, pointerEvents: 'none' };
+      : { tag: 'button', role: 'button', label: this.label, pointerEvents: 'auto' };
   }
 
   isPointInside(): boolean {
@@ -148,6 +148,7 @@ export class HelpModal extends Entity {
     (link) => new HelpTarget(link.label, () => openAllowedExternalLink(link.url), link.url),
   );
   private closeTarget = new HelpTarget('关闭使用指南', () => this.close());
+  private previousFocus: HTMLElement | null = null;
 
   constructor(private readonly onOpenChange: (open: boolean) => void = () => {}) {
     super();
@@ -163,12 +164,17 @@ export class HelpModal extends Entity {
   }
 
   open(): void {
+    this.previousFocus =
+      typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     this.isOpen = true;
     this.a11yHidden = false;
     this.closeTarget.a11yHidden = false;
     for (const target of this.linkTargets) target.a11yHidden = false;
     this.onOpenChange(true);
     this.scene.markDirty();
+    this.closeTarget.focus();
   }
 
   close(): void {
@@ -179,6 +185,8 @@ export class HelpModal extends Entity {
     for (const target of this.linkTargets) target.a11yHidden = true;
     this.onOpenChange(false);
     this.scene.markDirty();
+    if (this.previousFocus?.isConnected) this.previousFocus.focus();
+    this.previousFocus = null;
   }
 
   toggle(): void {
@@ -191,7 +199,12 @@ export class HelpModal extends Entity {
   }
 
   getA11yAttributes(): A11yAttributes {
-    return { role: 'dialog', label: 'OMM 使用指南', ariaModal: 'true' };
+    return {
+      role: 'dialog',
+      label: 'OMM 使用指南',
+      ariaModal: 'true',
+      pointerEvents: 'none',
+    };
   }
 
   private isInRect(

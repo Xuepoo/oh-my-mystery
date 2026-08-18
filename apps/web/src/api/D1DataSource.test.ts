@@ -54,4 +54,18 @@ describe('D1DataSource casefile endpoints', () => {
       status: undefined,
     });
   });
+
+  it('aborts a path request after the configured client deadline', async () => {
+    globalThis.fetch = mock(
+      async (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+            once: true,
+          });
+        }),
+    ) as typeof fetch;
+
+    const source = new D1DataSource('', 5);
+    expect(await source.findPath('source', 'target')).toBeNull();
+  });
 });
