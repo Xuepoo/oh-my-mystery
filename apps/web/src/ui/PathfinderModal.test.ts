@@ -53,4 +53,95 @@ describe('PathfinderModal request lifecycle', () => {
     expect(modal['pathResult']).toBeNull();
     modal.dispose();
   });
+
+  it('auto-resolves typed names to the top search suggestion before searching', async () => {
+    const searches: string[] = [];
+    const pathCalls: [string, string][] = [];
+    const modal = new PathfinderModal({
+      source: {
+        async search(query: string) {
+          searches.push(query);
+          return {
+            query,
+            results: [{ id: `${query}-id`, name: `${query}-name`, type: 'author', score: 1 }],
+          };
+        },
+        async getNodes(ids: string[]) {
+          return [{ id: ids[0]!, name: ids[0]!, type: 'author' }];
+        },
+        async findPath(source: string, target: string) {
+          pathCalls.push([source, target]);
+          return { found: false, nodes: [], edges: [], hops: -1, explanation: 'none' };
+        },
+      } as unknown as D1DataSource,
+      onClose() {},
+    });
+    Object.defineProperty(modal, 'scene', { value: { markDirty() {} } });
+    modal.open();
+
+    const sourceState = modal['sourceState'] as {
+      text: string;
+      confirmed: unknown;
+      suggestions: unknown[];
+      selectedIndex: number;
+      epoch: number;
+    };
+    const targetState = modal['targetState'] as {
+      text: string;
+      confirmed: unknown;
+      suggestions: unknown[];
+      selectedIndex: number;
+      epoch: number;
+    };
+    sourceState.text = '江户川乱步';
+    sourceState.confirmed = null;
+    sourceState.suggestions = [];
+    sourceState.selectedIndex = -1;
+    targetState.text = '岛田庄司';
+    targetState.confirmed = null;
+    targetState.suggestions = [];
+    targetState.selectedIndex = -1;
+
+    await modal.executeSearch();
+
+    expect(searches).toEqual(['江户川乱步', '岛田庄司']);
+    expect(pathCalls).toEqual([['江户川乱步-id', '岛田庄司-id']]);
+    modal.dispose();
+  });
+
+  it('shows a specific no-match message when a typed name cannot be resolved', async () => {
+    const modal = new PathfinderModal({
+      source: {
+        async search() {
+          return { query: '', results: [] };
+        },
+        async getNodes() {
+          return [];
+        },
+        async findPath() {
+          return { found: false, nodes: [], edges: [], hops: -1, explanation: 'none' };
+        },
+      } as unknown as D1DataSource,
+      onClose() {},
+    });
+    Object.defineProperty(modal, 'scene', { value: { markDirty() {} } });
+    modal.open();
+
+    const sourceState = modal['sourceState'] as {
+      text: string;
+      confirmed: unknown;
+      suggestions: unknown[];
+      selectedIndex: number;
+    };
+    sourceState.text = '江户川乱布';
+    sourceState.confirmed = null;
+    sourceState.suggestions = [];
+    sourceState.selectedIndex = -1;
+
+    await modal.executeSearch();
+
+    expect(modal['statusMessage']).toContain('江户川乱布');
+    expect(modal['statusMessage']).toContain('未找到');
+    modal.dispose();
+  });
 });

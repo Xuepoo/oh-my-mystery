@@ -156,24 +156,34 @@ export class PathfinderModal extends Entity {
   }
 
   async executeSearch(): Promise<void> {
+    const epoch = ++this.searchEpoch;
+    const closeEpoch = this.closeEpoch;
+    this.searchLoading = true;
+    this.pathResult = null;
+    this.scene.markDirty();
+
+    await this.resolveEndpoint('source');
+    await this.resolveEndpoint('target');
+    if (epoch !== this.searchEpoch || closeEpoch !== this.closeEpoch || !this.isOpen) return;
+
     const source = this.sourceState.confirmed;
     const target = this.targetState.confirmed;
     if (!source || !target) {
-      this.statusMessage = '请先从搜索建议中确认起点和目标实体';
+      const unresolved = !source
+        ? this.sourceState.text.trim() || '起点'
+        : this.targetState.text.trim() || '目标';
+      this.statusMessage = `未找到「${unresolved}」的匹配实体，请检查输入或从搜索建议中选择`;
+      this.searchLoading = false;
       this.scene.markDirty();
       return;
     }
     if (source.id === target.id) {
       this.statusMessage = '起点和目标不能是同一个实体';
       this.pathResult = null;
+      this.searchLoading = false;
       this.scene.markDirty();
       return;
     }
-    const epoch = ++this.searchEpoch;
-    const closeEpoch = this.closeEpoch;
-    this.searchLoading = true;
-    this.pathResult = null;
-    this.scene.markDirty();
     try {
       const result = await this.source.findPath(source.id, target.id);
       if (epoch !== this.searchEpoch || closeEpoch !== this.closeEpoch || !this.isOpen) return;
@@ -197,6 +207,23 @@ export class PathfinderModal extends Entity {
     this.searchEpoch++;
     this.searchLoading = false;
     this.removeDomInputs();
+  }
+
+  private async resolveEndpoint(endpoint: 'source' | 'target'): Promise<void> {
+    const state = endpoint === 'source' ? this.sourceState : this.targetState;
+    if (state.confirmed) return;
+    const text = state.text.trim();
+    if (!text) return;
+    if (/^(?:wd:Q\d+|douban:.+)$/i.test(text)) {
+      await this.confirmDirectId(endpoint, text, state.epoch, false);
+      return;
+    }
+    if (state.suggestions.length === 0) {
+      await this.searchEndpoint(endpoint, text, state.epoch);
+    }
+    const top =
+      state.selectedIndex >= 0 ? state.suggestions[state.selectedIndex] : state.suggestions[0];
+    if (top) this.confirmEndpoint(endpoint, top, false);
   }
 
   private createEndpointState(id: string, name: string): EndpointState {
@@ -287,6 +314,7 @@ export class PathfinderModal extends Entity {
     endpoint: 'source' | 'target',
     id: string,
     epoch: number,
+    bumpEpoch = true,
   ): Promise<void> {
     const closeEpoch = this.closeEpoch;
     const [entity] = await this.source.getNodes([id]);
@@ -297,11 +325,15 @@ export class PathfinderModal extends Entity {
       this.scene.markDirty();
       return;
     }
-    this.confirmEndpoint(endpoint, {
-      id: entity.id,
-      name: this.entityName(entity),
-      type: entity.type as EntityType,
-    });
+    this.confirmEndpoint(
+      endpoint,
+      {
+        id: entity.id,
+        name: this.entityName(entity),
+        type: entity.type as EntityType,
+      },
+      bumpEpoch,
+    );
   }
 
   private async searchEndpoint(
@@ -318,15 +350,21 @@ export class PathfinderModal extends Entity {
     this.scene.markDirty();
   }
 
-  private confirmEndpoint(endpoint: 'source' | 'target', item: ConfirmedEntity): void {
+  private confirmEndpoint(
+    endpoint: 'source' | 'target',
+    item: ConfirmedEntity,
+    bumpEpoch = true,
+  ): void {
     const state = endpoint === 'source' ? this.sourceState : this.targetState;
     state.confirmed = item;
     state.text = item.name;
     state.suggestions = [];
     state.selectedIndex = -1;
-    this.searchEpoch++;
-    this.searchLoading = false;
-    this.pathResult = null;
+    if (bumpEpoch) {
+      this.searchEpoch++;
+      this.searchLoading = false;
+      this.pathResult = null;
+    }
     if (endpoint === 'source') {
       this.sourceId = item.id;
       this.sourceName = item.name;
