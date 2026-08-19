@@ -46,6 +46,34 @@ describe('browser runner integration', () => {
     expect(events.at(-2)).toEqual(['move', 180, 240]);
     expect(events.at(-1)).toEqual(['up']);
   });
+
+  test('reports search input and application state when results time out', async () => {
+    const page = {
+      keyboard: { type: async () => {} },
+      waitForFunction: async () => {
+        throw new Error('timeout');
+      },
+      evaluate: async () => ({
+        activeTag: 'INPUT',
+        inputValue: '江户川乱步',
+        query: '江户川乱步',
+        resultCount: 0,
+      }),
+    } as unknown as Page;
+
+    await expect(
+      executeScenarioStep('type-search', page, {
+        previewUrl: 'http://candidate.test',
+        fixture: fixture(),
+        viewport: { width: 1280, height: 800, dpr: 1, mobile: false },
+        runId: 'candidate-chrome-1',
+        scenarioId: 'desktop-search',
+        browser: 'chrome',
+      }),
+    ).rejects.toThrow(
+      'Search results timed out: {"activeTag":"INPUT","inputValue":"江户川乱步","query":"江户川乱步","resultCount":0}',
+    );
+  });
 });
 
 function fixture(): FixtureManifest {

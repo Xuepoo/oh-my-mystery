@@ -133,7 +133,7 @@ test('full capture alternates paired browser and arm order across five repetitio
 test('cleans up browser, previews, and prepared arms after capture failure', async () => {
   const fake = fakeDependencies({ failCapture: true });
   await expect(runBaseline({ mode: 'capture', repetitions: 1 }, fake.dependencies)).rejects.toThrow(
-    'capture failed',
+    'Capture candidate/chrome/repetition-1 failed: capture failed',
   );
   expect(fake.calls.slice(-3)).toEqual(['close-browser', 'stop-previews', 'cleanup']);
   expect(fake.calls).not.toContain('assemble:2');

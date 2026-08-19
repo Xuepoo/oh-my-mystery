@@ -146,7 +146,14 @@ export async function runBaseline(
     browser = await dependencies.startBrowser({ fixture, prepared, previews });
     const captures: CaptureResult[] = [];
     for (const request of captureOrder(mode.repetitions)) {
-      captures.push(await browser.capture(request));
+      try {
+        captures.push(await browser.capture(request));
+      } catch (error) {
+        throw new Error(
+          `Capture ${request.arm}/${request.browser}/repetition-${request.repetition} failed: ${asError(error).message}`,
+          { cause: error },
+        );
+      }
     }
 
     const input: ReportAssemblyInput = { mode, fixture, preflight, prepared, captures };

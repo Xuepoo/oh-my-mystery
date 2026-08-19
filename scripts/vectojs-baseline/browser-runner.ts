@@ -640,18 +640,38 @@ export async function executeScenarioStep(
       return;
     case 'type-search':
       await page.keyboard.type(context.fixture.expected.firstProfileCopy);
-      await page.waitForFunction(
-        () =>
-          Boolean(
-            (
-              window as unknown as {
-                __OMM_APP__?: { headerBar?: { searchResults?: readonly unknown[] } };
-              }
-            ).__OMM_APP__?.headerBar?.searchResults?.length,
-          ),
-        undefined,
-        { timeout: 5000 },
-      );
+      try {
+        await page.waitForFunction(
+          () =>
+            Boolean(
+              (
+                window as unknown as {
+                  __OMM_APP__?: { headerBar?: { searchResults?: readonly unknown[] } };
+                }
+              ).__OMM_APP__?.headerBar?.searchResults?.length,
+            ),
+          undefined,
+          { timeout: 5000 },
+        );
+      } catch (error) {
+        const state = await page.evaluate(() => {
+          const headerBar = (
+            window as unknown as {
+              __OMM_APP__?: {
+                headerBar?: { searchQuery?: string; searchResults?: readonly unknown[] };
+              };
+            }
+          ).__OMM_APP__?.headerBar;
+          const active = document.activeElement;
+          return {
+            activeTag: active?.tagName ?? null,
+            inputValue: active instanceof HTMLInputElement ? active.value : null,
+            query: headerBar?.searchQuery ?? null,
+            resultCount: headerBar?.searchResults?.length ?? null,
+          };
+        });
+        throw new Error(`Search results timed out: ${JSON.stringify(state)}`, { cause: error });
+      }
       return;
     case 'activate-first-result':
       await page.keyboard.press('Enter');
