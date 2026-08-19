@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ChronicleTrail } from '../packages/shared/src/types';
+import { buildQidLinks, buildUniqueWikidataLabelLinks } from './canonical-links';
 import { applyOverrides, cleanNames, isJunkNames, namesToJson } from './clean-labels';
 import { buildCountryLabelMap, normalizeCountryReference } from './country-labels';
 import {
@@ -10,6 +11,14 @@ import {
   buildWorkGroups,
   type RecommendationScore,
 } from './data-transforms';
+import {
+  buildPublisherLinks,
+  buildPublisherNameIndex,
+  isPublisherLiteral,
+  maySynthesizePublisher,
+  matchPublisherName,
+  normalizePublisherName,
+} from './publisher-normalization';
 
 const SOURCE_DB_PATH =
   process.env.OMM_SOURCE_DB || join(import.meta.dir, '../../mystery-clawer/data/mystery.db');
@@ -32,6 +41,30 @@ const db = new Database(DB_PATH);
 const schemaSql = readFileSync(join(import.meta.dir, '../apps/api/schema.sql'), 'utf-8');
 db.run(schemaSql);
 
+// This database is disposable build output. Maintaining secondary indexes for
+// every row makes million-row imports needlessly expensive; rebuild them once
+// after all bulk writes have completed.
+const deferredIndexes = [
+  'CREATE INDEX idx_entities_type ON entities(type)',
+  'CREATE INDEX idx_entities_qid ON entities(qid)',
+  'CREATE INDEX idx_facts_sub ON facts(subject_id, predicate, object_ref)',
+  'CREATE INDEX idx_facts_obj ON facts(object_ref, predicate, subject_id)',
+  'CREATE INDEX idx_facts_pred ON facts(predicate)',
+  "CREATE UNIQUE INDEX idx_facts_logical_assertion ON facts(subject_id, predicate, object_ref, IFNULL(object_value, ''))",
+  'CREATE INDEX idx_work_group_members_group ON work_group_members(work_group_id)',
+  'CREATE INDEX idx_publication_events_work ON publication_events(work_id)',
+  'CREATE INDEX idx_publication_events_group ON publication_events(work_group_id)',
+  'CREATE INDEX idx_publication_events_publisher ON publication_events(publisher_id)',
+  'CREATE INDEX idx_rec_lookup ON recommendations(entity_id, rank)',
+  'CREATE INDEX idx_search_zh ON search_index(name_zh)',
+  'CREATE INDEX idx_search_en ON search_index(name_en)',
+  'CREATE INDEX idx_search_ja ON search_index(name_ja)',
+] as const;
+for (const statement of deferredIndexes) {
+  const name = statement.match(/INDEX (\S+)/u)?.[1];
+  if (name) db.run(`DROP INDEX IF EXISTS ${name}`);
+}
+
 console.log('📦 Loading entities, facts, and links from mystery.db...');
 const srcDb = new Database(SOURCE_DB_PATH);
 
@@ -44,6 +77,16 @@ for (const row of linkRows) {
   }
 }
 console.log(`✓ Loaded ${linkMap.size} entity links`);
+
+const qidCandidates = srcDb.query('SELECT id, qid FROM entities').all() as {
+  id: string;
+  qid: string | null;
+}[];
+const qidLinks = buildQidLinks(qidCandidates);
+for (const [source, target] of qidLinks) {
+  if (!linkMap.has(source)) linkMap.set(source, target);
+}
+console.log(`✓ Added ${qidLinks.size} canonical QID links`);
 
 const countryLabels = new Map<string, string>();
 const countryQids = (
@@ -83,17 +126,6 @@ function resolveLink(id: string): string {
   return cur;
 }
 
-function normPublisherName(raw: string): string {
-  let s = raw.normalize('NFKC').trim().toLowerCase();
-  s = s.replace(/^(株式会社|股份公司|\(株\)|（株）)/u, '');
-  s = s.replace(/[\s（）()·•・,，.。]/g, '');
-  return s;
-}
-
-function stripPublisherSuffix(s: string): string {
-  return s.replace(/(出版社|出版有限公司|出版公司|出版集团|出版)$/u, '');
-}
-
 function djb2Hash(s: string): number {
   let h = 5381;
   for (let i = 0; i < s.length; i++) {
@@ -103,24 +135,7 @@ function djb2Hash(s: string): number {
 }
 
 function matchPublisher(value: string): string | null {
-  const candidates = [value, ...value.split(/[、，,／/・]/u)]
-    .map(normPublisherName)
-    .filter(Boolean);
-  for (const key of candidates) {
-    const direct = publisherByName.get(key);
-    if (direct) return direct;
-    const stripped = stripPublisherSuffix(key);
-    if (stripped && stripped !== key) {
-      const hit = publisherByName.get(stripped);
-      if (hit) return hit;
-    }
-    if (key.length >= 4) {
-      for (const [name, id] of publisherByName) {
-        if (name.length >= 4 && (name.includes(key) || key.includes(name))) return id;
-      }
-    }
-  }
-  return null;
+  return matchPublisherName(value, publisherByName);
 }
 
 // Filter entities to mystery/detective core domain, including NDL catalog
@@ -141,6 +156,12 @@ const entityRows = srcDb
         FROM entity_links el
         JOIN facts af ON af.object_ref = el.source_id
         WHERE el.target_id = e.id
+          AND af.predicate IN ('author', 'aozora_role')
+        UNION ALL
+        SELECT 1
+        FROM entities se
+        JOIN facts af ON af.object_ref = se.id
+        WHERE e.id = 'wd:' || se.qid
           AND af.predicate IN ('author', 'aozora_role')
       ) THEN 'author'
       ELSE e.type
@@ -166,6 +187,12 @@ const entityRows = srcDb
           JOIN facts af ON af.object_ref = el.source_id
           WHERE el.target_id = e.id
             AND af.predicate IN ('author', 'aozora_role')
+          UNION ALL
+          SELECT 1
+          FROM entities se
+          JOIN facts af ON af.object_ref = se.id
+          WHERE e.id = 'wd:' || se.qid
+            AND af.predicate IN ('author', 'aozora_role')
         )
       )
     )
@@ -190,6 +217,41 @@ const entityMap = new Map<string, any>();
 for (const e of entityRows) {
   entityMap.set(e.id, e);
 }
+
+const publisherCandidates = entityRows
+  .filter((entity) => entity.type === 'publisher')
+  .map((entity) => {
+    const names = cleanNames(entity.names_json);
+    return {
+      id: entity.id,
+      source: entity.source,
+      labels: [
+        ...Object.values(names.labels),
+        ...Object.values(names.aliases).flatMap((aliases) => aliases ?? []),
+      ],
+    };
+  });
+const authorCandidates = entityRows
+  .filter((entity) => entity.type === 'author')
+  .map((entity) => {
+    const names = cleanNames(entity.names_json);
+    return {
+      id: entity.id,
+      source: entity.source,
+      labels: [
+        ...Object.values(names.labels),
+        ...Object.values(names.aliases).flatMap((aliases) => aliases ?? []),
+      ],
+    };
+  });
+const authorLinks = buildUniqueWikidataLabelLinks(authorCandidates);
+for (const [source, target] of authorLinks) {
+  if (!linkMap.has(source)) linkMap.set(source, target);
+}
+console.log(`✓ Added ${authorLinks.size} unique author label links`);
+const publisherLinks = buildPublisherLinks(publisherCandidates);
+for (const [source, target] of publisherLinks) linkMap.set(source, target);
+console.log(`✓ Aligned ${publisherLinks.size} duplicate publisher entities`);
 
 // 2. Insert Entities and Search Index
 console.log('💾 Inserting entities and search index into D1 SQLite...');
@@ -339,21 +401,22 @@ const insertFact = db.prepare(`
 const validFacts: any[] = [];
 const outEdges = new Map<string, { predicate: string; target: string }[]>();
 const inEdges = new Map<string, { predicate: string; source: string }[]>();
+const authorsByWork = new Map<string, string[]>();
 
 // Publisher entity-ization: index publisher entity names, then rewrite
 // publisher_name string facts into publisher edges when a match exists.
-const publisherByName = new Map<string, string>();
+const publisherByName = buildPublisherNameIndex(publisherCandidates, publisherLinks);
 for (const e of entityMap.values()) {
   if (e.type !== 'publisher') continue;
   const cleaned = cleanNames(e.names_json);
   for (const v of Object.values(cleaned.labels)) {
-    const key = normPublisherName(v);
+    const key = normalizePublisherName(v);
     if (key && !publisherByName.has(key)) publisherByName.set(key, e.id);
   }
   for (const arr of Object.values(cleaned.aliases)) {
     if (!Array.isArray(arr)) continue;
     for (const a of arr) {
-      const key = normPublisherName(a);
+      const key = normalizePublisherName(a);
       if (key && !publisherByName.has(key)) publisherByName.set(key, e.id);
     }
   }
@@ -361,6 +424,15 @@ for (const e of entityMap.values()) {
 let publisherMatched = 0;
 let publisherUnmatched = 0;
 let publisherSynthesized = 0;
+const authorNames = new Set<string>();
+for (const entity of entityRows) {
+  if (entity.type !== 'author' && entity.type !== 'person') continue;
+  const names = cleanNames(entity.names_json);
+  for (const label of Object.values(names.labels)) authorNames.add(normalizePublisherName(label));
+  for (const aliases of Object.values(names.aliases)) {
+    for (const alias of aliases ?? []) authorNames.add(normalizePublisherName(alias));
+  }
+}
 
 // Synthesize publisher entities for publisher_name strings that have no
 // existing publisher entity (common aozora/douban publishers like 筑摩書房).
@@ -371,8 +443,8 @@ let publisherSynthesized = 0;
     if (f.predicate !== 'publisher_name' || !f.object_value) continue;
     if (!entityMap.has(resolveLink(f.subject_id))) continue;
     const label = String(f.object_value).trim();
-    if (!label) continue;
-    const key = normPublisherName(label);
+    if (!isPublisherLiteral(label, authorNames) || !maySynthesizePublisher(label)) continue;
+    const key = normalizePublisherName(label);
     if (!key || seenKeys.has(key)) continue;
     seenKeys.add(key);
     if (matchPublisher(label)) continue;
@@ -396,7 +468,7 @@ let publisherSynthesized = 0;
         );
         insertSearch.run(id, 'publisher', null, null, label, null);
         insertSearchFts.run(id, label);
-        publisherByName.set(normPublisherName(label), id);
+        publisherByName.set(normalizePublisherName(label), id);
         entityMap.set(id, {
           id,
           qid: null,
@@ -415,23 +487,25 @@ let publisherSynthesized = 0;
   }
 }
 
-const rewrittenFacts = factsRows.map((sourceFact) => {
+const rewrittenFacts = factsRows.flatMap((sourceFact) => {
   const f = { ...sourceFact };
   let obj = f.object_ref ? resolveLink(f.object_ref) : f.object_ref;
   // Rewrite publisher_name string facts into publisher entity edges
   if (f.predicate === 'publisher_name' && f.object_value) {
-    const pubId = matchPublisher(f.object_value);
+    const pubId = isPublisherLiteral(String(f.object_value), authorNames)
+      ? matchPublisher(f.object_value)
+      : null;
     if (pubId && entityMap.has(pubId)) {
       f.predicate = 'publisher';
       f.object_value = null;
       obj = pubId;
       publisherMatched += 1;
     } else {
-      obj = '';
       publisherUnmatched += 1;
+      return [];
     }
   }
-  return { ...f, object_ref: obj };
+  return [{ ...f, object_ref: obj }];
 });
 
 const canonicalFacts = aggregateFacts(rewrittenFacts, resolveLink);
@@ -460,6 +534,12 @@ db.transaction(() => {
         inns.push({ predicate: f.predicate, source: sub });
         inEdges.set(obj, inns);
       }
+
+      if ((f.predicate === 'author' || f.predicate === 'P50') && obj) {
+        const authors = authorsByWork.get(sub) || [];
+        authors.push(obj);
+        authorsByWork.set(sub, authors);
+      }
     }
   }
 })();
@@ -475,13 +555,7 @@ const workGroups = buildWorkGroups(
     .map((entity) => ({
       id: entity.id,
       names_json: entity.names_json,
-      author_ids: validFacts
-        .filter(
-          (fact) =>
-            fact.subject_id === entity.id &&
-            (fact.predicate === 'author' || fact.predicate === 'P50'),
-        )
-        .map((fact) => fact.object_ref),
+      author_ids: authorsByWork.get(entity.id) || [],
     })),
 );
 const workGroupByMember = new Map<string, string>();
@@ -1091,5 +1165,8 @@ db.transaction(() => {
     );
   }
 })();
+
+console.log('🗂️ Rebuilding query indexes...');
+for (const statement of deferredIndexes) db.run(statement);
 
 console.log('✅ Finished generating high-quality omm-d1.sqlite!');
