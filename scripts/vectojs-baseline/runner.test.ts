@@ -72,6 +72,7 @@ test('fails a full capture when comparison outcomes fail', async () => {
   await expect(runBaseline({ mode: 'capture', repetitions: 5 }, fake.dependencies)).rejects.toThrow(
     'Baseline comparison failed: tick-p95',
   );
+  expect(fake.calls).toContain('write-report');
 });
 
 test('full capture alternates paired browser and arm order across five repetitions', async () => {

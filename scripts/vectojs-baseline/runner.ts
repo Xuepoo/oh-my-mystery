@@ -146,11 +146,13 @@ export async function runBaseline(
     if (mode.repetitions === 5) {
       report = dependencies.validateReport(await dependencies.compareReport(report));
       const failures = comparisonFailures(report);
+      await dependencies.writeReport(report, input);
       if (failures.length > 0) {
         throw new Error(`Baseline comparison failed: ${failures.join(', ')}`);
       }
+    } else {
+      await dependencies.writeReport(report, input);
     }
-    await dependencies.writeReport(report, input);
   } catch (error) {
     failure = asError(error);
   } finally {
