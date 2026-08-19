@@ -144,30 +144,59 @@ export async function waitForStablePredicate(
 export async function waitForApplicationReady(
   page: Page | ReadinessPage,
   rootEntityId: string,
-  timeout = 5000,
+  timeout = 10000,
 ): Promise<void> {
   await page.evaluate(async () => document.fonts.ready);
-  await page.waitForFunction(
-    (rootId: string) => {
+  try {
+    await page.waitForFunction(
+      (rootId: string) => {
+        const app = (
+          window as unknown as {
+            __OMM_APP__?: {
+              instrumentation?: {
+                ready: boolean;
+                nodeCenters: readonly { id: string }[];
+              };
+            };
+          }
+        ).__OMM_APP__;
+        return Boolean(
+          app?.instrumentation?.ready &&
+          app.instrumentation.nodeCenters.some(({ id }) => id === rootId),
+        );
+      },
+      rootEntityId,
+      { timeout },
+    );
+    await waitForStablePredicate(page, 'animationFree', timeout);
+  } catch (error) {
+    const state = await page.evaluate((rootId) => {
       const app = (
         window as unknown as {
           __OMM_APP__?: {
             instrumentation?: {
-              ready: boolean;
-              nodeCenters: readonly { id: string }[];
+              ready?: boolean;
+              animationFree?: boolean;
+              nodeCenters?: readonly { id: string }[];
+              graph?: unknown;
             };
           };
         }
       ).__OMM_APP__;
-      return Boolean(
-        app?.instrumentation?.ready &&
-        app.instrumentation.nodeCenters.some(({ id }) => id === rootId),
-      );
-    },
-    rootEntityId,
-    { timeout },
-  );
-  await waitForStablePredicate(page, 'animationFree', timeout);
+      return {
+        ready: app?.instrumentation?.ready,
+        animationFree: app?.instrumentation?.animationFree,
+        hasRoot: app?.instrumentation?.nodeCenters?.some(({ id }) => id === rootId),
+        nodeCount: app?.instrumentation?.nodeCenters?.length,
+        graph: app?.instrumentation?.graph,
+        url: location.href,
+      };
+    }, rootEntityId);
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; readiness=${JSON.stringify(state)}`,
+      { cause: error },
+    );
+  }
 }
 
 export interface ObservedViewport {
