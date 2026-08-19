@@ -42,8 +42,12 @@ test('constructs isolated baseline commands and a minimal environment', () => {
     },
   });
 
-  expect(plan.root).toBe('/tmp/opencode/omm-vectojs-run-17/baseline/worktree');
-  expect(plan.cacheDir).toBe('/tmp/opencode/omm-vectojs-run-17/baseline/bun-cache');
+  expect(plan.root).toBe(
+    '/repo/candidate/tmp/vectojs-baseline/runs/omm-vectojs-run-17/baseline/worktree',
+  );
+  expect(plan.cacheDir).toBe(
+    '/repo/candidate/tmp/vectojs-baseline/runs/omm-vectojs-run-17/baseline/bun-cache',
+  );
   expect(plan.createWorktree?.argv).toEqual([
     'git',
     'worktree',
@@ -62,7 +66,11 @@ test('constructs isolated baseline commands and a minimal environment', () => {
     BUN_INSTALL_CACHE_DIR: plan.cacheDir,
   });
   expect(plan.physicsBundle.root).toBe(plan.root);
-  expect(plan.physicsBundle.outputDir.startsWith('/tmp/opencode/omm-vectojs-run-17/')).toBeTrue();
+  expect(
+    plan.physicsBundle.outputDir.startsWith(
+      '/repo/candidate/tmp/vectojs-baseline/runs/omm-vectojs-run-17/',
+    ),
+  ).toBeTrue();
   expect(() =>
     buildArmPlan({
       arm: 'candidate',
@@ -83,7 +91,9 @@ test('constructs the candidate as a detached isolated worktree', () => {
     environment: {},
   });
 
-  expect(plan.root).toBe('/tmp/opencode/omm-vectojs-run-17/candidate/worktree');
+  expect(plan.root).toBe(
+    '/repo/candidate/tmp/vectojs-baseline/runs/omm-vectojs-run-17/candidate/worktree',
+  );
   expect(plan.root).not.toBe('/repo/candidate');
   expect(plan.createWorktree?.argv).toEqual([
     'git',

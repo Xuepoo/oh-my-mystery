@@ -303,11 +303,21 @@ export async function launchBrowsers(
       let browser = launched.get(request.browser);
       if (!browser) {
         const executablePath = resolveBrowserExecutable(request.browser, browserType);
+        const browserTempRoot = join(
+          (input.prepared.context as PreflightContext).candidateRoot,
+          'tmp',
+          'vectojs-baseline',
+          'browser-tmp',
+        );
+        await mkdir(browserTempRoot, { recursive: true });
         browser = await browserType.launch({
           executablePath,
           headless: false,
           args: headedLaunchArgs(request.browser),
-          env: mergeLaunchEnvironment(process.env, request.browser),
+          env: {
+            TMPDIR: browserTempRoot,
+            ...(mergeLaunchEnvironment(process.env, request.browser) ?? {}),
+          },
         });
         launched.set(request.browser, browser);
         const metadata = await browserExecutableMetadata(request.browser, executablePath, {
@@ -1404,6 +1414,7 @@ async function prepare(
       });
       if (plan.createWorktree) {
         createdPlans.push(plan);
+        await platform.mkdir(dirname(plan.root));
         await platform.command(plan.createWorktree);
       }
       const first = await installAndBuild(platform, plan);

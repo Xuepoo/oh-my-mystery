@@ -61,7 +61,6 @@ export interface RepeatedInstallEquality {
 
 const FULL_COMMIT = /^[0-9a-f]{40}$/i;
 const SAFE_RUN_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
-const TEMP_ROOT = '/tmp/opencode';
 const INHERITED_ENVIRONMENT = [
   'PATH',
   'HOME',
@@ -85,14 +84,20 @@ export function buildArmPlan(options: BuildArmPlanOptions): ArmPlan {
   }
   if (!isAbsolute(options.candidateRoot)) throw new Error('Candidate root must be absolute');
 
-  const temporaryRoot = safeTemporaryPath(`omm-vectojs-${options.runId}`);
-  const armTemporaryRoot = safeTemporaryPath(`omm-vectojs-${options.runId}`, options.arm);
+  const tempRoot = join(resolve(options.candidateRoot), 'tmp', 'vectojs-baseline', 'runs');
+  const temporaryRoot = safeTemporaryPath(tempRoot, `omm-vectojs-${options.runId}`);
+  const armTemporaryRoot = safeTemporaryPath(tempRoot, `omm-vectojs-${options.runId}`, options.arm);
   const root =
     options.arm === 'baseline'
-      ? safeTemporaryPath(`omm-vectojs-${options.runId}`, 'baseline', 'worktree')
-      : safeTemporaryPath(`omm-vectojs-${options.runId}`, 'candidate', 'worktree');
-  const cacheDir = safeTemporaryPath(`omm-vectojs-${options.runId}`, options.arm, 'bun-cache');
-  const env = isolatedBunEnvironment(options.environment, cacheDir);
+      ? safeTemporaryPath(tempRoot, `omm-vectojs-${options.runId}`, 'baseline', 'worktree')
+      : safeTemporaryPath(tempRoot, `omm-vectojs-${options.runId}`, 'candidate', 'worktree');
+  const cacheDir = safeTemporaryPath(
+    tempRoot,
+    `omm-vectojs-${options.runId}`,
+    options.arm,
+    'bun-cache',
+  );
+  const env = isolatedBunEnvironment(options.environment, cacheDir, tempRoot);
   const command = (argv: string[]): CommandSpec => ({ argv, cwd: root, env: { ...env } });
   const baselineSourceRoot = resolve(options.baselineSourceRoot ?? options.candidateRoot);
 
@@ -114,7 +119,7 @@ export function buildArmPlan(options: BuildArmPlanOptions): ArmPlan {
       root,
       entryPoint:
         options.physicsEntryPoint ??
-        safeTemporaryPath(`omm-vectojs-${options.runId}`, 'runner', 'physics-entry.ts'),
+        safeTemporaryPath(tempRoot, `omm-vectojs-${options.runId}`, 'runner', 'physics-entry.ts'),
       outputDir: join(armTemporaryRoot, 'physics-bundle'),
       resolvePackage: '@vectojs/graph-layout',
       forbiddenImportRoot: join(root, 'apps'),
@@ -125,10 +130,11 @@ export function buildArmPlan(options: BuildArmPlanOptions): ArmPlan {
 export function isolatedBunEnvironment(
   environment: Record<string, string | undefined>,
   cacheDir: string,
+  temporaryRoot: string,
 ): Record<string, string> {
   return {
     ...inheritedEnvironment(environment),
-    BUN_INSTALL_CACHE_DIR: assertSafeTemporaryPath(cacheDir),
+    BUN_INSTALL_CACHE_DIR: assertSafeTemporaryPath(cacheDir, temporaryRoot),
   };
 }
 
@@ -256,16 +262,17 @@ export function assertRepeatedInstallEqual(
   return { first, second, equal: true };
 }
 
-export function assertSafeTemporaryPath(path: string): string {
+export function assertSafeTemporaryPath(path: string, temporaryRoot: string): string {
+  const root = resolve(temporaryRoot);
   const absolute = resolve(path);
-  if (absolute === TEMP_ROOT || !absolute.startsWith(`${TEMP_ROOT}${sep}`)) {
-    throw new Error(`Path must be a child of ${TEMP_ROOT}: ${path}`);
+  if (absolute === root || !absolute.startsWith(`${root}${sep}`)) {
+    throw new Error(`Path must be a child of ${root}: ${path}`);
   }
   return absolute;
 }
 
-function safeTemporaryPath(...parts: string[]): string {
-  return assertSafeTemporaryPath(join(TEMP_ROOT, ...parts));
+function safeTemporaryPath(temporaryRoot: string, ...parts: string[]): string {
+  return assertSafeTemporaryPath(join(temporaryRoot, ...parts), temporaryRoot);
 }
 
 function inheritedEnvironment(

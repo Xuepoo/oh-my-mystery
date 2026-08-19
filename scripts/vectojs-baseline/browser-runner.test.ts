@@ -47,8 +47,8 @@ describe('browser capture adapter', () => {
     expect(
       platform.commands.filter((command) => command.argv.join(' ') === 'bun run build'),
     ).toHaveLength(4);
-    expect(prepared.arms?.baseline?.plan?.root).toContain('/tmp/opencode/');
-    expect(prepared.arms?.candidate?.plan?.root).toContain('/tmp/opencode/');
+    expect(prepared.arms?.baseline?.plan?.root).toContain('/repo/tmp/vectojs-baseline/runs/');
+    expect(prepared.arms?.candidate?.plan?.root).toContain('/repo/tmp/vectojs-baseline/runs/');
   });
 
   test('snapshots direct workspace VectoJS registry packages', () => {
@@ -115,7 +115,7 @@ describe('browser capture adapter', () => {
           'worktree',
           'remove',
           '--force',
-          '/tmp/opencode/omm-vectojs-capture-2026-08-17T12-00-00.000Z/candidate/worktree',
+          '/repo/tmp/vectojs-baseline/runs/omm-vectojs-capture-2026-08-17T12-00-00.000Z/candidate/worktree',
         ],
         cwd: '/repo',
       }),
@@ -125,13 +125,13 @@ describe('browser capture adapter', () => {
           'worktree',
           'remove',
           '--force',
-          '/tmp/opencode/omm-vectojs-capture-2026-08-17T12-00-00.000Z/baseline/worktree',
+          '/repo/tmp/vectojs-baseline/runs/omm-vectojs-capture-2026-08-17T12-00-00.000Z/baseline/worktree',
         ],
         cwd: '/repo',
       }),
     ]);
     expect(platform.removed).toContain(
-      '/tmp/opencode/omm-vectojs-capture-2026-08-17T12-00-00.000Z',
+      '/repo/tmp/vectojs-baseline/runs/omm-vectojs-capture-2026-08-17T12-00-00.000Z',
     );
   });
 

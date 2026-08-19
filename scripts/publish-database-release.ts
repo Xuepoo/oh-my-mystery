@@ -17,7 +17,7 @@ const sourceRevision = execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
 }).trim();
 const generatedAt = new Date().toISOString();
 const version = `${generatedAt.slice(0, 19).replaceAll(/[-:T]/g, '')}-${sourceRevision}`;
-const tmpDir = join('/tmp', `omm-release-${version}`);
+const tmpDir = join(import.meta.dir, '../tmp/database-release', version);
 const compressed = join(tmpDir, 'omm.sqlite.zst');
 
 function run(command: string, args: string[], options?: { stdio?: 'inherit' | 'pipe' }): string {

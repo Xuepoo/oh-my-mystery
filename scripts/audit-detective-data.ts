@@ -4,6 +4,7 @@ import {
   copyFileSync,
   existsSync,
   linkSync,
+  mkdirSync,
   mkdtempSync,
   rmSync,
   statSync,
@@ -11,7 +12,6 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
 import { ZH_T2S_MAP } from './data/zh-t2s-map';
 
 const DEFAULT_DB = resolve(import.meta.dir, '../../mystery-clawer/data/mystery.db');
@@ -158,7 +158,9 @@ export function createSnapshot(
     throw new Error(`SQLite database not found: ${source}`);
   }
   const before = sourceState(source);
-  const directory = mkdtempSync(join(tmpdir(), 'omm-detective-audit-'));
+  const snapshotRoot = join(import.meta.dir, '../tmp/detective-audit');
+  mkdirSync(snapshotRoot, { recursive: true });
+  const directory = mkdtempSync(join(snapshotRoot, 'snapshot-'));
   const snapshot = join(directory, 'snapshot.sqlite');
   try {
     copy(source, snapshot, constants.COPYFILE_FICLONE);
