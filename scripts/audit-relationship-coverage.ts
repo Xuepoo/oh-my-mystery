@@ -1,7 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
 
-const sourcePath = join(import.meta.dir, '../../mystery-clawer/data/mystery.db');
+const sourcePath =
+  process.env.OMM_SOURCE_DB || join(import.meta.dir, '../../mystery-clawer/data/mystery.db');
 const d1Path = join(import.meta.dir, '../data/omm-d1.sqlite');
 const source = new Database(sourcePath, { readonly: true });
 const d1 = new Database(d1Path, { readonly: true });
