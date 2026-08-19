@@ -310,24 +310,27 @@ export async function launchBrowsers(
           'browser-tmp',
         );
         await mkdir(browserTempRoot, { recursive: true });
-        const shortBrowserTempRoot = `/proc/self/cwd/tmp/vectojs-baseline/browser-tmp/${request.browser}`;
-        browser = await browserType.launch({
-          executablePath,
-          headless: false,
-          args:
-            request.browser === 'chrome'
-              ? [...headedLaunchArgs(request.browser), `--user-data-dir=${shortBrowserTempRoot}`]
-              : headedLaunchArgs(request.browser),
-          env: {
-            ...Object.fromEntries(
-              Object.entries(process.env).filter(
-                (entry): entry is [string, string] => typeof entry[1] === 'string',
+        const previousTmpdir = process.env.TMPDIR;
+        process.env.TMPDIR = '/proc/self/cwd/tmp/vectojs-baseline/browser-tmp';
+        try {
+          browser = await browserType.launch({
+            executablePath,
+            headless: false,
+            args: headedLaunchArgs(request.browser),
+            env: {
+              ...Object.fromEntries(
+                Object.entries(process.env).filter(
+                  (entry): entry is [string, string] => typeof entry[1] === 'string',
+                ),
               ),
-            ),
-            TMPDIR: '/proc/self/cwd/tmp/vectojs-baseline/browser-tmp',
-            ...(mergeLaunchEnvironment(process.env, request.browser) ?? {}),
-          },
-        });
+              TMPDIR: '/proc/self/cwd/tmp/vectojs-baseline/browser-tmp',
+              ...(mergeLaunchEnvironment(process.env, request.browser) ?? {}),
+            },
+          });
+        } finally {
+          if (previousTmpdir === undefined) delete process.env.TMPDIR;
+          else process.env.TMPDIR = previousTmpdir;
+        }
         launched.set(request.browser, browser);
         const metadata = await browserExecutableMetadata(request.browser, executablePath, {
           readFile: dependencies.readExecutable,
