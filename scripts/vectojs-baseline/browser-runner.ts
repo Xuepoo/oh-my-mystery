@@ -86,7 +86,7 @@ import { graphFixtureDirectory, graphSpecs } from './generate-graphs';
 import type { PhysicsBrowserRequest, PhysicsBrowserResult } from './physics-browser';
 
 export const BASELINE_REVISION = 'ba80218944e424419c065ab0b0bbe4c3ed05580c';
-const IDLE_WAIT_TIMEOUT_MS = 30_000;
+const IDLE_WAIT_TIMEOUT_MS = 45_000;
 
 export interface SnapshotHash {
   sha256: string;
@@ -957,21 +957,7 @@ export async function executeScenarioStep(
                 };
               }
             ).__OMM_APP__?.instrumentation;
-            return instrumentation?.animationFree === true;
-          },
-          undefined,
-          { timeout: IDLE_WAIT_TIMEOUT_MS },
-        );
-        await page.waitForFunction(
-          () => {
-            const instrumentation = (
-              window as unknown as {
-                __OMM_APP__?: {
-                  instrumentation?: { animationFree: boolean; sceneAlive: boolean };
-                };
-              }
-            ).__OMM_APP__?.instrumentation;
-            return instrumentation?.sceneAlive === false;
+            return instrumentation?.animationFree === true && instrumentation.sceneAlive === false;
           },
           undefined,
           { timeout: IDLE_WAIT_TIMEOUT_MS },

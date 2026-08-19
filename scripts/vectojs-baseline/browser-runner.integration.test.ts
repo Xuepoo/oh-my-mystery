@@ -74,6 +74,27 @@ describe('browser runner integration', () => {
       'Search results timed out: {"activeTag":"INPUT","inputValue":"江户川乱步","query":"江户川乱步","resultCount":0}',
     );
   });
+
+  test('waits for animation-free scene sleep as one atomic idle state', async () => {
+    const waits: unknown[][] = [];
+    const page = {
+      waitForFunction: async (...args: unknown[]) => {
+        waits.push(args);
+      },
+    } as unknown as Page;
+
+    await executeScenarioStep('await-idle', page, {
+      previewUrl: 'http://candidate.test',
+      fixture: fixture(),
+      viewport: { width: 1280, height: 800, dpr: 1, mobile: false },
+      runId: 'candidate-firefox-3',
+      scenarioId: 'desktop-idle',
+      browser: 'firefox',
+    });
+
+    expect(waits).toHaveLength(1);
+    expect(waits[0]?.[2]).toEqual({ timeout: 45_000 });
+  });
 });
 
 function fixture(): FixtureManifest {
