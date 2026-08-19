@@ -42,7 +42,7 @@ test('starts an arm-local preview, waits for readiness, and cleans up once', asy
 
   expect(preview.url).toBe('http://127.0.0.1:4173');
   expect(events[0]).toBe(
-    'bun run --filter @omm/web preview -- --host 127.0.0.1 --port 4173@/tmp/opencode/omm-vectojs-run/baseline/worktree',
+    '/tmp/opencode/omm-vectojs-run/baseline/worktree/apps/web/node_modules/.bin/vite preview --host 127.0.0.1 --port 4173@/tmp/opencode/omm-vectojs-run/baseline/worktree/apps/web',
   );
   await preview.stop();
   await preview.stop();

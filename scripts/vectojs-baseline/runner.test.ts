@@ -66,6 +66,14 @@ test('diagnostic captures only the candidate once in Chrome then Firefox', async
   ]);
 });
 
+test('fails a full capture when comparison outcomes fail', async () => {
+  const fake = fakeDependencies({ comparison: [{ status: 'fail', metricId: 'tick-p95' }] });
+
+  await expect(runBaseline({ mode: 'capture', repetitions: 5 }, fake.dependencies)).rejects.toThrow(
+    'Baseline comparison failed: tick-p95',
+  );
+});
+
 test('full capture alternates paired browser and arm order across five repetitions', async () => {
   const fake = fakeDependencies();
   await runBaseline({ mode: 'capture', repetitions: 5 }, fake.dependencies);
@@ -111,7 +119,7 @@ test('cleans up browser, previews, and prepared arms after capture failure', asy
   expect(fake.calls).not.toContain('assemble:2');
 });
 
-function fakeDependencies(options: { failCapture?: boolean } = {}): {
+function fakeDependencies(options: { failCapture?: boolean; comparison?: unknown[] } = {}): {
   calls: string[];
   captures: CaptureRequest[];
   dependencies: BaselineRunnerDependencies;
@@ -173,7 +181,7 @@ function fakeDependencies(options: { failCapture?: boolean } = {}): {
       },
       async compareReport(report) {
         calls.push('compare-report');
-        return report;
+        return options.comparison ? { ...report, comparison: options.comparison } : report;
       },
       async writeReport() {
         calls.push('write-report');

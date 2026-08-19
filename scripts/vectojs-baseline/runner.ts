@@ -145,6 +145,10 @@ export async function runBaseline(
     let report = dependencies.validateReport(await dependencies.assembleReport(input));
     if (mode.repetitions === 5) {
       report = dependencies.validateReport(await dependencies.compareReport(report));
+      const failures = comparisonFailures(report);
+      if (failures.length > 0) {
+        throw new Error(`Baseline comparison failed: ${failures.join(', ')}`);
+      }
     }
     await dependencies.writeReport(report, input);
   } catch (error) {
@@ -172,6 +176,20 @@ export async function runBaseline(
   if (cleanupFailures.length > 0) {
     throw new AggregateError(cleanupFailures, 'Baseline cleanup failed');
   }
+}
+
+function comparisonFailures(report: unknown): string[] {
+  if (!report || typeof report !== 'object' || !('comparison' in report)) return [];
+  const comparison = (report as { comparison?: unknown }).comparison;
+  if (!Array.isArray(comparison)) return [];
+  return comparison
+    .filter(
+      (outcome): outcome is { status: string; findingKey?: string; metricId?: string } =>
+        Boolean(outcome) &&
+        typeof outcome === 'object' &&
+        (outcome as { status?: unknown }).status === 'fail',
+    )
+    .map((outcome) => outcome.findingKey || outcome.metricId || 'unknown');
 }
 
 function asError(error: unknown): Error {

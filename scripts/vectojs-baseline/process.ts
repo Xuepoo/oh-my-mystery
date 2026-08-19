@@ -49,18 +49,14 @@ export async function startPreview(
   const url = `http://127.0.0.1:${options.port}`;
   const child = dependencies.spawn({
     argv: [
-      'bun',
-      'run',
-      '--filter',
-      '@omm/web',
+      `${options.root}/apps/web/node_modules/.bin/vite`,
       'preview',
-      '--',
       '--host',
       '127.0.0.1',
       '--port',
       String(options.port),
     ],
-    cwd: options.root,
+    cwd: `${options.root}/apps/web`,
     env: previewEnvironment(options.environment),
   });
   let exitCode: number | undefined;
@@ -139,7 +135,7 @@ const defaultPreviewDependencies: PreviewDependencies = {
   async probe(url) {
     try {
       const response = await fetch(url, { redirect: 'manual' });
-      return response.status >= 200 && response.status < 500;
+      return response.status >= 200 && response.status < 400;
     } catch {
       return false;
     }
