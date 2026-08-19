@@ -325,7 +325,9 @@ export async function launchBrowsers(
         );
         const prepared = input.prepared as PreparedBaseline & PreparedReportData;
         prepared.environments ??= [];
-        prepared.environments.push(buildEnvironment(request.browser, metadata, runtime));
+        if (!prepared.environments.some((environment) => environment.id === request.browser)) {
+          prepared.environments.push(buildEnvironment(request.browser, metadata, runtime));
+        }
       }
       if (!browser) throw new Error(`Unable to launch ${request.browser}`);
 

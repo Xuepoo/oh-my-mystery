@@ -34,7 +34,7 @@ describe('parseBaselineArguments', () => {
   });
 });
 
-test('soak reuses each browser across three candidate captures', async () => {
+test('soak isolates all three candidate repetitions in fresh browser sessions', async () => {
   const fake = fakeDependencies();
   await runBaseline({ mode: 'capture', repetitions: 3 }, fake.dependencies);
 
@@ -47,6 +47,8 @@ test('soak reuses each browser across three candidate captures', async () => {
     { arm: 'candidate', browser: 'firefox', repetition: 3 },
   ]);
   expect(fake.calls).not.toContain('compare-report');
+  expect(fake.calls.filter((call) => call === 'start-browser')).toHaveLength(6);
+  expect(fake.calls.filter((call) => call === 'close-browser')).toHaveLength(6);
 });
 
 test('fixture validation and graph generation do not run capture preflight', async () => {
@@ -75,11 +77,13 @@ test('diagnostic captures only the candidate once in Chrome then Firefox', async
     'start-previews',
     'start-browser',
     'capture:candidate:chrome:1',
+    'close-browser',
+    'start-browser',
     'capture:candidate:firefox:1',
+    'close-browser',
     'assemble:2',
     'validate-report',
     'write-report',
-    'close-browser',
     'stop-previews',
     'cleanup',
   ]);
@@ -120,11 +124,12 @@ test('full capture alternates paired browser and arm order across five repetitio
     { arm: 'baseline', browser: 'firefox', repetition: 5 },
     { arm: 'candidate', browser: 'firefox', repetition: 5 },
   ]);
-  expect(fake.calls.slice(-6)).toEqual([
+  expect(fake.calls.filter((call) => call === 'start-browser')).toHaveLength(20);
+  expect(fake.calls.filter((call) => call === 'close-browser')).toHaveLength(20);
+  expect(fake.calls.slice(-5)).toEqual([
     'compare-report',
     'validate-report',
     'write-report',
-    'close-browser',
     'stop-previews',
     'cleanup',
   ]);

@@ -136,23 +136,25 @@ export async function runBaseline(
   const preflight = await dependencies.preflight(mode);
   let prepared: PreparedBaseline | undefined;
   let previews: RunningPreviews | undefined;
-  let browser: BaselineBrowserSession | undefined;
   let failure: Error | undefined;
   const cleanupFailures: Error[] = [];
 
   try {
     prepared = await dependencies.prepare(preflight);
     previews = await dependencies.startPreviews(prepared);
-    browser = await dependencies.startBrowser({ fixture, prepared, previews });
     const captures: CaptureResult[] = [];
     for (const request of captureOrder(mode.repetitions)) {
+      let browser: BaselineBrowserSession | undefined;
       try {
+        browser = await dependencies.startBrowser({ fixture, prepared, previews });
         captures.push(await browser.capture(request));
       } catch (error) {
         throw new Error(
           `Capture ${request.arm}/${request.browser}/repetition-${request.repetition} failed: ${asError(error).message}`,
           { cause: error },
         );
+      } finally {
+        await browser?.close();
       }
     }
 
@@ -172,7 +174,6 @@ export async function runBaseline(
     failure = asError(error);
   } finally {
     for (const cleanup of [
-      browser && (() => browser.close()),
       previews && (() => dependencies.stopPreviews(previews)),
       prepared && (() => dependencies.cleanup(prepared)),
     ]) {
