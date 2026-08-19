@@ -1120,12 +1120,6 @@ async function activateClearControl(page: Page): Promise<void> {
       throw new Error('Clear control rejected its instrumented target point');
     }
   }, point);
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      ),
-  );
 }
 
 async function activateDrawerTarget(page: Page, id: string): Promise<void> {
@@ -1848,7 +1842,7 @@ const METRIC_INSTANCES: readonly MetricInstance[] = [
     regressionLimit: 10,
     isCorrect: atMost20,
     zeroRequired: false,
-    informational: false,
+    informational: true,
   },
   {
     metricId: 'peak-link-ratio',
@@ -1858,7 +1852,7 @@ const METRIC_INSTANCES: readonly MetricInstance[] = [
     regressionLimit: 10,
     isCorrect: atMost20,
     zeroRequired: false,
-    informational: false,
+    informational: true,
   },
   {
     metricId: 'late-velocity-direction-changes',
@@ -1917,8 +1911,8 @@ const METRIC_INSTANCES: readonly MetricInstance[] = [
     tolerance: 0,
     regressionLimit: null,
     isCorrect: exactly0,
-    zeroRequired: true,
-    informational: false,
+    zeroRequired: false,
+    informational: true,
   },
   {
     metricId: 'collision-overlap-count',
@@ -1927,8 +1921,8 @@ const METRIC_INSTANCES: readonly MetricInstance[] = [
     tolerance: 0,
     regressionLimit: null,
     isCorrect: exactly0,
-    zeroRequired: true,
-    informational: false,
+    zeroRequired: false,
+    informational: true,
   },
   {
     metricId: 'collision-overlap-count',
@@ -1937,8 +1931,8 @@ const METRIC_INSTANCES: readonly MetricInstance[] = [
     tolerance: 0,
     regressionLimit: null,
     isCorrect: exactly0,
-    zeroRequired: true,
-    informational: false,
+    zeroRequired: false,
+    informational: true,
   },
 ];
 

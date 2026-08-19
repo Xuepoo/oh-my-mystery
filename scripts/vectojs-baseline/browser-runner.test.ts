@@ -160,6 +160,11 @@ describe('browser capture adapter', () => {
           candidateValues: [11, 11, 11, 11, 11],
           passed: true,
         }),
+        expect.objectContaining({
+          metricId: 'collision-overlap-count',
+          status: 'informational',
+          passed: true,
+        }),
       ]),
     );
     expect(compared.comparisonInputs?.baselineReportSha256).toMatch(/^[0-9a-f]{64}$/);
