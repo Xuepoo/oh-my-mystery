@@ -32,7 +32,10 @@ export function resolveBrowserExecutable(
 ): string {
   if (browser === 'chrome') return '/usr/bin/google-chrome-stable';
   const playwrightPath = playwrightBrowserType.executablePath();
-  return pathExists(playwrightPath) ? playwrightPath : '/usr/bin/firefox';
+  if (pathExists(playwrightPath)) return playwrightPath;
+  throw new Error(
+    `Playwright Firefox is missing at ${playwrightPath}; run ./node_modules/.bin/playwright install firefox`,
+  );
 }
 
 const HEADED_CHROMIUM_ARGS = ['--ozone-platform=wayland'] as const;

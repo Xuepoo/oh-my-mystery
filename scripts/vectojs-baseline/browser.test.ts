@@ -54,14 +54,16 @@ describe('browser helpers', () => {
     ).toBe('/playwright/firefox');
   });
 
-  test('falls back to the installed Firefox when the Playwright cache is stale', () => {
-    expect(
+  test('rejects a stale Playwright cache instead of launching incompatible system Firefox', () => {
+    expect(() =>
       resolveBrowserExecutable(
         'firefox',
         { executablePath: () => '/missing/firefox' },
         () => false,
       ),
-    ).toBe('/usr/bin/firefox');
+    ).toThrow(
+      'Playwright Firefox is missing at /missing/firefox; run ./node_modules/.bin/playwright install firefox',
+    );
   });
 
   test('configures headed Wayland launch args and environment per engine', () => {
