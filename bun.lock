@@ -40,12 +40,12 @@
       "version": "0.1.0",
       "dependencies": {
         "@omm/shared": "workspace:*",
-        "@vectojs/core": "^1.37.0",
+        "@vectojs/core": "^1.35.3",
         "@vectojs/devtools": "^0.11.1",
         "@vectojs/graph-layout": "^0.2.1",
-        "@vectojs/markdown": "^0.21.0",
+        "@vectojs/markdown": "^0.20.3",
         "@vectojs/styles": "^0.3.2",
-        "@vectojs/ui": "^2.18.0",
+        "@vectojs/ui": "^2.16.7",
       },
       "devDependencies": {
         "typescript": "^7.0.2",
@@ -59,6 +59,9 @@
         "typescript": "^7.0.2",
       },
     },
+  },
+  "overrides": {
+    "@vectojs/graph3d": "^0.4.0",
   },
   "packages": {
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
@@ -461,7 +464,7 @@
 
     "@vectojs/animation": ["@vectojs/animation@0.1.2", "", { "dependencies": { "@vectojs/math": "^0.1.1" } }, "sha512-joNI4TEKumS72yIPokf5cHgtf2dnJKh0YHt1StPYl7bfXUxdcjrimR2l0QPaVKZXWSlLM0Z2Dhv1/Gw41A9rsQ=="],
 
-    "@vectojs/core": ["@vectojs/core@1.37.0", "", { "dependencies": { "@vectojs/animation": "^0.1.2", "@vectojs/layout": "^0.9.3", "@vectojs/math": "^0.1.1", "@vectojs/text": "^0.4.1" } }, "sha512-tcdRye/qtkqVoJxG0BI0fPgmZ4+UJ6+fB3P5E60/DZ1pi2KNnQe9ZZF6DPOvfk/OL3hmaVLzC09FCAPWGekDmw=="],
+    "@vectojs/core": ["@vectojs/core@1.35.3", "", { "dependencies": { "@vectojs/animation": "^0.1.2", "@vectojs/layout": "^0.9.3", "@vectojs/math": "^0.1.1", "@vectojs/text": "^0.4.1" } }, "sha512-2yF5sSyQ1V8LC0YRKknZKlTW4DZIhTME5BbA4e4dcESkPsktUncVBXxx+wr/hpIhSvqSTGPd2Nf90cGvYYKfKg=="],
 
     "@vectojs/devtools": ["@vectojs/devtools@0.11.1", "", { "peerDependencies": { "@vectojs/core": ">=1.0.0 <2.0.0", "@vectojs/ui": ">=1.0.0 <3.0.0" }, "optionalPeers": ["@vectojs/ui"] }, "sha512-F7NEGmSkylQTPOvCkLEEv6qw+cfMOYe3MhMr9D42zPDOQhyVMRR6Z7SWaOt+mMjl/j6oAVqDDNor2Jur4ba0xA=="],
 
@@ -469,7 +472,7 @@
 
     "@vectojs/layout": ["@vectojs/layout@0.9.3", "", { "dependencies": { "@vectojs/text": "^0.4.1" } }, "sha512-xbCV6HtL2BSgp7RmbSyjqX+ryc8+3a1yXd96yLzd05US82fWU/ySSSi8J+MFPyl+8riRo+2fu/cT4cs2uTwy1w=="],
 
-    "@vectojs/markdown": ["@vectojs/markdown@0.21.0", "", { "dependencies": { "@vectojs/tex": "^0.1.1", "marked": "^18.0.7" }, "peerDependencies": { "@vectojs/core": ">=1.34.0 <2.0.0", "@vectojs/ui": ">=2.6.0 <3.0.0" } }, "sha512-oX5SluSD+8Gz7vtxLamNsp4ar98pMO1i8sxPciRVdojUplwWcPKKWAQ7QJRwZtk6E9mVQRow9rEcC3zDw60m3Q=="],
+    "@vectojs/markdown": ["@vectojs/markdown@0.20.3", "", { "dependencies": { "@vectojs/tex": "^0.1.1", "marked": "^18.0.7" }, "peerDependencies": { "@vectojs/core": ">=1.34.0 <2.0.0", "@vectojs/ui": ">=2.6.0 <3.0.0" } }, "sha512-TtfvnqI2aucIC3cU68ISTsUjWSw+XBU+YAwnerN/K9ytKTnEAjCEpe/XPl/9wugKY32AiXxN+FNM+qeba+2tdw=="],
 
     "@vectojs/math": ["@vectojs/math@0.1.1", "", {}, "sha512-zHj+oOVv1ydW5ZBzuakMptsb+qkOsFvY7PXLMm4ZNpB/dJFLyd7EiAzFu3HKJQgq0aq0rYFiExyjhlFVvLqSLw=="],
 
@@ -479,7 +482,7 @@
 
     "@vectojs/text": ["@vectojs/text@0.4.1", "", { "dependencies": { "bidi-js": "^1.0.3" } }, "sha512-255W/3PPylIAeiSQkiDMr9kNEyyjBl4zYa7OA6CwZGErWVgThzzWm6o9N/rWQ22zOHB4jtdfqqjJ5mQ79HSZdQ=="],
 
-    "@vectojs/ui": ["@vectojs/ui@2.18.0", "", { "peerDependencies": { "@vectojs/core": ">=1.25.0 <2.0.0" } }, "sha512-eDYhdb9jFHjJWKJBPKQgQ+fGDGwaeB98Xl8yatEogQbE6iaA8TtwK8EB94nPxqoHOQy24HeInzWaHESDJxhCQQ=="],
+    "@vectojs/ui": ["@vectojs/ui@2.16.7", "", { "peerDependencies": { "@vectojs/core": ">=1.25.0 <2.0.0" } }, "sha512-d86LfuY9XoG87dT9L+K86BrCh3bUTwzp36JylYNJpiEaqINruW4y0Di3t99XcbpvCiUWBDRAoHqSyZz3A8GQ9w=="],
 
     "@vitest/expect": ["@vitest/expect@3.2.7", "", { "dependencies": { "@types/chai": "^5.2.2", "@vitest/spy": "3.2.7", "@vitest/utils": "3.2.7", "chai": "^5.2.0", "tinyrainbow": "^2.0.0" } }, "sha512-E8eBXaKibuvH2pSZErOjdVb5vF4PbKYcrnluBTYxEk1l/VhhwZg1kZQsdtjq+CsF5CFydf2Rdkz7jDHKSisi3w=="],
 
@@ -968,8 +971,6 @@
     "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
 
     "@babel/code-frame/js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
-
-    "@vectojs/styles/@vectojs/core": ["@vectojs/core@1.35.3", "", { "dependencies": { "@vectojs/animation": "^0.1.2", "@vectojs/layout": "^0.9.3", "@vectojs/math": "^0.1.1", "@vectojs/text": "^0.4.1" } }, "sha512-2yF5sSyQ1V8LC0YRKknZKlTW4DZIhTME5BbA4e4dcESkPsktUncVBXxx+wr/hpIhSvqSTGPd2Nf90cGvYYKfKg=="],
 
     "@vitest/mocker/vite": ["vite@6.4.3", "", { "dependencies": { "esbuild": "^0.25.0", "fdir": "^6.4.4", "picomatch": "^4.0.2", "postcss": "^8.5.3", "rollup": "^4.34.9", "tinyglobby": "^0.2.13" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "peerDependencies": { "@types/node": "^18.0.0 || ^20.0.0 || >=22.0.0", "jiti": ">=1.21.0", "less": "*", "lightningcss": "^1.21.0", "sass": "*", "sass-embedded": "*", "stylus": "*", "sugarss": "*", "terser": "^5.16.0", "tsx": "^4.8.1", "yaml": "^2.4.2" }, "optionalPeers": ["@types/node", "jiti", "less", "lightningcss", "sass", "sass-embedded", "stylus", "sugarss", "terser", "tsx", "yaml"], "bin": { "vite": "bin/vite.js" } }, "sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A=="],
 
