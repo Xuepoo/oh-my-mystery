@@ -194,6 +194,8 @@ export async function waitForApplicationReady(
         hasRoot: app?.instrumentation?.nodeCenters?.some(({ id }) => id === rootId),
         nodeCount: app?.instrumentation?.nodeCenters?.length,
         graph: app?.instrumentation?.graph,
+        hasFocus: document.hasFocus(),
+        visibilityState: document.visibilityState,
         url: location.href,
       };
     }, rootEntityId);

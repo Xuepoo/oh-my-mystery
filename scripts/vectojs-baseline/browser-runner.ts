@@ -607,6 +607,7 @@ export async function executeScenarioStep(
   const relatedWork = context.fixture.entities.relatedWork;
   switch (stepId) {
     case 'navigate':
+      await page.bringToFront();
       await page.goto(context.previewUrl, { waitUntil: 'domcontentloaded' });
       await waitForApplicationReady(page, root);
       return;
