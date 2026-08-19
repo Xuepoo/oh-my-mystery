@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import type { Browser, BrowserContextOptions, Page } from 'playwright';
 
@@ -27,10 +28,11 @@ interface BrowserTypeLike {
 export function resolveBrowserExecutable(
   browser: BrowserName,
   playwrightBrowserType: BrowserTypeLike,
+  pathExists: (path: string) => boolean = existsSync,
 ): string {
-  return browser === 'chrome'
-    ? '/usr/bin/google-chrome-stable'
-    : playwrightBrowserType.executablePath();
+  if (browser === 'chrome') return '/usr/bin/google-chrome-stable';
+  const playwrightPath = playwrightBrowserType.executablePath();
+  return pathExists(playwrightPath) ? playwrightPath : '/usr/bin/firefox';
 }
 
 const HEADED_CHROMIUM_ARGS = ['--ozone-platform=wayland'] as const;
