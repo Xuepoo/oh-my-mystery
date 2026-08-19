@@ -9,7 +9,7 @@ import type { OmmBaselineReportV1 } from './report';
 export type BaselineMode =
   | { mode: 'validate-fixtures' }
   | { mode: 'generate-graphs'; check: boolean }
-  | { mode: 'capture'; repetitions: 1 | 5 };
+  | { mode: 'capture'; repetitions: 1 | 3 | 5 };
 
 export interface ValidatedFixture {
   schemaVersion: number;
@@ -91,7 +91,13 @@ export interface BaselineRunnerDependencies {
 }
 
 export function parseBaselineArguments(arguments_: readonly string[]): BaselineMode {
-  const known = new Set(['--validate-fixtures', '--generate-graphs', '--check', '--diagnostic']);
+  const known = new Set([
+    '--validate-fixtures',
+    '--generate-graphs',
+    '--check',
+    '--diagnostic',
+    '--soak',
+  ]);
   const unknown = arguments_.find((argument) => !known.has(argument));
   if (unknown) throw new Error(`Unknown argument: ${unknown}`);
   if (new Set(arguments_).size !== arguments_.length)
@@ -100,14 +106,16 @@ export function parseBaselineArguments(arguments_: readonly string[]): BaselineM
   const validateFixtures = arguments_.includes('--validate-fixtures');
   const generateGraphs = arguments_.includes('--generate-graphs');
   const diagnostic = arguments_.includes('--diagnostic');
-  const selectedModes = Number(validateFixtures) + Number(generateGraphs) + Number(diagnostic);
+  const soak = arguments_.includes('--soak');
+  const selectedModes =
+    Number(validateFixtures) + Number(generateGraphs) + Number(diagnostic) + Number(soak);
   if (selectedModes > 1) throw new Error('Choose exactly one baseline mode');
   if (arguments_.includes('--check') && !generateGraphs) {
     throw new Error('--check requires --generate-graphs');
   }
   if (validateFixtures) return { mode: 'validate-fixtures' };
   if (generateGraphs) return { mode: 'generate-graphs', check: arguments_.includes('--check') };
-  return { mode: 'capture', repetitions: diagnostic ? 1 : 5 };
+  return { mode: 'capture', repetitions: diagnostic ? 1 : soak ? 3 : 5 };
 }
 
 export async function runBaseline(
@@ -198,12 +206,19 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-export function captureOrder(repetitions: 1 | 5): CaptureRequest[] {
+export function captureOrder(repetitions: 1 | 3 | 5): CaptureRequest[] {
   if (repetitions === 1) {
     return [
       { arm: 'candidate', browser: 'chrome', repetition: 1 },
       { arm: 'candidate', browser: 'firefox', repetition: 1 },
     ];
+  }
+
+  if (repetitions === 3) {
+    return Array.from({ length: repetitions }, (_, index) => index + 1).flatMap((repetition) => [
+      { arm: 'candidate' as const, browser: 'chrome' as const, repetition },
+      { arm: 'candidate' as const, browser: 'firefox' as const, repetition },
+    ]);
   }
 
   const requests: CaptureRequest[] = [];

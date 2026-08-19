@@ -45,7 +45,12 @@ async function repositoryDependencies(
     async writeReport(report, input) {
       const directory = join(root, 'tmp', 'vectojs-baseline');
       await mkdir(directory, { recursive: true });
-      const suffix = input.mode.repetitions === 1 ? 'diagnostic' : 'paired';
+      const suffix =
+        input.mode.repetitions === 1
+          ? 'diagnostic'
+          : input.mode.repetitions === 3
+            ? 'soak'
+            : 'paired';
       await writeFile(
         join(directory, `${input.preflight.runId}-${suffix}.json`),
         `${canonicalize(report)}\n`,

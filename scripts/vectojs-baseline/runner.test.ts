@@ -7,7 +7,7 @@ import {
 } from './runner';
 
 describe('parseBaselineArguments', () => {
-  test('selects validation, graph generation, diagnostic, and full modes', () => {
+  test('selects validation, graph generation, diagnostic, soak, and full modes', () => {
     expect(parseBaselineArguments(['--validate-fixtures'])).toEqual({ mode: 'validate-fixtures' });
     expect(parseBaselineArguments(['--generate-graphs'])).toEqual({
       mode: 'generate-graphs',
@@ -18,6 +18,7 @@ describe('parseBaselineArguments', () => {
       check: true,
     });
     expect(parseBaselineArguments(['--diagnostic'])).toEqual({ mode: 'capture', repetitions: 1 });
+    expect(parseBaselineArguments(['--soak'])).toEqual({ mode: 'capture', repetitions: 3 });
     expect(parseBaselineArguments([])).toEqual({ mode: 'capture', repetitions: 5 });
   });
 
@@ -26,8 +27,26 @@ describe('parseBaselineArguments', () => {
     expect(() => parseBaselineArguments(['--diagnostic', '--validate-fixtures'])).toThrow(
       'Choose exactly one baseline mode',
     );
+    expect(() => parseBaselineArguments(['--diagnostic', '--soak'])).toThrow(
+      'Choose exactly one baseline mode',
+    );
     expect(() => parseBaselineArguments(['--unknown'])).toThrow('Unknown argument');
   });
+});
+
+test('soak reuses each browser across three candidate captures', async () => {
+  const fake = fakeDependencies();
+  await runBaseline({ mode: 'capture', repetitions: 3 }, fake.dependencies);
+
+  expect(fake.captures).toEqual([
+    { arm: 'candidate', browser: 'chrome', repetition: 1 },
+    { arm: 'candidate', browser: 'firefox', repetition: 1 },
+    { arm: 'candidate', browser: 'chrome', repetition: 2 },
+    { arm: 'candidate', browser: 'firefox', repetition: 2 },
+    { arm: 'candidate', browser: 'chrome', repetition: 3 },
+    { arm: 'candidate', browser: 'firefox', repetition: 3 },
+  ]);
+  expect(fake.calls).not.toContain('compare-report');
 });
 
 test('fixture validation and graph generation do not run capture preflight', async () => {
