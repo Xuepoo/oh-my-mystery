@@ -224,6 +224,7 @@ interface BrowserTypeAdapter {
   launch(options: {
     executablePath: string;
     headless: boolean;
+    timeout?: number;
     args?: string[];
     env?: Record<string, string>;
   }): Promise<Browser>;
@@ -317,6 +318,7 @@ export async function launchBrowsers(
             executablePath,
             headless: false,
             args: headedLaunchArgs(request.browser),
+            timeout: 30_000,
             env: {
               ...Object.fromEntries(
                 Object.entries(process.env).filter(
