@@ -84,19 +84,15 @@ export function buildArmPlan(options: BuildArmPlanOptions): ArmPlan {
   }
   if (!isAbsolute(options.candidateRoot)) throw new Error('Candidate root must be absolute');
 
-  const tempRoot = join(resolve(options.candidateRoot), 'tmp', 'vectojs-baseline', 'runs');
-  const temporaryRoot = safeTemporaryPath(tempRoot, `omm-vectojs-${options.runId}`);
-  const armTemporaryRoot = safeTemporaryPath(tempRoot, `omm-vectojs-${options.runId}`, options.arm);
+  const tempRoot = join(resolve(options.candidateRoot), 'tmp', 'vectojs-baseline');
+  const runsRoot = join(tempRoot, 'runs');
+  const temporaryRoot = safeTemporaryPath(runsRoot, `omm-vectojs-${options.runId}`);
+  const armTemporaryRoot = safeTemporaryPath(runsRoot, `omm-vectojs-${options.runId}`, options.arm);
   const root =
     options.arm === 'baseline'
-      ? safeTemporaryPath(tempRoot, `omm-vectojs-${options.runId}`, 'baseline', 'worktree')
-      : safeTemporaryPath(tempRoot, `omm-vectojs-${options.runId}`, 'candidate', 'worktree');
-  const cacheDir = safeTemporaryPath(
-    tempRoot,
-    `omm-vectojs-${options.runId}`,
-    options.arm,
-    'bun-cache',
-  );
+      ? safeTemporaryPath(runsRoot, `omm-vectojs-${options.runId}`, 'baseline', 'worktree')
+      : safeTemporaryPath(runsRoot, `omm-vectojs-${options.runId}`, 'candidate', 'worktree');
+  const cacheDir = safeTemporaryPath(tempRoot, 'bun-cache');
   const env = isolatedBunEnvironment(options.environment, cacheDir, tempRoot);
   const command = (argv: string[]): CommandSpec => ({ argv, cwd: root, env: { ...env } });
   const baselineSourceRoot = resolve(options.baselineSourceRoot ?? options.candidateRoot);
@@ -119,7 +115,7 @@ export function buildArmPlan(options: BuildArmPlanOptions): ArmPlan {
       root,
       entryPoint:
         options.physicsEntryPoint ??
-        safeTemporaryPath(tempRoot, `omm-vectojs-${options.runId}`, 'runner', 'physics-entry.ts'),
+        safeTemporaryPath(runsRoot, `omm-vectojs-${options.runId}`, 'runner', 'physics-entry.ts'),
       outputDir: join(armTemporaryRoot, 'physics-bundle'),
       resolvePackage: '@vectojs/graph-layout',
       forbiddenImportRoot: join(root, 'apps'),

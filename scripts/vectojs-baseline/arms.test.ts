@@ -45,9 +45,7 @@ test('constructs isolated baseline commands and a minimal environment', () => {
   expect(plan.root).toBe(
     '/repo/candidate/tmp/vectojs-baseline/runs/omm-vectojs-run-17/baseline/worktree',
   );
-  expect(plan.cacheDir).toBe(
-    '/repo/candidate/tmp/vectojs-baseline/runs/omm-vectojs-run-17/baseline/bun-cache',
-  );
+  expect(plan.cacheDir).toBe('/repo/candidate/tmp/vectojs-baseline/bun-cache');
   expect(plan.createWorktree?.argv).toEqual([
     'git',
     'worktree',
