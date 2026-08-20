@@ -145,13 +145,12 @@ const defaultPlatform: BrowserRunnerPlatform = {
     const child = Bun.spawn(command.argv, {
       cwd: command.cwd,
       env: command.env,
-      stdout: 'pipe',
+      stdout: 'inherit',
       stderr: 'inherit',
     });
-    const output = await new Response(child.stdout).text();
     const status = await child.exited;
     if (status !== 0) throw new Error(`Command failed (${status}): ${command.argv.join(' ')}`);
-    return output;
+    return '';
   },
   remove: (path) => rm(path, { recursive: true, force: true }),
   mkdir: async (path) => {
