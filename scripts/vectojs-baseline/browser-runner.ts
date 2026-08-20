@@ -369,6 +369,20 @@ export async function launchBrowsers(
               });
               await installFixtureRoutes(page.context(), router);
               await page.addInitScript(() => {
+                const diagnostics = window as unknown as {
+                  __OMM_CAPTURE_DIAGNOSTICS__?: { pageErrors: string[]; consoleErrors: string[] };
+                };
+                diagnostics.__OMM_CAPTURE_DIAGNOSTICS__ = { pageErrors: [], consoleErrors: [] };
+                window.addEventListener('error', (event) => {
+                  diagnostics.__OMM_CAPTURE_DIAGNOSTICS__?.pageErrors.push(
+                    event.error instanceof Error
+                      ? (event.error.stack ?? event.error.message)
+                      : event.message,
+                  );
+                });
+                window.addEventListener('unhandledrejection', (event) => {
+                  diagnostics.__OMM_CAPTURE_DIAGNOSTICS__?.pageErrors.push(String(event.reason));
+                });
                 const writeText = (value: string) => {
                   (window as unknown as { __OMM_COPIED_TEXT__?: string }).__OMM_COPIED_TEXT__ =
                     value;
@@ -386,37 +400,71 @@ export async function launchBrowsers(
                   });
                 }
               });
+              const pageErrors: string[] = [];
+              const consoleErrors: string[] = [];
+              const requestFailures: string[] = [];
+              const onPageError = (error: Error) => pageErrors.push(error.stack ?? error.message);
+              const onConsole = (message: { type(): string; text(): string }) => {
+                if (message.type() === 'error') consoleErrors.push(message.text());
+              };
+              const onRequestFailed = (request: {
+                url(): string;
+                failure(): { errorText?: string } | null;
+              }) => {
+                requestFailures.push(
+                  `${request.url()}: ${request.failure()?.errorText ?? 'unknown'}`,
+                );
+              };
+              page.on('pageerror', onPageError);
+              page.on('console', onConsole);
+              page.on('requestfailed', onRequestFailed);
               let idleAudit: ReturnType<typeof collectIdleAudit> | undefined;
-              interaction.push(
-                ...((await runScenario(scenarioId, page, {
+              try {
+                interaction.push(
+                  ...((await runScenario(scenarioId, page, {
+                    runId,
+                    execute: async (stepId, scenarioPage) => {
+                      const result = await executeScenarioStep(stepId, scenarioPage as Page, {
+                        previewUrl,
+                        fixture: fixture.manifest,
+                        viewport,
+                        runId,
+                        scenarioId,
+                        browser: request.browser,
+                      });
+                      if (result) idleAudit = result;
+                    },
+                  })) as unknown as Record<string, unknown>[]),
+                );
+                router.assertComplete();
+                if (idleAudit) audits.push(idleAudit as unknown as Record<string, unknown>);
+                const geometry = await collectVisibleGeometry(
+                  page,
                   runId,
-                  execute: async (stepId, scenarioPage) => {
-                    const result = await executeScenarioStep(stepId, scenarioPage as Page, {
-                      previewUrl,
-                      fixture: fixture.manifest,
-                      viewport,
-                      runId,
-                      scenarioId,
-                      browser: request.browser,
-                    });
-                    if (result) idleAudit = result;
-                  },
-                })) as unknown as Record<string, unknown>[]),
-              );
-              router.assertComplete();
-              if (idleAudit) audits.push(idleAudit as unknown as Record<string, unknown>);
-              const geometry = await collectVisibleGeometry(
-                page,
-                runId,
-                scenarioId,
-                viewport,
-                fixture.manifest,
-              );
-              layout.push(...(geometry.targets as unknown as Record<string, unknown>[]));
-              audits.push(
-                ...(geometry.overlaps as unknown as Record<string, unknown>[]),
-                ...(geometry.escapes as unknown as Record<string, unknown>[]),
-              );
+                  scenarioId,
+                  viewport,
+                  fixture.manifest,
+                );
+                layout.push(...(geometry.targets as unknown as Record<string, unknown>[]));
+                audits.push(
+                  ...(geometry.overlaps as unknown as Record<string, unknown>[]),
+                  ...(geometry.escapes as unknown as Record<string, unknown>[]),
+                );
+              } catch (error) {
+                const state = await page.evaluate(
+                  () =>
+                    (window as unknown as { __OMM_CAPTURE_DIAGNOSTICS__?: unknown })
+                      .__OMM_CAPTURE_DIAGNOSTICS__,
+                );
+                throw new Error(
+                  `${error instanceof Error ? error.message : String(error)}; browserDiagnostics=${JSON.stringify({ state, pageErrors, consoleErrors, requestFailures })}`,
+                  { cause: error },
+                );
+              } finally {
+                page.off('pageerror', onPageError);
+                page.off('console', onConsole);
+                page.off('requestfailed', onRequestFailed);
+              }
             },
           );
         }
