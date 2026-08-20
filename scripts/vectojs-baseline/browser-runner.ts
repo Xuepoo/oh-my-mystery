@@ -1478,11 +1478,17 @@ async function prepare(
         await platform.command(plan.createWorktree);
       }
       const first = await installAndBuild(platform, plan);
+      console.log(`[baseline] ${arm} first install/build complete`);
       await platform.remove(join(plan.root, 'node_modules'));
+      console.log(`[baseline] ${arm} node_modules removed for repeat install`);
       const second = await installAndBuild(platform, plan);
+      console.log(`[baseline] ${arm} second install/build complete`);
       assertRepeatedInstallEqual(first.install, second.install);
+      console.log(`[baseline] ${arm} repeated install validated`);
       await writePhysicsEntry(platform, plan);
+      console.log(`[baseline] ${arm} physics entry written`);
       const physicsBundle = await platform.bundlePhysics(plan.physicsBundle);
+      console.log(`[baseline] ${arm} physics bundle complete`);
       const artifact: BaselineArtifact = {
         id: arm,
         arm,
