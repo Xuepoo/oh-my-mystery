@@ -1479,7 +1479,6 @@ async function prepare(
       }
       const first = await installAndBuild(platform, plan);
       await platform.remove(join(plan.root, 'node_modules'));
-      await platform.remove(plan.cacheDir);
       const second = await installAndBuild(platform, plan);
       assertRepeatedInstallEqual(first.install, second.install);
       await writePhysicsEntry(platform, plan);

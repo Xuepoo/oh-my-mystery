@@ -47,6 +47,8 @@ describe('browser capture adapter', () => {
     expect(
       platform.commands.filter((command) => command.argv.join(' ') === 'bun run build'),
     ).toHaveLength(4);
+    expect(platform.removed.filter((path) => path.endsWith('/node_modules'))).toHaveLength(2);
+    expect(platform.removed).not.toContain('/repo/tmp/vectojs-baseline/bun-cache');
     expect(prepared.arms?.baseline?.plan?.root).toContain('/repo/tmp/vectojs-baseline/runs/');
     expect(prepared.arms?.candidate?.plan?.root).toContain('/repo/tmp/vectojs-baseline/runs/');
   });
