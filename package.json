@@ -18,7 +18,7 @@
     "check": "oxfmt --check && oxlint --deny-warnings && markdownlint-cli2 '**/*.md'",
     "format": "oxfmt --write",
     "lint": "oxlint --deny-warnings",
-    "test": "bun test",
+    "test": "bun test --path-ignore-patterns='tmp/**'",
     "test:e2e": "bun run scripts/graph-regression-e2e.ts",
     "test:e2e:graph-regression": "bun run scripts/graph-regression-e2e.ts",
     "test:e2e:ui": "bun run scripts/ui-polish-e2e.ts",
