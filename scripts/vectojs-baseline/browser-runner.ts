@@ -145,12 +145,13 @@ const defaultPlatform: BrowserRunnerPlatform = {
     const child = Bun.spawn(command.argv, {
       cwd: command.cwd,
       env: command.env,
-      stdout: 'inherit',
+      stdout: command.captureOutput ? 'pipe' : 'inherit',
       stderr: 'inherit',
     });
+    const output = command.captureOutput ? await new Response(child.stdout).text() : '';
     const status = await child.exited;
     if (status !== 0) throw new Error(`Command failed (${status}): ${command.argv.join(' ')}`);
-    return '';
+    return output;
   },
   remove: (path) => rm(path, { recursive: true, force: true }),
   mkdir: async (path) => {
@@ -1425,12 +1426,12 @@ async function preflight(
   const candidateRoot = platform.cwd();
   const candidateRevision = (
     await platform.command(
-      command(['git', 'rev-parse', 'HEAD'], candidateRoot, platform.environment),
+      command(['git', 'rev-parse', 'HEAD'], candidateRoot, platform.environment, true),
     )
   ).trim();
   const runnerRevision = candidateRevision;
   const status = await platform.command(
-    command(['git', 'status', '--porcelain'], candidateRoot, platform.environment),
+    command(['git', 'status', '--porcelain'], candidateRoot, platform.environment, true),
   );
   const quotable = status.trim().length === 0;
   if (mode.repetitions === 5 && !quotable)
@@ -2446,10 +2447,12 @@ function command(
   argv: string[],
   cwd: string,
   environment: Record<string, string | undefined>,
+  captureOutput = false,
 ): CommandSpec {
   return {
     argv,
     cwd,
+    captureOutput,
     env: Object.fromEntries(
       Object.entries(environment).filter(
         (entry): entry is [string, string] => entry[1] !== undefined,

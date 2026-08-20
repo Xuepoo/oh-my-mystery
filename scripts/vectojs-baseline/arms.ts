@@ -8,6 +8,7 @@ export interface CommandSpec {
   argv: string[];
   cwd: string;
   env: Record<string, string>;
+  captureOutput?: boolean;
 }
 
 export interface PhysicsBundlePlan {
