@@ -291,6 +291,9 @@ export async function launchBrowsers(
 
   return {
     async capture(request) {
+      console.log(
+        `[baseline] capture start: ${request.arm}/${request.browser}/repetition-${request.repetition}`,
+      );
       const previewUrl = input.previews.urls?.[request.arm];
       if (!previewUrl) throw new Error(`Missing ${request.arm} preview URL`);
       const preparedArm = input.prepared.arms?.[request.arm] as
@@ -314,21 +317,27 @@ export async function launchBrowsers(
         const previousTmpdir = process.env.TMPDIR;
         process.env.TMPDIR = '/proc/self/cwd/tmp/vectojs-baseline/browser-tmp';
         try {
-          browser = await browserType.launch({
-            executablePath,
-            headless: false,
-            args: headedLaunchArgs(request.browser),
-            timeout: 30_000,
-            env: {
-              ...Object.fromEntries(
-                Object.entries(process.env).filter(
-                  (entry): entry is [string, string] => typeof entry[1] === 'string',
+          console.log(`[baseline] ${request.arm}/${request.browser} browser launch start`);
+          browser = await withTimeout(
+            browserType.launch({
+              executablePath,
+              headless: false,
+              args: headedLaunchArgs(request.browser),
+              timeout: 30_000,
+              env: {
+                ...Object.fromEntries(
+                  Object.entries(process.env).filter(
+                    (entry): entry is [string, string] => typeof entry[1] === 'string',
+                  ),
                 ),
-              ),
-              TMPDIR: '/proc/self/cwd/tmp/vectojs-baseline/browser-tmp',
-              ...(mergeLaunchEnvironment(process.env, request.browser) ?? {}),
-            },
-          });
+                TMPDIR: '/proc/self/cwd/tmp/vectojs-baseline/browser-tmp',
+                ...(mergeLaunchEnvironment(process.env, request.browser) ?? {}),
+              },
+            }),
+            45_000,
+            `${request.arm}/${request.browser} browser launch`,
+          );
+          console.log(`[baseline] ${request.arm}/${request.browser} browser launch complete`);
         } finally {
           if (previousTmpdir === undefined) delete process.env.TMPDIR;
           else process.env.TMPDIR = previousTmpdir;
@@ -362,116 +371,125 @@ export async function launchBrowsers(
         const mode = viewport.mobile ? 'mobile' : 'desktop';
         for (const scenarioId of scenarioIds(mode)) {
           const runId = captureRunId(request, viewport, scenarioId);
-          await runInNewContext(
-            browser,
-            browserContextOptions(viewport, request.browser),
-            async (page) => {
-              const router = createFixtureRouter(fixture.manifest, fixture.responses, {
-                expectedRouteIds: expectedRouteIds(scenarioId),
-              });
-              await installFixtureRoutes(page.context(), router);
-              await page.addInitScript(() => {
-                const diagnostics = window as unknown as {
-                  __OMM_CAPTURE_DIAGNOSTICS__?: { pageErrors: string[]; consoleErrors: string[] };
+          console.log(`[baseline] scenario start: ${runId}`);
+          await withTimeout(
+            runInNewContext(
+              browser,
+              browserContextOptions(viewport, request.browser),
+              async (page) => {
+                const router = createFixtureRouter(fixture.manifest, fixture.responses, {
+                  expectedRouteIds: expectedRouteIds(scenarioId),
+                });
+                await installFixtureRoutes(page.context(), router);
+                await page.addInitScript(() => {
+                  const diagnostics = window as unknown as {
+                    __OMM_CAPTURE_DIAGNOSTICS__?: { pageErrors: string[]; consoleErrors: string[] };
+                  };
+                  diagnostics.__OMM_CAPTURE_DIAGNOSTICS__ = { pageErrors: [], consoleErrors: [] };
+                  window.addEventListener('error', (event) => {
+                    diagnostics.__OMM_CAPTURE_DIAGNOSTICS__?.pageErrors.push(
+                      event.error instanceof Error
+                        ? (event.error.stack ?? event.error.message)
+                        : event.message,
+                    );
+                  });
+                  window.addEventListener('unhandledrejection', (event) => {
+                    diagnostics.__OMM_CAPTURE_DIAGNOSTICS__?.pageErrors.push(String(event.reason));
+                  });
+                  const writeText = (value: string) => {
+                    (window as unknown as { __OMM_COPIED_TEXT__?: string }).__OMM_COPIED_TEXT__ =
+                      value;
+                    return Promise.resolve();
+                  };
+                  try {
+                    Object.defineProperty(navigator, 'clipboard', {
+                      configurable: true,
+                      value: { writeText },
+                    });
+                  } catch {
+                    Object.defineProperty(navigator.clipboard, 'writeText', {
+                      configurable: true,
+                      value: writeText,
+                    });
+                  }
+                });
+                const pageErrors: string[] = [];
+                const consoleErrors: string[] = [];
+                const requestFailures: string[] = [];
+                const onPageError = (error: Error) => pageErrors.push(error.stack ?? error.message);
+                const onConsole = (message: { type(): string; text(): string }) => {
+                  if (message.type() === 'error') consoleErrors.push(message.text());
                 };
-                diagnostics.__OMM_CAPTURE_DIAGNOSTICS__ = { pageErrors: [], consoleErrors: [] };
-                window.addEventListener('error', (event) => {
-                  diagnostics.__OMM_CAPTURE_DIAGNOSTICS__?.pageErrors.push(
-                    event.error instanceof Error
-                      ? (event.error.stack ?? event.error.message)
-                      : event.message,
+                const onRequestFailed = (request: {
+                  url(): string;
+                  failure(): { errorText?: string } | null;
+                }) => {
+                  requestFailures.push(
+                    `${request.url()}: ${request.failure()?.errorText ?? 'unknown'}`,
                   );
-                });
-                window.addEventListener('unhandledrejection', (event) => {
-                  diagnostics.__OMM_CAPTURE_DIAGNOSTICS__?.pageErrors.push(String(event.reason));
-                });
-                const writeText = (value: string) => {
-                  (window as unknown as { __OMM_COPIED_TEXT__?: string }).__OMM_COPIED_TEXT__ =
-                    value;
-                  return Promise.resolve();
                 };
+                page.on('pageerror', onPageError);
+                page.on('console', onConsole);
+                page.on('requestfailed', onRequestFailed);
+                let idleAudit: ReturnType<typeof collectIdleAudit> | undefined;
                 try {
-                  Object.defineProperty(navigator, 'clipboard', {
-                    configurable: true,
-                    value: { writeText },
-                  });
-                } catch {
-                  Object.defineProperty(navigator.clipboard, 'writeText', {
-                    configurable: true,
-                    value: writeText,
-                  });
-                }
-              });
-              const pageErrors: string[] = [];
-              const consoleErrors: string[] = [];
-              const requestFailures: string[] = [];
-              const onPageError = (error: Error) => pageErrors.push(error.stack ?? error.message);
-              const onConsole = (message: { type(): string; text(): string }) => {
-                if (message.type() === 'error') consoleErrors.push(message.text());
-              };
-              const onRequestFailed = (request: {
-                url(): string;
-                failure(): { errorText?: string } | null;
-              }) => {
-                requestFailures.push(
-                  `${request.url()}: ${request.failure()?.errorText ?? 'unknown'}`,
-                );
-              };
-              page.on('pageerror', onPageError);
-              page.on('console', onConsole);
-              page.on('requestfailed', onRequestFailed);
-              let idleAudit: ReturnType<typeof collectIdleAudit> | undefined;
-              try {
-                interaction.push(
-                  ...((await runScenario(scenarioId, page, {
+                  interaction.push(
+                    ...((await runScenario(scenarioId, page, {
+                      runId,
+                      execute: async (stepId, scenarioPage) => {
+                        const result = await executeScenarioStep(stepId, scenarioPage as Page, {
+                          previewUrl,
+                          fixture: fixture.manifest,
+                          viewport,
+                          runId,
+                          scenarioId,
+                          browser: request.browser,
+                        });
+                        if (result) idleAudit = result;
+                      },
+                    })) as unknown as Record<string, unknown>[]),
+                  );
+                  router.assertComplete();
+                  if (idleAudit) audits.push(idleAudit as unknown as Record<string, unknown>);
+                  const geometry = await collectVisibleGeometry(
+                    page,
                     runId,
-                    execute: async (stepId, scenarioPage) => {
-                      const result = await executeScenarioStep(stepId, scenarioPage as Page, {
-                        previewUrl,
-                        fixture: fixture.manifest,
-                        viewport,
-                        runId,
-                        scenarioId,
-                        browser: request.browser,
-                      });
-                      if (result) idleAudit = result;
-                    },
-                  })) as unknown as Record<string, unknown>[]),
-                );
-                router.assertComplete();
-                if (idleAudit) audits.push(idleAudit as unknown as Record<string, unknown>);
-                const geometry = await collectVisibleGeometry(
-                  page,
-                  runId,
-                  scenarioId,
-                  viewport,
-                  fixture.manifest,
-                );
-                layout.push(...(geometry.targets as unknown as Record<string, unknown>[]));
-                audits.push(
-                  ...(geometry.overlaps as unknown as Record<string, unknown>[]),
-                  ...(geometry.escapes as unknown as Record<string, unknown>[]),
-                );
-              } catch (error) {
-                const state = await page.evaluate(
-                  () =>
-                    (window as unknown as { __OMM_CAPTURE_DIAGNOSTICS__?: unknown })
-                      .__OMM_CAPTURE_DIAGNOSTICS__,
-                );
-                throw new Error(
-                  `${error instanceof Error ? error.message : String(error)}; browserDiagnostics=${JSON.stringify({ state, pageErrors, consoleErrors, requestFailures })}`,
-                  { cause: error },
-                );
-              } finally {
-                page.off('pageerror', onPageError);
-                page.off('console', onConsole);
-                page.off('requestfailed', onRequestFailed);
-              }
-            },
+                    scenarioId,
+                    viewport,
+                    fixture.manifest,
+                  );
+                  layout.push(...(geometry.targets as unknown as Record<string, unknown>[]));
+                  audits.push(
+                    ...(geometry.overlaps as unknown as Record<string, unknown>[]),
+                    ...(geometry.escapes as unknown as Record<string, unknown>[]),
+                  );
+                } catch (error) {
+                  const state = await page.evaluate(
+                    () =>
+                      (window as unknown as { __OMM_CAPTURE_DIAGNOSTICS__?: unknown })
+                        .__OMM_CAPTURE_DIAGNOSTICS__,
+                  );
+                  throw new Error(
+                    `${error instanceof Error ? error.message : String(error)}; browserDiagnostics=${JSON.stringify({ state, pageErrors, consoleErrors, requestFailures })}`,
+                    { cause: error },
+                  );
+                } finally {
+                  page.off('pageerror', onPageError);
+                  page.off('console', onConsole);
+                  page.off('requestfailed', onRequestFailed);
+                }
+              },
+            ),
+            90_000,
+            `scenario ${runId}`,
           );
+          console.log(`[baseline] scenario complete: ${runId}`);
         }
       }
 
+      console.log(
+        `[baseline] physics start: ${request.arm}/${request.browser}/repetition-${request.repetition}`,
+      );
       const physics = await capturePhysics(
         browser,
         preparedArm.physicsBundle.path,
@@ -486,13 +504,16 @@ export async function launchBrowsers(
         timerResolutionMilliseconds: result.timerResolutionMilliseconds,
         metrics: result.metrics,
       }));
+      console.log(
+        `[baseline] capture complete: ${request.arm}/${request.browser}/repetition-${request.repetition}`,
+      );
       return { request, runs, interaction, layout, audits, physics } as unknown as CaptureResult;
     },
     async close() {
       const failures: unknown[] = [];
       for (const browser of launched.values()) {
         try {
-          await browser.close();
+          await withTimeout(browser.close(), 15_000, 'browser cleanup');
         } catch (error) {
           failures.push(error);
         }
@@ -501,6 +522,27 @@ export async function launchBrowsers(
       if (failures.length > 0) throw new AggregateError(failures, 'Browser cleanup failed');
     },
   };
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMilliseconds: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${timeoutMilliseconds}ms`)),
+          timeoutMilliseconds,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function readFixture(value: unknown): {
