@@ -750,25 +750,28 @@ export async function executeScenarioStep(
   switch (stepId) {
     case 'navigate': {
       await page.bringToFront();
-      const waitForReady = async (reload: boolean): Promise<void> => {
-        if (reload) await page.reload({ waitUntil: 'domcontentloaded' });
-        else await page.goto(context.previewUrl, { waitUntil: 'domcontentloaded' });
-        await waitForApplicationReady(page, root, 10000, !context.scenarioId.endsWith('-idle'), 2);
-      };
-      try {
-        await waitForReady(false);
-      } catch (firstError) {
-        console.log(`[baseline] readiness retry: ${context.runId}/${context.scenarioId}`);
+      const errors: string[] = [];
+      for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
-          await waitForReady(true);
-        } catch (retryError) {
-          throw new Error(
-            `Initial readiness failed: ${firstError instanceof Error ? firstError.message : String(firstError)}; retry failed: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
-            { cause: retryError },
+          if (attempt === 0) await page.goto(context.previewUrl, { waitUntil: 'domcontentloaded' });
+          else await page.reload({ waitUntil: 'domcontentloaded' });
+          await waitForApplicationReady(
+            page,
+            root,
+            10000,
+            !context.scenarioId.endsWith('-idle'),
+            2,
           );
+          return;
+        } catch (error) {
+          errors.push(error instanceof Error ? error.message : String(error));
+          if (attempt < 2)
+            console.log(
+              `[baseline] readiness retry ${attempt + 1}/2: ${context.runId}/${context.scenarioId}`,
+            );
         }
       }
-      return;
+      throw new Error(`Readiness failed after 3 attempts: ${errors.join(' | ')}`);
     }
     case 'assert-root':
       await assertPageState(

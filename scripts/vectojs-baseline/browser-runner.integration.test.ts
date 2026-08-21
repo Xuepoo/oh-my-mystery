@@ -123,7 +123,7 @@ describe('browser runner integration', () => {
     });
   });
 
-  test('retries navigation readiness once after an initial startup timeout', async () => {
+  test('retries navigation readiness twice after startup timeouts', async () => {
     const calls: string[] = [];
     let readinessAttempts = 0;
     const page = {
@@ -133,7 +133,7 @@ describe('browser runner integration', () => {
       evaluate: async () => calls.push('evaluate'),
       waitForFunction: async () => {
         readinessAttempts += 1;
-        if (readinessAttempts === 1) throw new Error('startup timeout');
+        if (readinessAttempts < 3) throw new Error('startup timeout');
       },
     } as unknown as Page;
 
@@ -147,7 +147,7 @@ describe('browser runner integration', () => {
     });
 
     expect(calls).toContain('reload');
-    expect(readinessAttempts).toBe(3);
+    expect(readinessAttempts).toBe(4);
   });
 });
 
