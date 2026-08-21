@@ -110,7 +110,7 @@ describe('browser helpers', () => {
       },
       'wd:Q347412',
     );
-    expect(calls).toEqual(['fonts', 'wd:Q347412', 'animationFree']);
+    expect(calls).toEqual(['fonts', '[object Object]', 'animationFree']);
   });
 
   test('can defer animation-free waiting to an idle scenario assertion', async () => {
@@ -125,7 +125,22 @@ describe('browser helpers', () => {
       10000,
       false,
     );
-    expect(calls).toEqual(['fonts', 'wd:Q347412']);
+    expect(calls).toEqual(['fonts', '[object Object]']);
+  });
+
+  test('waits for the fixture graph links before interaction capture', async () => {
+    const calls: unknown[][] = [];
+    await waitForApplicationReady(
+      {
+        evaluate: async (_fn: unknown, argument?: unknown) => calls.push([argument]),
+        waitForFunction: async (...args: unknown[]) => calls.push(args),
+      },
+      'wd:Q347412',
+      10000,
+      false,
+      2,
+    );
+    expect(calls[1]?.[1]).toEqual({ rootId: 'wd:Q347412', minimumLinks: 2 });
   });
 
   test('uses the bounded two-frame predicate wait', async () => {

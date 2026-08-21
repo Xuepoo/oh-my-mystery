@@ -151,27 +151,30 @@ export async function waitForApplicationReady(
   rootEntityId: string,
   timeout = 10000,
   waitForAnimation = true,
+  minimumLinkCount = 0,
 ): Promise<void> {
   await page.evaluate(async () => document.fonts.ready);
   try {
     await page.waitForFunction(
-      (rootId: string) => {
+      ({ rootId, minimumLinks }: { rootId: string; minimumLinks: number }) => {
         const app = (
           window as unknown as {
             __OMM_APP__?: {
               instrumentation?: {
                 ready: boolean;
                 nodeCenters: readonly { id: string }[];
+                graph?: { linkCount: number };
               };
             };
           }
         ).__OMM_APP__;
         return Boolean(
           app?.instrumentation?.ready &&
-          app.instrumentation.nodeCenters.some(({ id }) => id === rootId),
+          app.instrumentation.nodeCenters.some(({ id }) => id === rootId) &&
+          (app.instrumentation.graph?.linkCount ?? 0) >= minimumLinks,
         );
       },
-      rootEntityId,
+      { rootId: rootEntityId, minimumLinks: minimumLinkCount },
       { timeout },
     );
     if (waitForAnimation) await waitForStablePredicate(page, 'animationFree', timeout);

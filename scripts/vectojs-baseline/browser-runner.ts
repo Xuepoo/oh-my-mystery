@@ -753,7 +753,7 @@ export async function executeScenarioStep(
       const waitForReady = async (reload: boolean): Promise<void> => {
         if (reload) await page.reload({ waitUntil: 'domcontentloaded' });
         else await page.goto(context.previewUrl, { waitUntil: 'domcontentloaded' });
-        await waitForApplicationReady(page, root, 10000, !context.scenarioId.endsWith('-idle'));
+        await waitForApplicationReady(page, root, 10000, !context.scenarioId.endsWith('-idle'), 2);
       };
       try {
         await waitForReady(false);
