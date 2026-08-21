@@ -113,6 +113,21 @@ describe('browser helpers', () => {
     expect(calls).toEqual(['fonts', 'wd:Q347412', 'animationFree']);
   });
 
+  test('can defer animation-free waiting to an idle scenario assertion', async () => {
+    const calls: string[] = [];
+    await waitForApplicationReady(
+      {
+        evaluate: async (_fn: unknown, argument?: unknown) =>
+          calls.push(String(argument ?? 'fonts')),
+        waitForFunction: async (_fn: unknown, argument?: unknown) => calls.push(String(argument)),
+      },
+      'wd:Q347412',
+      10000,
+      false,
+    );
+    expect(calls).toEqual(['fonts', 'wd:Q347412']);
+  });
+
   test('uses the bounded two-frame predicate wait', async () => {
     const calls: unknown[] = [];
     await waitForStablePredicate(

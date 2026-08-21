@@ -745,7 +745,7 @@ export async function executeScenarioStep(
     case 'navigate':
       await page.bringToFront();
       await page.goto(context.previewUrl, { waitUntil: 'domcontentloaded' });
-      await waitForApplicationReady(page, root);
+      await waitForApplicationReady(page, root, 10000, !context.scenarioId.endsWith('-idle'));
       return;
     case 'assert-root':
       await assertPageState(
@@ -1106,6 +1106,11 @@ export async function executeScenarioStep(
                 instrumentation?: {
                   animationFree: boolean;
                   sceneAlive: boolean;
+                  animationDiagnostics?: {
+                    physicsActive: boolean;
+                    cameraAnimating: boolean;
+                    drawerAnimating: boolean;
+                  };
                   graph?: { nodeCount: number };
                 };
               };
@@ -1114,6 +1119,7 @@ export async function executeScenarioStep(
           return {
             animationFree: instrumentation?.animationFree,
             sceneAlive: instrumentation?.sceneAlive,
+            animationDiagnostics: instrumentation?.animationDiagnostics,
             graphNodeCount: instrumentation?.graph?.nodeCount,
           };
         });

@@ -150,6 +150,7 @@ export async function waitForApplicationReady(
   page: Page | ReadinessPage,
   rootEntityId: string,
   timeout = 10000,
+  waitForAnimation = true,
 ): Promise<void> {
   await page.evaluate(async () => document.fonts.ready);
   try {
@@ -173,7 +174,7 @@ export async function waitForApplicationReady(
       rootEntityId,
       { timeout },
     );
-    await waitForStablePredicate(page, 'animationFree', timeout);
+    if (waitForAnimation) await waitForStablePredicate(page, 'animationFree', timeout);
   } catch (error) {
     const state = await page.evaluate((rootId) => {
       const app = (
@@ -182,6 +183,11 @@ export async function waitForApplicationReady(
             instrumentation?: {
               ready?: boolean;
               animationFree?: boolean;
+              animationDiagnostics?: {
+                physicsActive: boolean;
+                cameraAnimating: boolean;
+                drawerAnimating: boolean;
+              };
               nodeCenters?: readonly { id: string }[];
               graph?: unknown;
             };
@@ -191,6 +197,7 @@ export async function waitForApplicationReady(
       return {
         ready: app?.instrumentation?.ready,
         animationFree: app?.instrumentation?.animationFree,
+        animationDiagnostics: app?.instrumentation?.animationDiagnostics,
         hasRoot: app?.instrumentation?.nodeCenters?.some(({ id }) => id === rootId),
         nodeCount: app?.instrumentation?.nodeCenters?.length,
         graph: app?.instrumentation?.graph,

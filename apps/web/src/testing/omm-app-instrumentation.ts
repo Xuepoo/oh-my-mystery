@@ -51,6 +51,18 @@ export class OmmAppInstrumentation {
     );
   }
 
+  get animationDiagnostics(): {
+    physicsActive: boolean;
+    cameraAnimating: boolean;
+    drawerAnimating: boolean;
+  } {
+    return {
+      physicsActive: this.app.viewport.isPhysicsActive(),
+      cameraAnimating: this.app.viewport.isCameraAnimating(),
+      drawerAnimating: this.app.drawer.hasPendingAnimations(),
+    };
+  }
+
   get sceneAlive(): boolean {
     return this.app.isSceneAlive();
   }
