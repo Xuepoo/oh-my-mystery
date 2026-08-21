@@ -462,7 +462,7 @@ export async function launchBrowsers(
                             scenarioId,
                             browser: request.browser,
                           }),
-                          15_000,
+                          stepId === 'navigate' ? 45_000 : 15_000,
                           `step ${runId}/${stepId}`,
                         );
                         if (result) idleAudit = result;
