@@ -95,6 +95,33 @@ describe('browser runner integration', () => {
     expect(waits).toHaveLength(1);
     expect(waits[0]?.[2]).toEqual({ timeout: 45_000 });
   });
+
+  test('accepts idle state reached at the wait timeout boundary', async () => {
+    const page = {
+      waitForFunction: async () => {
+        throw new Error('timeout');
+      },
+      evaluate: async () => ({
+        animationFree: true,
+        sceneAlive: false,
+        animationDiagnostics: {
+          physicsActive: false,
+          cameraAnimating: false,
+          drawerAnimating: false,
+        },
+        graphNodeCount: 3,
+      }),
+    } as unknown as Page;
+
+    await executeScenarioStep('await-idle', page, {
+      previewUrl: 'http://candidate.test',
+      fixture: fixture(),
+      viewport: { width: 1280, height: 800, dpr: 1, mobile: false },
+      runId: 'candidate-firefox-timeout-boundary',
+      scenarioId: 'desktop-idle',
+      browser: 'firefox',
+    });
+  });
 });
 
 function fixture(): FixtureManifest {

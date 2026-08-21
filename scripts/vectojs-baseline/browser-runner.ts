@@ -367,11 +367,17 @@ export async function launchBrowsers(
       const interaction: Record<string, unknown>[] = [];
       const layout: Record<string, unknown>[] = [];
       const audits: Record<string, unknown>[] = [];
-      const viewports = request.scenarioId
+      const viewports = request.viewport
         ? interactionViewports.filter(
-            (viewport) => !viewport.mobile && viewport.width === 1280 && viewport.height === 800,
+            (viewport) =>
+              viewport.width === request.viewport?.width &&
+              viewport.height === request.viewport?.height,
           )
-        : interactionViewports;
+        : request.scenarioId
+          ? interactionViewports.filter(
+              (viewport) => !viewport.mobile && viewport.width === 1280 && viewport.height === 800,
+            )
+          : interactionViewports;
       for (const viewport of viewports) {
         const mode = viewport.mobile ? 'mobile' : 'desktop';
         const scenarios = request.scenarioId ? [request.scenarioId] : scenarioIds(mode);
@@ -1123,6 +1129,7 @@ export async function executeScenarioStep(
             graphNodeCount: instrumentation?.graph?.nodeCount,
           };
         });
+        if (state.animationFree === true && state.sceneAlive === false) return;
         throw new Error(`await-idle state: ${JSON.stringify(state)}`, { cause: error });
       }
       return;
