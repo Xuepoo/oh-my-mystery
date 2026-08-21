@@ -19,6 +19,11 @@ describe('parseBaselineArguments', () => {
     });
     expect(parseBaselineArguments(['--diagnostic'])).toEqual({ mode: 'capture', repetitions: 1 });
     expect(parseBaselineArguments(['--soak'])).toEqual({ mode: 'capture', repetitions: 3 });
+    expect(parseBaselineArguments(['--firefox-idle-probe'])).toEqual({
+      mode: 'capture',
+      repetitions: 1,
+      probe: { arm: 'candidate', browser: 'firefox', scenarioId: 'desktop-idle' },
+    });
     expect(parseBaselineArguments([])).toEqual({ mode: 'capture', repetitions: 5 });
   });
 
@@ -87,6 +92,24 @@ test('diagnostic captures only the candidate once in Chrome then Firefox', async
     'stop-previews',
     'cleanup',
   ]);
+});
+
+test('Firefox idle probe captures only the bounded target request', async () => {
+  const fake = fakeDependencies();
+  await runBaseline(
+    {
+      mode: 'capture',
+      repetitions: 1,
+      probe: { arm: 'candidate', browser: 'firefox', scenarioId: 'desktop-idle' },
+    },
+    fake.dependencies,
+  );
+
+  expect(fake.captures).toEqual([
+    { arm: 'candidate', browser: 'firefox', repetition: 1, scenarioId: 'desktop-idle' },
+  ]);
+  expect(fake.calls.filter((call) => call === 'start-browser')).toHaveLength(1);
+  expect(fake.calls.filter((call) => call === 'close-browser')).toHaveLength(1);
 });
 
 test('fails a full capture when comparison outcomes fail', async () => {

@@ -2,6 +2,7 @@ import type { ArmName, ArmPlan } from './arms';
 import type { BrowserName } from './browser';
 import type { FixtureManifest } from './fixture';
 import type { InteractionResultRecord } from './interactions';
+import type { ScenarioId } from './interactions';
 import type { PhysicsBrowserResult } from './physics-browser';
 import type { PreviewProcess } from './process';
 import type { OmmBaselineReportV1 } from './report';
@@ -9,7 +10,11 @@ import type { OmmBaselineReportV1 } from './report';
 export type BaselineMode =
   | { mode: 'validate-fixtures' }
   | { mode: 'generate-graphs'; check: boolean }
-  | { mode: 'capture'; repetitions: 1 | 3 | 5 };
+  | {
+      mode: 'capture';
+      repetitions: 1 | 3 | 5;
+      probe?: { arm: ArmName; browser: BrowserName; scenarioId: ScenarioId };
+    };
 
 export interface ValidatedFixture {
   schemaVersion: number;
@@ -48,6 +53,7 @@ export interface CaptureRequest {
   arm: ArmName;
   browser: BrowserName;
   repetition: number;
+  scenarioId?: ScenarioId;
 }
 
 export interface CaptureResult {
@@ -97,6 +103,8 @@ export function parseBaselineArguments(arguments_: readonly string[]): BaselineM
     '--check',
     '--diagnostic',
     '--soak',
+    '--firefox-idle-probe',
+    '--chrome-idle-probe',
   ]);
   const unknown = arguments_.find((argument) => !known.has(argument));
   if (unknown) throw new Error(`Unknown argument: ${unknown}`);
@@ -107,14 +115,32 @@ export function parseBaselineArguments(arguments_: readonly string[]): BaselineM
   const generateGraphs = arguments_.includes('--generate-graphs');
   const diagnostic = arguments_.includes('--diagnostic');
   const soak = arguments_.includes('--soak');
+  const firefoxIdleProbe = arguments_.includes('--firefox-idle-probe');
+  const chromeIdleProbe = arguments_.includes('--chrome-idle-probe');
   const selectedModes =
-    Number(validateFixtures) + Number(generateGraphs) + Number(diagnostic) + Number(soak);
+    Number(validateFixtures) +
+    Number(generateGraphs) +
+    Number(diagnostic) +
+    Number(soak) +
+    Number(firefoxIdleProbe) +
+    Number(chromeIdleProbe);
   if (selectedModes > 1) throw new Error('Choose exactly one baseline mode');
   if (arguments_.includes('--check') && !generateGraphs) {
     throw new Error('--check requires --generate-graphs');
   }
   if (validateFixtures) return { mode: 'validate-fixtures' };
   if (generateGraphs) return { mode: 'generate-graphs', check: arguments_.includes('--check') };
+  if (firefoxIdleProbe || chromeIdleProbe) {
+    return {
+      mode: 'capture',
+      repetitions: 1,
+      probe: {
+        arm: 'candidate',
+        browser: firefoxIdleProbe ? 'firefox' : 'chrome',
+        scenarioId: 'desktop-idle',
+      },
+    };
+  }
   return { mode: 'capture', repetitions: diagnostic ? 1 : soak ? 3 : 5 };
 }
 
@@ -143,7 +169,7 @@ export async function runBaseline(
     prepared = await dependencies.prepare(preflight);
     previews = await dependencies.startPreviews(prepared);
     const captures: CaptureResult[] = [];
-    for (const request of captureOrder(mode.repetitions)) {
+    for (const request of captureOrder(mode)) {
       let browser: BaselineBrowserSession | undefined;
       try {
         browser = await dependencies.startBrowser({ fixture, prepared, previews });
@@ -214,7 +240,9 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-export function captureOrder(repetitions: 1 | 3 | 5): CaptureRequest[] {
+export function captureOrder(mode: Extract<BaselineMode, { mode: 'capture' }>): CaptureRequest[] {
+  if (mode.probe) return [{ ...mode.probe, repetition: 1 }];
+  const repetitions = mode.repetitions;
   if (repetitions === 1) {
     return [
       { arm: 'candidate', browser: 'chrome', repetition: 1 },

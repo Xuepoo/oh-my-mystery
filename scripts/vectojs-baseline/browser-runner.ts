@@ -367,9 +367,15 @@ export async function launchBrowsers(
       const interaction: Record<string, unknown>[] = [];
       const layout: Record<string, unknown>[] = [];
       const audits: Record<string, unknown>[] = [];
-      for (const viewport of interactionViewports) {
+      const viewports = request.scenarioId
+        ? interactionViewports.filter(
+            (viewport) => !viewport.mobile && viewport.width === 1280 && viewport.height === 800,
+          )
+        : interactionViewports;
+      for (const viewport of viewports) {
         const mode = viewport.mobile ? 'mobile' : 'desktop';
-        for (const scenarioId of scenarioIds(mode)) {
+        const scenarios = request.scenarioId ? [request.scenarioId] : scenarioIds(mode);
+        for (const scenarioId of scenarios) {
           const runId = captureRunId(request, viewport, scenarioId);
           console.log(`[baseline] scenario start: ${runId}`);
           await withTimeout(
@@ -485,6 +491,20 @@ export async function launchBrowsers(
           );
           console.log(`[baseline] scenario complete: ${runId}`);
         }
+      }
+
+      if (request.scenarioId) {
+        console.log(
+          `[baseline] capture complete: ${request.arm}/${request.browser}/repetition-${request.repetition}`,
+        );
+        return {
+          request,
+          runs: [],
+          interaction,
+          layout,
+          audits,
+          physics: [],
+        } as unknown as CaptureResult;
       }
 
       console.log(
