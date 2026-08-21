@@ -294,6 +294,9 @@ export async function launchBrowsers(
       console.log(
         `[baseline] capture start: ${request.arm}/${request.browser}/repetition-${request.repetition}`,
       );
+      for (const browser of launched.values())
+        await withTimeout(browser.close(), 15_000, 'browser rotation cleanup');
+      launched.clear();
       const previewUrl = input.previews.urls?.[request.arm];
       if (!previewUrl) throw new Error(`Missing ${request.arm} preview URL`);
       const preparedArm = input.prepared.arms?.[request.arm] as
