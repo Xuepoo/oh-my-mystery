@@ -100,6 +100,30 @@ describe('browser helpers', () => {
     expect(events).toEqual(['run', 'close']);
   });
 
+  test('retries with a new context when a scenario attempt fails', async () => {
+    const events: string[] = [];
+    let attempts = 0;
+    const browser = {
+      newContext: async () => ({
+        newPage: async () => ({ id: String(++attempts) }),
+        close: async () => events.push('close'),
+      }),
+    };
+    await expect(
+      runInNewContext(
+        browser,
+        {},
+        async (page) => {
+          events.push(`run-${(page as unknown as { id: string }).id}`);
+          if (attempts === 1) throw new Error('first attempt failed');
+          return 'ok';
+        },
+        2,
+      ),
+    ).resolves.toBe('ok');
+    expect(events).toEqual(['run-1', 'close', 'run-2', 'close']);
+  });
+
   test('waits for fonts, readiness, and two animation-free frames', async () => {
     const calls: string[] = [];
     await waitForApplicationReady(

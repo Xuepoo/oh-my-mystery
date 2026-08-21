@@ -500,6 +500,7 @@ export async function launchBrowsers(
                   page.off('requestfailed', onRequestFailed);
                 }
               },
+              2,
             ),
             90_000,
             `scenario ${runId}`,

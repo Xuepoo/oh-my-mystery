@@ -105,13 +105,21 @@ export async function runInNewContext<T>(
   browser: Browser | BrowserLike,
   options: BrowserContextOptions,
   run: (page: Page) => Promise<T>,
+  maxAttempts = 1,
 ): Promise<T> {
-  const context = await browser.newContext(options);
-  try {
-    return await run((await context.newPage()) as Page);
-  } finally {
-    await context.close();
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const context = await browser.newContext(options);
+    try {
+      return await run((await context.newPage()) as Page);
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 >= maxAttempts) throw error;
+    } finally {
+      await context.close();
+    }
   }
+  throw lastError;
 }
 
 interface ReadinessPage {
