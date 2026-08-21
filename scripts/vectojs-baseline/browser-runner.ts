@@ -452,15 +452,21 @@ export async function launchBrowsers(
                     ...((await runScenario(scenarioId, page, {
                       runId,
                       execute: async (stepId, scenarioPage) => {
-                        const result = await executeScenarioStep(stepId, scenarioPage as Page, {
-                          previewUrl,
-                          fixture: fixture.manifest,
-                          viewport,
-                          runId,
-                          scenarioId,
-                          browser: request.browser,
-                        });
+                        console.log(`[baseline] step start: ${runId}/${stepId}`);
+                        const result = await withTimeout(
+                          executeScenarioStep(stepId, scenarioPage as Page, {
+                            previewUrl,
+                            fixture: fixture.manifest,
+                            viewport,
+                            runId,
+                            scenarioId,
+                            browser: request.browser,
+                          }),
+                          15_000,
+                          `step ${runId}/${stepId}`,
+                        );
                         if (result) idleAudit = result;
+                        console.log(`[baseline] step complete: ${runId}/${stepId}`);
                       },
                     })) as unknown as Record<string, unknown>[]),
                   );
