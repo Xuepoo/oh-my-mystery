@@ -748,11 +748,28 @@ export async function executeScenarioStep(
   const root = context.fixture.entities.rootAuthor;
   const relatedWork = context.fixture.entities.relatedWork;
   switch (stepId) {
-    case 'navigate':
+    case 'navigate': {
       await page.bringToFront();
-      await page.goto(context.previewUrl, { waitUntil: 'domcontentloaded' });
-      await waitForApplicationReady(page, root, 10000, !context.scenarioId.endsWith('-idle'));
+      const waitForReady = async (reload: boolean): Promise<void> => {
+        if (reload) await page.reload({ waitUntil: 'domcontentloaded' });
+        else await page.goto(context.previewUrl, { waitUntil: 'domcontentloaded' });
+        await waitForApplicationReady(page, root, 10000, !context.scenarioId.endsWith('-idle'));
+      };
+      try {
+        await waitForReady(false);
+      } catch (firstError) {
+        console.log(`[baseline] readiness retry: ${context.runId}/${context.scenarioId}`);
+        try {
+          await waitForReady(true);
+        } catch (retryError) {
+          throw new Error(
+            `Initial readiness failed: ${firstError instanceof Error ? firstError.message : String(firstError)}; retry failed: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
+            { cause: retryError },
+          );
+        }
+      }
       return;
+    }
     case 'assert-root':
       await assertPageState(
         page,

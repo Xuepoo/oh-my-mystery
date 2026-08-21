@@ -122,6 +122,33 @@ describe('browser runner integration', () => {
       browser: 'firefox',
     });
   });
+
+  test('retries navigation readiness once after an initial startup timeout', async () => {
+    const calls: string[] = [];
+    let readinessAttempts = 0;
+    const page = {
+      bringToFront: async () => calls.push('front'),
+      goto: async () => calls.push('goto'),
+      reload: async () => calls.push('reload'),
+      evaluate: async () => calls.push('evaluate'),
+      waitForFunction: async () => {
+        readinessAttempts += 1;
+        if (readinessAttempts === 1) throw new Error('startup timeout');
+      },
+    } as unknown as Page;
+
+    await executeScenarioStep('navigate', page, {
+      previewUrl: 'http://candidate.test',
+      fixture: fixture(),
+      viewport: { width: 1280, height: 800, dpr: 1, mobile: false },
+      runId: 'candidate-firefox-casefile-retry',
+      scenarioId: 'desktop-casefile',
+      browser: 'firefox',
+    });
+
+    expect(calls).toContain('reload');
+    expect(readinessAttempts).toBe(3);
+  });
 });
 
 function fixture(): FixtureManifest {
