@@ -40,6 +40,33 @@ versions remain pre-upgrade in that arm.
 The report contains 684 comparison outcomes: 651 pass, 6 are informational,
 and 27 fail. The failures divide into two classes.
 
+## Latest Re-run
+
+- Raw report: `tmp/vectojs-baseline/capture-2026-08-21T13-20-18.901Z-paired.json`
+- Runner revision: `5ad7f54773a4bfe1cb547f0cb3d55f22e0658ed4`
+- Matrix completed: 20 browser captures, 80 physics runs, 3,280 interaction
+  records, 5,555 layout records, and 80 idle audits.
+- Comparison outcomes: 643 pass, 30 informational, and 11 fail.
+- All browser/scenario captures completed. The failure occurred only during the
+  post-capture physics comparison; no interaction, readiness, or geometry
+  scenario failed.
+- The two arms still use the same `@vectojs/graph-layout` version (`0.2.1`),
+  so these timing results do not isolate a graph-layout dependency change.
+
+The 11 failed outcomes are timing-gate observations, not a clean candidate-only
+regression set. They include isolated browser scheduling pauses of 92--119 ms
+in otherwise low-single-digit-millisecond Firefox runs. The Firefox `mixed-3000`
+candidate median is lower than the baseline median for both tick p95 and tick
+maximum despite one candidate long pause. The Firefox `hub-1000` baseline also
+contains a 60 ms pause, and the corresponding synchronous-step gate fails in
+the baseline arm. These samples show that the headed environment can invalidate
+an individual run independently of the dependency arm.
+
+The latest report therefore does not satisfy the strict acceptance gate, but it
+also does not establish a stable VectoJS upgrade regression. The raw report is
+the evidence to use for a repeat under a validated focus/cadence environment;
+do not discard the outlier runs or silently weaken the comparator.
+
 ### Shared Correctness Failures
 
 Twenty-two outcomes fail absolute graph correctness in both arms with identical
@@ -83,10 +110,13 @@ ms in either arm.
 
 ## Recommendation
 
-Do not merge the planned Issue #23 upgrade PR for OMM 1.0.0 from this capture.
-The candidate has five threshold regressions, and both arms expose 22 absolute
-correctness failures, so the approved acceptance gates are not met. Keep the
-product implementation unchanged; investigate reproducibility and package
-attribution with the same committed runner, then reduce the upgrade set or file
-a minimal upstream issue if a regression persists. A new quotable five-run
-paired capture must pass before merge.
+Do not merge the planned Issue #23 upgrade PR for OMM 1.0.0 from either capture.
+The original capture had five candidate-only timing outcomes above threshold and
+the latest capture has 11 timing-gate failures dominated by isolated browser
+scheduling pauses. The approved acceptance gates are therefore not met, even
+though the latest run completed all browser/scenario captures and does not prove
+a stable dependency regression. Keep the product implementation unchanged;
+retain both raw reports, validate focus/cadence and process health before another
+measurement, and file an upstream issue only if a current-HEAD public-API
+reproduction persists. A new quotable five-run paired capture must pass before
+merge.
