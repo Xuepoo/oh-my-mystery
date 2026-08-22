@@ -140,32 +140,87 @@ function matchPublisher(value: string): string | null {
 
 // Filter entities to mystery/detective core domain, including NDL catalog
 // records whose bibliographic facts provide the broadest publisher coverage.
-const entityRows = srcDb
-  .query(
-    `
+//
+// Creator and award-recipient membership are precomputed as indexed set
+// lookups. Expressed as correlated subqueries, the `'wd:' || se.qid` join
+// cannot use any index, so every candidate person forced a full `entities`
+// scan and the build became unrunnable at current data size.
+const CREATOR_PREDICATES = ['author', 'aozora_role'] as const;
+const creatorPlaceholders = CREATOR_PREDICATES.map(() => '?').join(', ');
+
+function loadIdSet(sql: string, parameters: readonly string[] = []): Set<string> {
+  const rows = srcDb.query(sql).all(...parameters) as { id: string | null }[];
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (row.id) ids.add(row.id);
+  }
+  return ids;
+}
+
+// Credited directly as the creator of a work.
+const directCreatorIds = loadIdSet(
+  `SELECT DISTINCT object_ref AS id
+     FROM facts
+    WHERE predicate IN (${creatorPlaceholders})
+      AND object_ref IS NOT NULL
+      AND object_ref <> ''`,
+  CREATOR_PREDICATES,
+);
+
+// Reachable as a creator through a linked source entity.
+const linkedCreatorIds = loadIdSet(
+  `SELECT DISTINCT el.target_id AS id
+     FROM entity_links el
+     JOIN facts af ON af.object_ref = el.source_id
+    WHERE af.predicate IN (${creatorPlaceholders})
+      AND el.target_id IS NOT NULL
+      AND el.target_id <> ''`,
+  CREATOR_PREDICATES,
+);
+
+// Reachable as a creator through a source entity carrying the same QID.
+const qidCreatorIds = loadIdSet(
+  `SELECT DISTINCT 'wd:' || se.qid AS id
+     FROM entities se
+     JOIN facts af ON af.object_ref = se.id
+    WHERE af.predicate IN (${creatorPlaceholders})
+      AND se.qid IS NOT NULL
+      AND trim(se.qid) <> ''`,
+  CREATOR_PREDICATES,
+);
+
+// Award recipients must survive selection even without a creator fact,
+// otherwise award nodes lose most of their recipients.
+const awardRecipientIds = loadIdSet(
+  `SELECT DISTINCT subject_id AS id
+     FROM facts
+    WHERE predicate = 'award_received'
+      AND subject_id IS NOT NULL
+      AND subject_id <> ''`,
+);
+
+const DOMAIN_ENTITY_TYPES = new Set([
+  'author',
+  'work',
+  'award',
+  'character',
+  'series',
+  'publisher',
+  'genre',
+]);
+
+function isCreatorPerson(id: string): boolean {
+  return directCreatorIds.has(id) || linkedCreatorIds.has(id) || qidCreatorIds.has(id);
+}
+
+const entityRows = (
+  srcDb
+    .query(
+      `
   SELECT
     e.id,
     e.qid,
-    CASE
-      WHEN e.type = 'person' AND EXISTS (
-        SELECT 1 FROM facts af
-        WHERE af.predicate IN ('author', 'aozora_role')
-          AND af.object_ref = e.id
-        UNION ALL
-        SELECT 1
-        FROM entity_links el
-        JOIN facts af ON af.object_ref = el.source_id
-        WHERE el.target_id = e.id
-          AND af.predicate IN ('author', 'aozora_role')
-        UNION ALL
-        SELECT 1
-        FROM entities se
-        JOIN facts af ON af.object_ref = se.id
-        WHERE e.id = 'wd:' || se.qid
-          AND af.predicate IN ('author', 'aozora_role')
-      ) THEN 'author'
-      ELSE e.type
-    END AS type,
+    e.type,
     e.names_json,
     e.bio,
     e.birth,
@@ -174,42 +229,28 @@ const entityRows = srcDb
     e.source,
     e.quality
   FROM entities e
-  WHERE (
-      e.type IN ('author', 'work', 'award', 'character', 'series', 'publisher', 'genre')
-      OR (
-        e.type = 'person' AND EXISTS (
-          SELECT 1 FROM facts af
-          WHERE af.predicate IN ('author', 'aozora_role')
-            AND af.object_ref = e.id
-          UNION ALL
-          SELECT 1
-          FROM entity_links el
-          JOIN facts af ON af.object_ref = el.source_id
-          WHERE el.target_id = e.id
-            AND af.predicate IN ('author', 'aozora_role')
-          UNION ALL
-          SELECT 1
-          FROM entities se
-          JOIN facts af ON af.object_ref = se.id
-          WHERE e.id = 'wd:' || se.qid
-            AND af.predicate IN ('author', 'aozora_role')
-        )
-      )
-    )
-    AND (
-      id LIKE 'wd:%'
-      OR id LIKE 'club:%'
-      OR id LIKE 'edgar:%'
-      OR id LIKE 'cwa:%'
-      OR id LIKE 'aozora:%'
-      OR id LIKE 'douban:%'
-      OR id LIKE 'ndl:%'
-      OR id LIKE 'tuiliz:%'
-      OR id LIKE 'gutenberg:%'
-    )
+  WHERE e.id LIKE 'wd:%'
+     OR e.id LIKE 'club:%'
+     OR e.id LIKE 'edgar:%'
+     OR e.id LIKE 'cwa:%'
+     OR e.id LIKE 'aozora:%'
+     OR e.id LIKE 'douban:%'
+     OR e.id LIKE 'ndl:%'
+     OR e.id LIKE 'tuiliz:%'
+     OR e.id LIKE 'gutenberg:%'
 `,
-  )
-  .all() as any[];
+    )
+    .all() as any[]
+)
+  .filter((e) => {
+    if (DOMAIN_ENTITY_TYPES.has(e.type)) return true;
+    if (e.type !== 'person') return false;
+    return isCreatorPerson(e.id) || awardRecipientIds.has(e.id);
+  })
+  .map((e) => ({
+    ...e,
+    type: e.type === 'person' && isCreatorPerson(e.id) ? 'author' : e.type,
+  }));
 
 console.log(`✓ Selected ${entityRows.length} core domain entities`);
 
