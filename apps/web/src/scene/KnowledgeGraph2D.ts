@@ -948,26 +948,24 @@ export class KnowledgeGraph2D {
 
   private applyPinOwnership(id: string, x?: number, y?: number): void {
     const node = this.nodesMap.get(id);
-    const index = this.layout?.getNodeIndex(id);
-    if (!node || index === undefined) return;
+    if (!node || this.layout?.getNodeIndex(id) === undefined) return;
     if (this.pinnedIds.has(id) || this.hoverPinnedId === id || this.dragPins.has(id)) {
       this.applyPhysicalPin(id, x ?? node.x ?? 0, y ?? node.y ?? 0);
       return;
     }
     node.fx = null;
     node.fy = null;
-    this.layout?.unpinNode(index);
+    this.layout?.unpinNode(id);
   }
 
   private applyPhysicalPin(id: string, x: number, y: number): void {
     const node = this.nodesMap.get(id);
-    const index = this.layout?.getNodeIndex(id);
-    if (!node || index === undefined) return;
+    if (!node || this.layout?.getNodeIndex(id) === undefined) return;
     node.x = x;
     node.y = y;
     node.fx = x;
     node.fy = y;
-    this.layout?.pinNode(index, x, y);
+    this.layout?.pinNode(id, x, y);
     this.syncNodePositions();
   }
 
