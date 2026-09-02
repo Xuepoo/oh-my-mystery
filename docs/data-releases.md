@@ -10,7 +10,7 @@ OMM 发布经过版本化的 SQLite 公共快照。稳定入口如下：
 
 其中 `<version>` 从发布索引或清单的 `release_version` 字段取得。每个不可变版本目录都包含 `omm.sqlite.zst`、`manifest.json` 和 `sha256.txt`。清单记录源码 revision、生成时间、压缩大小、SHA-256、schema 标记和各表行数。
 
-这些文件是公开的 OMM 转换快照，不是实时 Cloudflare D1 数据库，也不是爬虫层的 `mystery.db`。爬虫数据库经过筛选、清理、实体合并和派生数据生成后，才成为 OMM 快照。不可变版本使用版本化 R2 key 保存；`latest` 清单是短缓存指针，可以回滚到旧版本。
+这些文件是公开的 OMM 转换快照，不是实时的生产 Cloudflare D1（`omm-db`）数据库，也不是爬虫层的 `mystery-clawer/data/mystery.db`。爬虫数据库（`mystery-clawer/data/mystery.db`）经过筛选、清理、实体合并和派生数据生成后，才成为 OMM 快照（`omm/data/omm-d1.sqlite`，仓库内路径 `data/omm-d1.sqlite`）。不可变版本使用版本化 R2 key 保存；`latest` 清单是短缓存指针，可以回滚到旧版本。
 
 ## 下载、校验与解压
 
@@ -34,4 +34,4 @@ sqlite3 omm.sqlite 'PRAGMA integrity_check;'
 bun scripts/publish-database-release.ts
 ```
 
-脚本需要已认证的 Wrangler CLI 和现有的 `cdn-xuepoo-xyz` R2 bucket。它不读取或写入 secrets。发布前请确认输入的是 `data/omm-d1.sqlite`，而不是爬虫数据库；脚本会先执行 SQLite integrity check，再压缩、计算校验值并写入版本对象、索引和 latest 清单。
+脚本需要已认证的 Wrangler CLI 和现有的 `cdn-xuepoo-xyz` R2 bucket。它不读取或写入 secrets。发布前请确认输入的是 `omm/data/omm-d1.sqlite`（仓库内 `data/omm-d1.sqlite`），而不是爬虫数据库 `mystery-clawer/data/mystery.db`；脚本会先执行 SQLite integrity check，再压缩、计算校验值并写入版本对象、索引和 latest 清单。
