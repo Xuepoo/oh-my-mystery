@@ -16,6 +16,7 @@ single_active_session_per_agent = true
 [task]
 single_active_task_per_agent = true
 strict_completion = false
+list_limit = 200
 
 [context]
 default_mode = "compact"
@@ -38,4 +39,4 @@ verbose = false
 [agent]
 
 [verification]
-commands = []
+commands = ["bun run check", "bun run test", "bun run build"]
