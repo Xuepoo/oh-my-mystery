@@ -26,6 +26,43 @@ function cleanSingle(raw: string): string {
   return s;
 }
 
+// Bracket-garbage and obvious-junk single labels (CTX-0073).
+// NDL catalog wraps uncertain titles in [...] (e.g. [イーリアス]);
+// douban credits carry nationality prefixes ([日]茂吕美耶,
+// 【英】阿瑟·柯南道尔), unknown-creator markers ([制作者不明]),
+// or bare dates (2024-6-18). Mid-string balanced annotations
+// (e.g. REC【レック】, ...【フランス語】) are kept: they carry a
+// real title plus a reading/language note.
+const FULL_BRACKET_RE = /^\[.*\]$/u;
+const FULL_CJK_BRACKET_RE = /^【.*】$/u;
+const LEADING_BRACKET_RE = /^\[[^\]]*\]/u;
+const LEADING_CJK_BRACKET_RE = /^【[^】]*】/u;
+const UNKNOWN_CREATOR_RE =
+  /^(?:制作者不明|作者不明|著者不明|着者不明|作者不詳|佚名|unknown author|unknown creator|anonymous)$/iu;
+const DATE_ONLY_RE = /^\d{4}[-/.年]\d{1,2}([-/.月]\d{1,2}[日]?)?$/u;
+
+function hasHalfBracket(s: string): boolean {
+  const open = (s.match(/\[/gu) || []).length + (s.match(/【/gu) || []).length;
+  const close = (s.match(/\]/gu) || []).length + (s.match(/】/gu) || []).length;
+  return open !== close;
+}
+
+// True when a single NFKC-cleaned label carries no usable name.
+// Exported for tests; cleanNames applies it to every label/alias.
+export function isJunkLabel(raw: string): boolean {
+  const s = raw.normalize('NFKC').trim();
+  if (!s) return false;
+  return (
+    FULL_BRACKET_RE.test(s) ||
+    FULL_CJK_BRACKET_RE.test(s) ||
+    LEADING_BRACKET_RE.test(s) ||
+    LEADING_CJK_BRACKET_RE.test(s) ||
+    UNKNOWN_CREATOR_RE.test(s) ||
+    DATE_ONLY_RE.test(s) ||
+    hasHalfBracket(s)
+  );
+}
+
 function isZhLang(lang: string): boolean {
   return lang === 'zh' || lang === 'zh-cn' || lang === 'zh-hans' || lang === 'zh-hant';
 }
@@ -63,7 +100,7 @@ export function cleanNames(namesJson: string | null | undefined): CleanedNames {
     for (const [lang, raw] of Object.entries(labels as Record<string, unknown>)) {
       if (typeof raw !== 'string') continue;
       const cleaned = cleanSingle(raw);
-      if (!cleaned) continue;
+      if (!cleaned || isJunkLabel(cleaned)) continue;
       result.labels[lang] = isZhLang(lang) ? toSimplified(cleaned) : cleaned;
     }
   }
@@ -77,7 +114,7 @@ export function cleanNames(namesJson: string | null | undefined): CleanedNames {
       for (const raw of rawArr) {
         if (typeof raw !== 'string') continue;
         const cleaned = cleanSingle(raw);
-        if (!cleaned) continue;
+        if (!cleaned || isJunkLabel(cleaned)) continue;
         const value = isZhLang(lang) ? toSimplified(cleaned) : cleaned;
         if (seen.has(value)) continue;
         seen.add(value);
@@ -119,9 +156,11 @@ export function namesToJson(names: CleanedNames): string {
 
 const HEX_ONLY_RE = /^[0-9a-f]{8,}$/i;
 
-// Junk entity names: no usable label at all, every label (and alias) is a
-// hex-hash string (crawler bug), or an author entity whose name is a joined
-// multi-author list (douban anthology bug).
+// Junk entity names: no usable label at all (cleanNames already drops
+// bracket-garbage / unknown-creator / date-only labels via isJunkLabel,
+// so entities left with nothing usable fall into this branch), every
+// label (and alias) is a hex-hash string (crawler bug), or an author
+// entity whose name is a joined multi-author list (douban anthology bug).
 export function isJunkNames(names: CleanedNames, type?: string): boolean {
   const labelVals = Object.values(names.labels).filter((v) => v.length > 0);
   if (labelVals.length === 0) return true;

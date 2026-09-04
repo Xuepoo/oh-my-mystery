@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { applyOverrides, cleanNames, isJunkNames } from './clean-labels';
+import { applyOverrides, cleanNames, isJunkLabel, isJunkNames } from './clean-labels';
 
 describe('cleanNames', () => {
   test('trims whitespace and trailing separators', () => {
@@ -85,6 +85,94 @@ describe('applyOverrides', () => {
     const names = { labels: { zh: '钻石匕首奖', en: 'Diamond Dagger' }, aliases: {} };
     const r = applyOverrides('cwa:category:2858481197', names);
     expect(r.labels.zh).toBe('钻石匕首奖');
+  });
+});
+
+describe('isJunkLabel', () => {
+  test('rejects full-bracket-wrapped labels', () => {
+    expect(isJunkLabel('[イーリアス]')).toBe(true);
+    expect(isJunkLabel('[クィディッチ今昔] : [ホグワーツ校指定教科書 1]')).toBe(true);
+    expect(isJunkLabel('[A Ghost Samba]')).toBe(true);
+    expect(isJunkLabel('【推しの子】')).toBe(true);
+    expect(isJunkLabel('[Mein*Star]')).toBe(true);
+  });
+
+  test('rejects nationality/format leading-bracket labels', () => {
+    expect(isJunkLabel('[日]茂吕美耶')).toBe(true);
+    expect(isJunkLabel('[加] 仇春卉')).toBe(true);
+    expect(isJunkLabel('【英】阿瑟·柯南道尔')).toBe(true);
+    expect(isJunkLabel('[ハングル]ハリー・ポッターと不死鳥の騎士団')).toBe(true);
+  });
+
+  test('rejects half-brackets', () => {
+    expect(isJunkLabel('[J.スピリ')).toBe(true);
+    expect(isJunkLabel('unclosed]')).toBe(true);
+    expect(isJunkLabel('[原著］食道癌術後合併症の検討')).toBe(true);
+  });
+
+  test('rejects unknown-creator markers and date-only labels', () => {
+    expect(isJunkLabel('[制作者不明]')).toBe(true);
+    expect(isJunkLabel('制作者不明')).toBe(true);
+    expect(isJunkLabel('作者不明')).toBe(true);
+    expect(isJunkLabel('2024-6-18')).toBe(true);
+    expect(isJunkLabel('2025-12')).toBe(true);
+  });
+
+  test('keeps legit labels with mid-string annotations or quotes', () => {
+    expect(isJunkLabel('ハリー・ポッターと賢者の石【フランス語】')).toBe(false);
+    expect(isJunkLabel('かの日の歌【一】')).toBe(false);
+    expect(isJunkLabel('『クロック城』殺人事件')).toBe(false);
+    expect(isJunkLabel('东野圭吾')).toBe(false);
+    expect(isJunkLabel('')).toBe(false);
+  });
+
+  test('does not confuse unknown-marker substrings inside real titles', () => {
+    expect(isJunkLabel('行方不明の処女作')).toBe(false);
+  });
+});
+
+describe('cleanNames bracket hygiene', () => {
+  test('drops bracket label but keeps clean sibling labels', () => {
+    const r = cleanNames(
+      JSON.stringify({ labels: { fr: '[Seul]', en: 'Alone', ja: 'Alone' }, aliases: {} }),
+    );
+    expect(r.labels.fr).toBeUndefined();
+    expect(r.labels.en).toBe('Alone');
+  });
+
+  test('drops entities left with no clean label (NDL bracket works)', () => {
+    const r = cleanNames(JSON.stringify({ labels: { ja: '[イーリアス]' }, aliases: {} }));
+    expect(r.labels).toEqual({});
+    expect(isJunkNames(r, 'work')).toBe(true);
+  });
+
+  test('drops single-label bracket authors with no fallback', () => {
+    for (const label of ['[日]茂吕美耶', '[加] 仇春卉', '[制作者不明]', '2024-6-18']) {
+      const r = cleanNames(JSON.stringify({ labels: { ja: label }, aliases: {} }));
+      expect(isJunkNames(r, 'author')).toBe(true);
+    }
+  });
+
+  test('drops half-bracket labels', () => {
+    const r = cleanNames(JSON.stringify({ labels: { ja: '[J.スピリ' }, aliases: {} }));
+    expect(isJunkNames(r, 'author')).toBe(true);
+  });
+
+  test('drops junk aliases but keeps clean ones', () => {
+    const r = cleanNames(
+      JSON.stringify({
+        labels: { en: 'Oshi no Ko' },
+        aliases: { en: ['[Oshi no Ko]', 'My Star'], ja: ['推しの子'] },
+      }),
+    );
+    expect(r.labels.en).toBe('Oshi no Ko');
+    expect(r.aliases.en).toEqual(['My Star']);
+  });
+
+  test('folds fullwidth brackets before judging', () => {
+    expect(isJunkLabel('［法］米歇尔•普西')).toBe(true);
+    const r = cleanNames(JSON.stringify({ labels: { zh: '［法］米歇尔•普西' }, aliases: {} }));
+    expect(isJunkNames(r, 'author')).toBe(true);
   });
 });
 
