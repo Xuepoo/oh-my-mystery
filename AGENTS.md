@@ -138,3 +138,14 @@ Key rules:
 - Remote D1 access requires the proxy: `HTTPS_PROXY=$NETWORK_PROXY wrangler d1 execute omm-db --remote ...` (without proxy, wrangler fetch fails).
 - Worker deploy: `cd apps/api && HTTPS_PROXY=$NETWORK_PROXY wrangler deploy`.
 - Verify prod from snow: `ssh snow 'curl -s https://api.omm.xuepoo.xyz/api/health'`.
+
+### D1 cost protection
+
+- The production database is already populated and must be treated as read-only unless a data release is explicitly approved.
+- Never run `bun scripts/import-d1.ts` as a health check, deployment check, or routine sync. It clears and rewrites large tables and can produce millions of billable rows written. Do not retry a failed import from the beginning; use the exact documented resume point only after confirming that no other import is running.
+- Before any D1 write, rebuild and audit `data/omm-d1.sqlite` locally, run the integrity check, compare table counts, and record the intended affected row count. Prefer a reviewed, idempotent incremental SQL delta over a full import.
+- Wrangler verification commands must be read-only `SELECT` queries with narrow projections, `COUNT(*)`, explicit filters, or small `LIMIT` values. Do not run broad `SELECT *`, bulk `UPDATE`, `DELETE`, index rebuilds, or ad-hoc writes against production for inspection.
+- Check `wrangler d1 insights omm-db --time-period 30d --sort-by writes --sort-direction DESC --limit 20 --json` after every approved write. Confirm `rows_written` is zero for verification queries and investigate any unexpected write-heavy query immediately.
+- There is no D1 write Cron configured in `apps/api/wrangler.toml` as of 2026-08-20. Recheck Worker triggers before adding automation.
+
+The August 2026 cost incident was caused by repeated full imports and retries, not normal API reads. Wrangler Insights showed repeated `DELETE`/rebuild operations for `facts`, `entities`, `search_index`, `search_fts`, `recommendations`, `publication_events`, and work-group tables, totaling roughly 10.3 million rows written in the observed 30-day window. The account billing page showed the resulting D1 Rows Written charge beginning around 2026-08-18. The final import completed on 2026-08-19; no further production write is expected unless an approved data release is performed.
